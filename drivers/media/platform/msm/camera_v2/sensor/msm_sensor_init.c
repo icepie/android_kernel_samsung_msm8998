@@ -80,38 +80,38 @@ static int32_t msm_sensor_driver_cmd(struct msm_sensor_init_t *s_init,
 
 	switch (cfg->cfgtype) {
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
-	case CFG_SINIT_HWB:
-		bhwb_rc = msm_is_sec_file_exist(CAM_HW_ERR_CNT_FILE_PATH, HW_PARAMS_CREATED);
-		if (bhwb_rc == 1) {
-			msm_is_sec_copy_err_cnt_from_file();
-		}
-		rc = 0;
-		break;
+		case CFG_SINIT_HWB:
+			bhwb_rc = msm_is_sec_file_exist(CAM_HW_ERR_CNT_FILE_PATH, HW_PARAMS_CREATED);
+			if (bhwb_rc == 1) {
+				msm_is_sec_copy_err_cnt_from_file();
+			}
+			rc = 0;
+			break;
 #endif
 
-	case CFG_SINIT_PROBE:
-		mutex_lock(&s_init->imutex);
-		s_init->module_init_status = 0;
-		rc = msm_sensor_driver_probe(cfg->cfg.setting,
-			&cfg->probed_info,
-			cfg->entity_name);
-		mutex_unlock(&s_init->imutex);
-		if (rc < 0)
-			pr_err("%s failed (non-fatal) rc %d", __func__, rc);
-		break;
+		case CFG_SINIT_PROBE:
+			mutex_lock(&s_init->imutex);
+			s_init->module_init_status = 0;
+			rc = msm_sensor_driver_probe(cfg->cfg.setting,
+				&cfg->probed_info,
+				cfg->entity_name);
+			mutex_unlock(&s_init->imutex);
+			if (rc < 0)
+				pr_err("%s failed (non-fatal) rc %d", __func__, rc);
+			break;
 
-	case CFG_SINIT_PROBE_DONE:
-		s_init->module_init_status = 1;
-		wake_up(&s_init->state_wait);
-		break;
+		case CFG_SINIT_PROBE_DONE:
+			s_init->module_init_status = 1;
+			wake_up(&s_init->state_wait);
+			break;
 
-	case CFG_SINIT_PROBE_WAIT_DONE:
-		msm_sensor_wait_for_probe_done(s_init);
-		break;
+		case CFG_SINIT_PROBE_WAIT_DONE:
+			msm_sensor_wait_for_probe_done(s_init);
+			break;
 
-	default:
-		pr_err("default");
-		break;
+		default:
+			pr_err("default");
+			break;
 	}
 
 	return rc;
@@ -215,7 +215,11 @@ static ssize_t back_camera_type_show(struct device *dev,
 static ssize_t front_camera_type_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
+#if defined(CONFIG_SEC_KELLYLTE_PROJECT)
+	char cam_type[] = "LSI_S5K5E3YX\n";
+#else
 	char cam_type[] = "SONY_IMX320\n";
+#endif
 	return snprintf(buf, sizeof(cam_type), "%s", cam_type);
 }
 
@@ -395,17 +399,85 @@ static ssize_t back_isp_core_check_store(struct device *dev,
 	return size;
 }
 
-uint32_t rear_af_cal_pan;
-uint32_t rear_af_cal_macro;
-uint32_t rear_af_cal_mid;
+
+#define FROM_REAR_AF_CAL_SIZE	 10
+int rear_af_cal[FROM_REAR_AF_CAL_SIZE + 1] = {0,};
 static ssize_t back_camera_afcal_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
-	CDBG("[FW_DBG] rear_af_cal_pan: %d, rear_af_cal_macro: %d, rear_af_cal_mid: %d\n", rear_af_cal_pan, rear_af_cal_macro, rear_af_cal_mid);
-	if (rear_af_cal_mid == 0xffffffff)
-		return sprintf(buf, "1 %d %d\n", rear_af_cal_macro, rear_af_cal_pan);
-	else
-		return sprintf(buf, "2 %d %d %d\n", rear_af_cal_macro, rear_af_cal_pan, rear_af_cal_mid);
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+	char tempbuf[10];
+	char N[] = "N ";
+
+	strncat(buf, "10 ", strlen("10 "));
+
+#ifdef	FROM_REAR_AF_CAL_D10_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[1]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR_AF_CAL_D20_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[2]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR_AF_CAL_D30_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[3]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR_AF_CAL_D40_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[4]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR_AF_CAL_D50_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[5]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR_AF_CAL_D60_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[6]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR_AF_CAL_D70_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[7]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR_AF_CAL_D80_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[8]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR_AF_CAL_PAN_ADDR
+	sprintf(tempbuf, "%d ", rear_af_cal[9]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+	return strlen(buf);
+#else
+	return sprintf(buf, "1 %d %d\n", rear_af_cal[0], rear_af_cal[9]);
+#endif
 }
 
 uint32_t front_af_cal_pan;
@@ -795,14 +867,79 @@ static ssize_t ssrm_camera_info_store(struct device *dev,
 }
 
 #if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
-uint32_t rear2_af_cal_pan;
-uint32_t rear2_af_cal_macro;
-uint32_t rear2_af_cal_mid;
+int rear2_af_cal[FROM_REAR_AF_CAL_SIZE + 1] = {0,};
 static ssize_t back_camera2_afcal_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
-	CDBG("[FW_DBG] rear2_af_cal_pan: %d, rear2_af_cal_macro: %d, rear2_af_cal_mid: %d\n", rear2_af_cal_pan, rear2_af_cal_macro, rear2_af_cal_mid);
-	return sprintf(buf, "2 %d %d %d\n", rear2_af_cal_macro, rear2_af_cal_pan, rear2_af_cal_mid);
+	char tempbuf[10];
+	char N[] = "N ";
+
+	strncat(buf, "10 ", strlen("10 "));
+
+#ifdef	FROM_REAR2_AF_CAL_D10_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[1]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR2_AF_CAL_D20_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[2]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR2_AF_CAL_D30_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[3]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR2_AF_CAL_D40_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[4]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR2_AF_CAL_D50_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[5]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR2_AF_CAL_D60_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[6]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR2_AF_CAL_D70_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[7]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR2_AF_CAL_D80_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[8]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+#ifdef	FROM_REAR2_AF_CAL_PAN_ADDR
+	sprintf(tempbuf, "%d ", rear2_af_cal[9]);
+#else
+	sprintf(tempbuf, "%s", N);
+#endif
+	strncat(buf, tempbuf, strlen(tempbuf));
+
+	return strlen(buf);
 }
 
 char rear2_cam_info[100] = "NULL\n";	//camera_info
@@ -873,21 +1010,125 @@ static ssize_t rear2_sensorid_exif_store(struct device *dev,
 	return size;
 }
 
+#define FROM_REAR_DUAL_CAL_SIZE 512
+uint8_t rear_dual_cal[FROM_REAR_DUAL_CAL_SIZE + 1] = "\0";
+static ssize_t rear_dual_cal_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	void * ret = NULL;
+	CDBG("[FW_DBG] rear_dual_cal : %s\n", rear_dual_cal);
+
+	ret = memcpy(buf, rear_dual_cal, sizeof(rear_dual_cal));
+	if (ret)
+		return sizeof(rear_dual_cal);
+	return 0;
+}
+
+uint32_t rear_dual_cal_size = FROM_REAR_DUAL_CAL_SIZE;
+static ssize_t rear_dual_cal_size_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	CDBG("[FW_DBG] rear_dual_cal_size : %d\n", rear_dual_cal_size);
+	return sprintf(buf, "%d\n", rear_dual_cal_size);
+}
+
+int rear2_dual_tilt_x;
+int rear2_dual_tilt_y;
+int rear2_dual_tilt_z;
+int rear2_dual_tilt_sx;
+int rear2_dual_tilt_sy;
+int rear2_dual_tilt_range;
+int rear2_dual_tilt_max_err;
+int rear2_dual_tilt_avg_err;
+int rear2_dual_tilt_dll_ver;
+static ssize_t rear2_tilt_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	CDBG("[FW_DBG] rear dual tilt x = %d, y = %d, z = %d, sx = %d, sy = %d, range = %d, max_err = %d, avg_err = %d, dll_ver = %d\n",
+		rear2_dual_tilt_x, rear2_dual_tilt_y, rear2_dual_tilt_z, rear2_dual_tilt_sx, rear2_dual_tilt_sy,
+		rear2_dual_tilt_range, rear2_dual_tilt_max_err, rear2_dual_tilt_avg_err, rear2_dual_tilt_dll_ver);
+
+	return sprintf(buf, "1 %d %d %d %d %d %d %d %d %d\n", rear2_dual_tilt_x, rear2_dual_tilt_y,
+			rear2_dual_tilt_z, rear2_dual_tilt_sx, rear2_dual_tilt_sy, rear2_dual_tilt_range,
+			rear2_dual_tilt_max_err, rear2_dual_tilt_avg_err, rear2_dual_tilt_dll_ver);
+}
 #endif
 
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
+static int16_t is_hw_param_valid_module_id(char *moduleid)
+{
+	int i = 0;
+	int32_t moduleid_cnt = 0;
+	int16_t rc = HW_PARAMS_MI_VALID;
+
+	if (moduleid == NULL) {
+		pr_err("[HWB_DBG] MI_INVALID\n");
+		return HW_PARAMS_MI_INVALID;
+	}
+
+	for (i = 0;i < FROM_MODULE_ID_SIZE;i++)
+	{
+		if(moduleid[i] == '\0')
+		{
+			moduleid_cnt = moduleid_cnt + 1;
+		}
+		else if ((i < 5)
+			&& (!((moduleid[i] > 47 && moduleid[i] < 58)	// 0 to 9
+			|| (moduleid[i] > 64 && moduleid[i] < 91))))	// A to Z
+		{
+			pr_err("[HWB_DBG] MIR_ERR_1\n");
+			rc = HW_PARAMS_MIR_ERR_1;
+			break;
+		}
+	}
+
+	if (moduleid_cnt == FROM_MODULE_ID_SIZE)
+	{
+		pr_err("[HWB_DBG] MIR_ERR_0\n");
+		rc = HW_PARAMS_MIR_ERR_0;
+	}
+
+	return rc;
+}
+
 static ssize_t rear_camera_hw_param_show(struct device *dev,
 					 struct device_attribute *attr, char *buf)
 {
+	ssize_t rc = 0;
+	int16_t moduelid_chk = 0;
 	struct cam_hw_param *ec_param = NULL;
 	msm_is_sec_get_rear_hw_param(&ec_param);
 
-	return sprintf(buf, "\"CAMIR_ID\":\"%c%c%c%c%cXX%02X%02X%02X\",\"I2CR_AF\":\"%d\",\"I2CR_COM\":\"%d\",\"I2CR_OIS\":\"%d\","
-		"\"I2CR_SEN\":\"%d\",\"MIPIR_COM\":\"%d\",\"MIPIR_SEN\":\"%d\"\n",
-		rear_module_id[0], rear_module_id[1], rear_module_id[2], rear_module_id[3],
-		rear_module_id[4], rear_module_id[7], rear_module_id[8], rear_module_id[9],
-		ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
-		ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+	if(ec_param != NULL) {
+		moduelid_chk = is_hw_param_valid_module_id(rear_module_id);
+		switch (moduelid_chk) {
+			case HW_PARAMS_MI_VALID:
+				rc = sprintf(buf, "\"CAMIR_ID\":\"%c%c%c%c%cXX%02X%02X%02X\",\"I2CR_AF\":\"%d\",\"I2CR_COM\":\"%d\",\"I2CR_OIS\":\"%d\","
+					"\"I2CR_SEN\":\"%d\",\"MIPIR_COM\":\"%d\",\"MIPIR_SEN\":\"%d\"\n",
+					rear_module_id[0], rear_module_id[1], rear_module_id[2], rear_module_id[3],
+					rear_module_id[4], rear_module_id[7], rear_module_id[8], rear_module_id[9],
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+			case HW_PARAMS_MIR_ERR_1:
+				rc = sprintf(buf, "\"CAMIR_ID\":\"MIR_ERR\",\"I2CR_AF\":\"%d\",\"I2CR_COM\":\"%d\",\"I2CR_OIS\":\"%d\","
+					"\"I2CR_SEN\":\"%d\",\"MIPIR_COM\":\"%d\",\"MIPIR_SEN\":\"%d\"\n",
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+			default:
+				rc = sprintf(buf, "\"CAMIR_ID\":\"MI_NO\",\"I2CR_AF\":\"%d\",\"I2CR_COM\":\"%d\",\"I2CR_OIS\":\"%d\","
+					"\"I2CR_SEN\":\"%d\",\"MIPIR_COM\":\"%d\",\"MIPIR_SEN\":\"%d\"\n",
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+		}
+	}
+
+	return rc;
 }
 
 static ssize_t rear_camera_hw_param_store(struct device *dev,
@@ -910,15 +1151,40 @@ static ssize_t rear_camera_hw_param_store(struct device *dev,
 static ssize_t front_camera_hw_param_show(struct device *dev,
 					 struct device_attribute *attr, char *buf)
 {
+	ssize_t rc = 0;
+	int16_t moduelid_chk = 0;
 	struct cam_hw_param *ec_param = NULL;
 	msm_is_sec_get_front_hw_param(&ec_param);
 
-	return sprintf(buf, "\"CAMIF_ID\":\"%c%c%c%c%cXX%02X%02X%02X\",\"I2CF_AF\":\"%d\",\"I2CF_COM\":\"%d\",\"I2CF_OIS\":\"%d\","
-		"\"I2CF_SEN\":\"%d\",\"MIPIF_COM\":\"%d\",\"MIPIF_SEN\":\"%d\"\n",
-		front_module_id[0], front_module_id[1], front_module_id[2], front_module_id[3],
-		front_module_id[4], front_module_id[7], front_module_id[8], front_module_id[9],
-		ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
-		ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+	if(ec_param != NULL) {
+		moduelid_chk = is_hw_param_valid_module_id(front_module_id);
+		switch (moduelid_chk) {
+			case HW_PARAMS_MI_VALID:
+				rc = sprintf(buf, "\"CAMIF_ID\":\"%c%c%c%c%cXX%02X%02X%02X\",\"I2CF_AF\":\"%d\",\"I2CF_COM\":\"%d\",\"I2CF_OIS\":\"%d\","
+					"\"I2CF_SEN\":\"%d\",\"MIPIF_COM\":\"%d\",\"MIPIF_SEN\":\"%d\"\n",
+					front_module_id[0], front_module_id[1], front_module_id[2], front_module_id[3],
+					front_module_id[4], front_module_id[7], front_module_id[8], front_module_id[9],
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+			case HW_PARAMS_MIR_ERR_1:
+				rc = sprintf(buf, "\"CAMIF_ID\":\"MIR_ERR\",\"I2CF_AF\":\"%d\",\"I2CF_COM\":\"%d\",\"I2CF_OIS\":\"%d\","
+					"\"I2CF_SEN\":\"%d\",\"MIPIF_COM\":\"%d\",\"MIPIF_SEN\":\"%d\"\n",
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+			default:
+				rc = sprintf(buf, "\"CAMIF_ID\":\"MI_NO\",\"I2CF_AF\":\"%d\",\"I2CF_COM\":\"%d\",\"I2CF_OIS\":\"%d\","
+					"\"I2CF_SEN\":\"%d\",\"MIPIF_COM\":\"%d\",\"MIPIF_SEN\":\"%d\"\n",
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+		}
+	}
+
+	return rc;
 }
 
 static ssize_t front_camera_hw_param_store(struct device *dev,
@@ -938,16 +1204,45 @@ static ssize_t front_camera_hw_param_store(struct device *dev,
 	return size;
 }
 
+#if defined(CONFIG_SAMSUNG_SECURE_CAMERA)
+uint8_t iris_module_id[FROM_MODULE_ID_SIZE + 1] = "\0";
 static ssize_t iris_camera_hw_param_show(struct device *dev,
 					 struct device_attribute *attr, char *buf)
 {
+	ssize_t rc = 0;
+	int16_t moduelid_chk = 0;
 	struct cam_hw_param *ec_param = NULL;
 	msm_is_sec_get_iris_hw_param(&ec_param);
 
-	return sprintf(buf, "\"I2CI_AF\":\"%d\",\"I2CI_COM\":\"%d\",\"I2CI_OIS\":\"%d\","
-		"\"I2CI_SEN\":\"%d\",\"MIPII_COM\":\"%d\",\"MIPII_SEN\":\"%d\"\n",
-		ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
-		ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+	if(ec_param != NULL) {
+		moduelid_chk = is_hw_param_valid_module_id(iris_module_id);
+		switch (moduelid_chk) {
+			case HW_PARAMS_MI_VALID:
+				rc = sprintf(buf, "\"CAMII_ID\":\"%c%c%c%c%cXX%02X%02X%02X\",\"I2CI_AF\":\"%d\",\"I2CI_COM\":\"%d\",\"I2CI_OIS\":\"%d\","
+					"\"I2CI_SEN\":\"%d\",\"MIPII_COM\":\"%d\",\"MIPII_SEN\":\"%d\"\n",
+					iris_module_id[0], iris_module_id[1], iris_module_id[2], iris_module_id[3],
+					iris_module_id[4], iris_module_id[7], iris_module_id[8], iris_module_id[9],
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+			case HW_PARAMS_MIR_ERR_1:
+				rc = sprintf(buf, "\"CAMII_ID\":\"MIR_ERR\",\"I2CI_AF\":\"%d\",\"I2CI_COM\":\"%d\",\"I2CI_OIS\":\"%d\","
+					"\"I2CI_SEN\":\"%d\",\"MIPII_COM\":\"%d\",\"MIPII_SEN\":\"%d\"\n",
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+			default:
+				rc = sprintf(buf, "\"CAMII_ID\":\"MI_NO\",\"I2CI_AF\":\"%d\",\"I2CI_COM\":\"%d\",\"I2CI_OIS\":\"%d\","
+					"\"I2CI_SEN\":\"%d\",\"MIPII_COM\":\"%d\",\"MIPII_SEN\":\"%d\"\n",
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+		}
+	}
+
+	return rc;
 }
 
 static ssize_t iris_camera_hw_param_store(struct device *dev,
@@ -966,6 +1261,65 @@ static ssize_t iris_camera_hw_param_store(struct device *dev,
 
 	return size;
 }
+#endif
+
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+static ssize_t rear2_camera_hw_param_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	ssize_t rc = 0;
+	int16_t moduelid_chk = 0;
+	struct cam_hw_param *ec_param = NULL;
+	msm_is_sec_get_rear2_hw_param(&ec_param);
+
+	if(ec_param != NULL) {
+		moduelid_chk = is_hw_param_valid_module_id(rear_module_id);
+		switch (moduelid_chk) {
+			case HW_PARAMS_MI_VALID:
+				rc = sprintf(buf, "\"CAMIR2_ID\":\"%c%c%c%c%cXX%02X%02X%02X\",\"I2CR2_AF\":\"%d\",\"I2CR2_COM\":\"%d\",\"I2CR2_OIS\":\"%d\","
+					"\"I2CR2_SEN\":\"%d\",\"MIPIR2_COM\":\"%d\",\"MIPIR2_SEN\":\"%d\"\n",
+					rear_module_id[0], rear_module_id[1], rear_module_id[2], rear_module_id[3],
+					rear_module_id[4], rear_module_id[7], rear_module_id[8], rear_module_id[9],
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+			case HW_PARAMS_MIR_ERR_1:
+				rc = sprintf(buf, "\"CAMIR2_ID\":\"MIR_ERR\",\"I2CR2_AF\":\"%d\",\"I2CR2_COM\":\"%d\",\"I2CR2_OIS\":\"%d\","
+					"\"I2CR2_SEN\":\"%d\",\"MIPIR2_COM\":\"%d\",\"MIPIR2_SEN\":\"%d\"\n",
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+
+			default:
+				rc = sprintf(buf, "\"CAMIR2_ID\":\"MI_NO\",\"I2CR2_AF\":\"%d\",\"I2CR2_COM\":\"%d\",\"I2CR2_OIS\":\"%d\","
+					"\"I2CR2_SEN\":\"%d\",\"MIPIR2_COM\":\"%d\",\"MIPIR2_SEN\":\"%d\"\n",
+					ec_param->i2c_af_err_cnt, ec_param->i2c_comp_err_cnt, ec_param->i2c_ois_err_cnt,
+					ec_param->i2c_sensor_err_cnt, ec_param->mipi_comp_err_cnt, ec_param->mipi_sensor_err_cnt);
+				break;
+		}
+	}
+
+	return rc;
+}
+
+static ssize_t rear2_camera_hw_param_store(struct device *dev,
+					  struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct cam_hw_param *ec_param = NULL;
+
+	CDBG("[HWB_DBG][R2] buf : %s\n", buf);
+
+	if (!strncmp(buf, "c", 1)) {
+		msm_is_sec_get_rear2_hw_param(&ec_param);
+		if (ec_param != NULL) {
+			msm_is_sec_init_err_cnt_file(ec_param);
+		}
+	}
+
+	return size;
+}
+#endif
 #endif
 
 static DEVICE_ATTR(rear_camtype, S_IRUGO, back_camera_type_show, NULL);
@@ -1054,6 +1408,11 @@ static DEVICE_ATTR(rear2_mtf_exif, S_IRUGO|S_IWUSR|S_IWGRP,
 		rear2_mtf_exif_show, rear2_mtf_exif_store);
 static DEVICE_ATTR(rear2_sensorid_exif, S_IRUGO|S_IWUSR|S_IWGRP,
 		rear2_sensorid_exif_show, rear2_sensorid_exif_store);
+static DEVICE_ATTR(rear_dualcal, S_IRUGO, rear_dual_cal_show, NULL);
+static DEVICE_ATTR(rear_dualcal_size, S_IRUGO, rear_dual_cal_size_show, NULL);
+static DEVICE_ATTR(rear2_tilt, S_IRUGO, rear2_tilt_show, NULL);
+
+
 #endif
 
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
@@ -1061,8 +1420,89 @@ static DEVICE_ATTR(rear_hwparam, S_IRUGO|S_IWUSR|S_IWGRP,
 		rear_camera_hw_param_show, rear_camera_hw_param_store);
 static DEVICE_ATTR(front_hwparam, S_IRUGO|S_IWUSR|S_IWGRP,
 		front_camera_hw_param_show, front_camera_hw_param_store);
+#if defined(CONFIG_SAMSUNG_SECURE_CAMERA)
 static DEVICE_ATTR(iris_hwparam, S_IRUGO|S_IWUSR|S_IWGRP,
 		iris_camera_hw_param_show, iris_camera_hw_param_store);
+#endif
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+static DEVICE_ATTR(rear2_hwparam, S_IRUGO|S_IWUSR|S_IWGRP,
+		rear2_camera_hw_param_show, rear2_camera_hw_param_store);
+#endif
+#endif
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+char ae_awb_last_value[128] = "0\n";
+static ssize_t ae_awb_value_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	CDBG("[syscamera] ae_awb_value_show : %s\n", ae_awb_last_value);
+	return snprintf(buf, sizeof(ae_awb_last_value), "%s", ae_awb_last_value);
+}
+
+static ssize_t ae_awb_value_store(struct device *dev,
+					  struct device_attribute *attr, const char *buf, size_t size)
+{
+	CDBG("[FW_DBG] buf : %s\n", buf);
+	snprintf(ae_awb_last_value, sizeof(ae_awb_last_value), "%s", buf);
+	return size;
+}
+static DEVICE_ATTR(ae_awb_value, S_IRUGO|S_IWUSR|S_IWGRP,
+		ae_awb_value_show, ae_awb_value_store);
+
+char af_main_position_value[128] = "0\n";
+static ssize_t af_main_position_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	CDBG("[syscamera] af_main_position_show : %s\n", af_main_position_value);
+	return snprintf(buf, sizeof(af_main_position_value), "%s", af_main_position_value);
+}
+
+static ssize_t af_main_position_store(struct device *dev,
+					  struct device_attribute *attr, const char *buf, size_t size)
+{
+	CDBG("[FW_DBG] buf : %s\n", buf);
+	snprintf(af_main_position_value, sizeof(af_main_position_value), "%s", buf);
+	return size;
+}
+static DEVICE_ATTR(af_main_position, S_IRUGO|S_IWUSR|S_IWGRP,
+		af_main_position_show, af_main_position_store);
+
+
+char af_aux_position_value[128] = "0\n";
+static ssize_t af_aux_position_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	CDBG("[syscamera] af_aux_position_show : %s\n", af_aux_position_value);
+	return snprintf(buf, sizeof(af_aux_position_value), "%s", af_aux_position_value);
+}
+
+static ssize_t af_aux_position_store(struct device *dev,
+					  struct device_attribute *attr, const char *buf, size_t size)
+{
+	CDBG("[FW_DBG] buf : %s\n", buf);
+	snprintf(af_aux_position_value, sizeof(af_aux_position_value), "%s", buf);
+	return size;
+}
+static DEVICE_ATTR(af_aux_position, S_IRUGO|S_IWUSR|S_IWGRP,
+		af_aux_position_show, af_aux_position_store);
+
+
+char dual_fallback_value[40] = "0\n";
+static ssize_t dual_fallback_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	CDBG("[syscamera] dual_fallback_show : %s\n", dual_fallback_value);
+	return snprintf(buf, sizeof(dual_fallback_value), "%s", dual_fallback_value);
+}
+
+static ssize_t dual_fallback_store(struct device *dev,
+					  struct device_attribute *attr, const char *buf, size_t size)
+{
+	CDBG("[FW_DBG] buf : %s\n", buf);
+	snprintf(dual_fallback_value, sizeof(dual_fallback_value), "%s", buf);
+	return size;
+}
+static DEVICE_ATTR(fallback, S_IRUGO|S_IWUSR|S_IWGRP,
+		dual_fallback_show, dual_fallback_store);
 #endif
 
 int svc_cheating_prevent_device_file_create(struct kobject **obj)
@@ -1102,6 +1542,10 @@ static int __init msm_sensor_init_module(void)
 	struct device         *cam_dev_front;
 #if defined(CONFIG_SAMSUNG_SECURE_CAMERA)
 	struct device         *cam_dev_iris;
+#endif
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+	struct device         *cam_dev_af;
+	struct device         *cam_dev_dual;
 #endif
 	struct kobject *SVC = 0;
 	int ret = 0;
@@ -1421,6 +1865,13 @@ static int __init msm_sensor_init_module(void)
 		goto device_create_fail;
 	}
 
+	if (device_create_file(cam_dev_back, &dev_attr_rear2_tilt) < 0) {
+		printk("Failed to create device file!(%s)!\n",
+			dev_attr_rear2_tilt.attr.name);
+		ret = -ENODEV;
+		goto device_create_fail;
+	}
+
 	if (device_create_file(cam_dev_back, &dev_attr_rear2_caminfo) < 0) {
 		printk("Failed to create device file!(%s)!\n",
 			dev_attr_rear2_caminfo.attr.name);
@@ -1447,6 +1898,18 @@ static int __init msm_sensor_init_module(void)
 		ret = -ENODEV;
 		goto device_create_fail;
 	}
+	if (device_create_file(cam_dev_back, &dev_attr_rear_dualcal) < 0) {
+		printk("Failed to create device file!(%s)!\n",
+			dev_attr_rear_dualcal.attr.name);
+		ret = -ENODEV;
+		goto device_create_fail;
+	}
+	if (device_create_file(cam_dev_back, &dev_attr_rear_dualcal_size) < 0) {
+		printk("Failed to create device file!(%s)!\n",
+			dev_attr_rear_dualcal_size.attr.name);
+		ret = -ENODEV;
+		goto device_create_fail;
+	}
 #endif
 
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
@@ -1460,10 +1923,62 @@ static int __init msm_sensor_init_module(void)
 			dev_attr_front_hwparam.attr.name);
 	}
 
+#if defined(CONFIG_SAMSUNG_SECURE_CAMERA)
 	if (device_create_file(cam_dev_iris, &dev_attr_iris_hwparam) < 0) {
 		printk("Failed to create device file!(%s)!\n",
 			dev_attr_iris_hwparam.attr.name);
 	}
+#endif
+
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+	if (device_create_file(cam_dev_back, &dev_attr_rear2_hwparam) < 0) {
+		printk("Failed to create device file!(%s)!\n",
+			dev_attr_rear2_hwparam.attr.name);
+	}
+#endif
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+	cam_dev_af = device_create(camera_class, NULL,
+		1, NULL, "af");
+	if (IS_ERR(cam_dev_af)) {
+		printk("Failed to create cam_dev_af device!\n");
+		ret = -ENODEV;
+		goto device_create_fail;
+	}
+	if (device_create_file(cam_dev_af, &dev_attr_ae_awb_value) < 0) {
+		printk("Failed to create device file!(%s)!\n",
+			dev_attr_ae_awb_value.attr.name);
+		ret = -ENODEV;
+		goto device_create_fail;
+	}
+
+	if (device_create_file(cam_dev_af, &dev_attr_af_main_position) < 0) {
+		printk("Failed to create device file!(%s)!\n",
+			dev_attr_af_main_position.attr.name);
+		ret = -ENODEV;
+		goto device_create_fail;
+	}
+
+	if (device_create_file(cam_dev_af, &dev_attr_af_aux_position) < 0) {
+		printk("Failed to create device file!(%s)!\n",
+			dev_attr_af_aux_position.attr.name);
+		ret = -ENODEV;
+		goto device_create_fail;
+	}
+
+    cam_dev_dual = device_create(camera_class, NULL,
+	    1, NULL, "dual");
+    if (IS_ERR(cam_dev_dual)) {
+	    printk("Failed to create cam_dev_dual device!\n");
+		ret = -ENODEV;
+		goto device_create_fail;
+    }
+    if (device_create_file(cam_dev_dual, &dev_attr_fallback) < 0) {
+	    printk("Failed to create device file!(%s)!\n",
+		    dev_attr_fallback.attr.name);
+		ret = -ENODEV;
+		goto device_create_fail;
+    }
+#endif
 #endif
 
 	pr_warn("MSM_SENSOR_INIT_MODULE : X");

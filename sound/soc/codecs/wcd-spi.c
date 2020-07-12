@@ -84,8 +84,12 @@
 /* Max size is 32 bytes less than 64Kbytes */
 #define WCD_SPI_RW_MULTI_MAX_LEN ((64 * 1024) - 32)
 
-/* Max size for the pre-allocated buffers */
-#define WCD_SPI_RW_MAX_BUF_SIZE (64 * 1024)
+/*
+ * Max size for the pre-allocated buffers is the max
+ * possible read/write length + 32 bytes for the SPI
+ * read/write command header itself.
+ */
+#define WCD_SPI_RW_MAX_BUF_SIZE (WCD_SPI_RW_MULTI_MAX_LEN + 32)
 
 /* Alignment requirements */
 #define WCD_SPI_RW_MIN_ALIGN    WCD_SPI_WORD_BYTE_CNT
@@ -243,7 +247,7 @@ static int wcd_spi_read_single(struct spi_device *spi,
 	dev_dbg(&spi->dev, "%s: remote_addr = 0x%x\n",
 		__func__, remote_addr);
 
-	if (!wcd_spi->tx_buf) {
+	if (!tx_buf) {
 		dev_err(&spi->dev, "%s: tx_buf not allocated\n",
 			__func__);
 		return -ENOMEM;
@@ -285,8 +289,8 @@ static int wcd_spi_read_multi(struct spi_device *spi,
 	frame |= remote_addr & WCD_CMD_ADDR_MASK;
 
 	if (!tx_buf || !rx_buf) {
-		dev_err(&spi->dev, "%s: tx_buf not allocated\n",
-			__func__);
+		dev_err(&spi->dev, "%s: %s not allocated\n", __func__,
+			(!tx_buf) ? "tx_buf" : "rx_buf");
 		return -ENOMEM;
 	}
 
@@ -549,7 +553,7 @@ static int wcd_spi_clk_enable(struct spi_device *spi)
 {
 	struct wcd_spi_priv *wcd_spi = spi_get_drvdata(spi);
 	int ret;
-	u32 rd_status;
+	u32 rd_status = 0;
 
 	ret = wcd_spi_cmd_nop(spi);
 	if (IS_ERR_VALUE(ret)) {

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -99,7 +99,7 @@ enum {
 /* bit definitions for REG_UFS_CFG1 register */
 #define QUNIPRO_SEL	UFS_BIT(0)
 #define TEST_BUS_EN		BIT(18)
-#define TEST_BUS_SEL		GENMASK(22, 19)
+#define TEST_BUS_SEL		0x780000
 #define UFS_REG_TEST_BUS_EN	BIT(30)
 
 /* bit definitions for REG_UFS_CFG2 register */
@@ -373,6 +373,7 @@ struct ufs_qcom_host {
 	spinlock_t ice_work_lock;
 	struct work_struct ice_cfg_work;
 	struct request *req_pending;
+	struct ufs_vreg *vddp_ref_clk;
 	/* hw reset info. */
 	unsigned int hw_reset_count;
 	unsigned long last_hw_reset;
@@ -381,6 +382,7 @@ struct ufs_qcom_host {
 	unsigned long hw_reset_outstanding_tasks;
 	unsigned long hw_reset_outstanding_reqs;
 	struct ufs_stats hw_reset_ufs_stats;
+	bool work_pending;
 };
 
 static inline u32
@@ -396,6 +398,8 @@ ufs_qcom_get_debug_reg_offset(struct ufs_qcom_host *host, u32 reg)
 #define ufs_qcom_is_link_active(hba) ufshcd_is_link_active(hba)
 #define ufs_qcom_is_link_hibern8(hba) ufshcd_is_link_hibern8(hba)
 
+bool ufs_qcom_testbus_cfg_is_ok(struct ufs_qcom_host *host, u8 select_major,
+		u8 select_minor);
 int ufs_qcom_testbus_config(struct ufs_qcom_host *host);
 void ufs_qcom_print_hw_debug_reg_all(struct ufs_hba *hba, void *priv,
 		void (*print_fn)(struct ufs_hba *hba, int offset, int num_regs,

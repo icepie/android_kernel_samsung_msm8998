@@ -324,5 +324,7 @@ extern int sm5720_update_reg(struct i2c_client *i2c, u8 reg, u8 val, u8 mask);
 
 extern int sm5720_get_device_ID(void);
 
+extern int sm5720_charger_oper_get_cv_batreg(void);
+
 #endif /* __SM5720_PRIV_H__ */
 

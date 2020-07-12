@@ -26,9 +26,13 @@
  *  interface:
  *  MSM_EXT_DISP_HPD_AUDIO: audio will be routed to external display
  *  MSM_EXT_DISP_HPD_VIDEO: video will be routed to external display
+ *  MSM_EXT_DISP_HPD_ASYNC_AUDIO: don't wait audio notification once wake it up
+ *  MSM_EXT_DISP_HPD_ASYNC_VIDEO: don't wait video notification once wake it up
  */
 #define MSM_EXT_DISP_HPD_AUDIO BIT(0)
 #define MSM_EXT_DISP_HPD_VIDEO BIT(1)
+#define MSM_EXT_DISP_HPD_ASYNC_AUDIO BIT(2)
+#define MSM_EXT_DISP_HPD_ASYNC_VIDEO BIT(3)
 
 /**
  * struct ext_disp_cable_notify - cable notify handler structure
@@ -91,7 +95,7 @@ enum msm_ext_disp_power_state {
 /**
  * struct msm_ext_disp_intf_ops - operations exposed to display interface
  * @hpd: updates external display interface state
- * @notify: updates audio framework with interface state
+ * @notify: acknowledgment to power on or off
  */
 struct msm_ext_disp_intf_ops {
 	int (*hpd)(struct platform_device *pdev,
@@ -100,8 +104,7 @@ struct msm_ext_disp_intf_ops {
 			u32 flags);
 	int (*notify)(struct platform_device *pdev,
 			enum msm_ext_disp_cable_state state);
-	int (*ack)(struct platform_device *pdev,
-			u32 ack);
+	int (*ack)(struct platform_device *pdev, u32 ack);
 #ifdef CONFIG_SEC_DISPLAYPORT
 	void (*set_audio_ch)(struct platform_device *pdev,
 			int ch);
@@ -114,6 +117,8 @@ struct msm_ext_disp_intf_ops {
  * @get_audio_edid_blk: retrieve audio edid block
  * @cable_status: cable connected/disconnected
  * @get_intf_id: id of connected interface
+ * @acknowledge: acknowledge audio status
+ * @codec_ready: notify when codec is ready
  */
 struct msm_ext_disp_audio_codec_ops {
 	int (*audio_info_setup)(struct platform_device *pdev,
@@ -123,6 +128,8 @@ struct msm_ext_disp_audio_codec_ops {
 	int (*cable_status)(struct platform_device *pdev, u32 vote);
 	int (*get_intf_id)(struct platform_device *pdev);
 	void (*teardown_done)(struct platform_device *pdev);
+	int (*acknowledge)(struct platform_device *pdev, u32 ack);
+	void (*codec_ready)(struct platform_device *pdev);
 };
 
 /*

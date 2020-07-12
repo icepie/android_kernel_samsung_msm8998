@@ -13,7 +13,6 @@
 #include <linux/cpufreq.h>
 #include "../ss_dsi_panel_common.h"
 #include "ss_dsi_poc_S6E3HA6.h"
-/*#include "ss_dsi_poc_img_S6E3HA6.h" */
 
 #define DEBUG_POC_CNT 100000
 
@@ -57,7 +56,7 @@ static int ss_poc_write(struct samsung_display_driver_data *vdd, char *data, u32
 {
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 	struct dsi_panel_cmds *poc_write_continue, *poc_write_1byte = NULL;
-	int pos;
+	int pos = 0;
 	int ret = 0;
 
 	if (IS_ERR_OR_NULL(vdd)) {
@@ -146,7 +145,7 @@ static int ss_poc_read(struct samsung_display_driver_data *vdd, u8 *buf, u32 rea
 	struct dsi_panel_cmds *poc_tx_read, *poc_rx_read = NULL;
 	struct cpufreq_policy *policy;
 	int cpu;
-	int pos;
+	int pos = 0;
 	int ret = 0;
 
 	if (IS_ERR_OR_NULL(vdd)) {
@@ -161,9 +160,8 @@ static int ss_poc_read(struct samsung_display_driver_data *vdd, u8 *buf, u32 rea
 		LCD_ERR("ctrl_pdata is null \n");
 		return -EINVAL;
 	}
-	
+
 	mutex_lock(&vdd->vdd_poc_operation_lock);
-	
 	vdd->poc_operation = true;
 
 	get_online_cpus();
@@ -236,7 +234,6 @@ cancel_poc:
 	put_online_cpus();
 
 	vdd->poc_operation = false;
-
 	mutex_unlock(&vdd->vdd_poc_operation_lock);
 
 	LCD_INFO("ss_poc_read ----- \n");
@@ -791,7 +788,7 @@ static int __init ss_dsi_poc_init(void)
 	}
 
 	if (!vdd->poc_driver.is_support) {
-		LCD_ERR("Not Support POC Function \n");
+		LCD_ERR("Not Support POC Driver!\n");
 		return -ENODEV;
 	}
 

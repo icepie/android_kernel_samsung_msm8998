@@ -200,8 +200,11 @@ static void hsuart_power(int on)
 		return;
 	}
 
-	if (on)
-	{
+	if (on) {
+		if (!test_bit(BT_PROTO, &flags)) {
+			BT_DBG("%s called. But bluesleep already stopped 1", __func__);
+			return;
+		}
 		clk_cnt = bluesleep_get_uart_clock_count();
 		client_cnt = bluesleep_get_uart_client_count();
 
@@ -213,6 +216,10 @@ static void hsuart_power(int on)
 		{
 			BT_DBG("hsuart_power on");
 			msm_hs_request_clock_on(bsi->uport);
+		}
+		if (!test_bit(BT_PROTO, &flags)) {
+			BT_DBG("%s called. But bluesleep already stopped 2", __func__);
+			return;
 		}
 		msm_hs_set_mctrl(bsi->uport, TIOCM_RTS);
 	}
@@ -493,7 +500,7 @@ static void bluesleep_stop(void)
 
 	wake_lock_timeout(&bsi->wake_lock, HZ / 2);
 
-	bsi->uport = NULL;
+	//bsi->uport = NULL;
 }
 
 struct uart_port *bluesleep_get_uart_port(void)
@@ -535,7 +542,9 @@ static ssize_t bluesleep_write_proc_lpm(struct file *file, const char __user *bu
 		/* HCI_DEV_UNREG */
 		bluesleep_stop();
 		bt_enabled = false;
-		//bsi->uport = NULL;
+		hsuart_power(0);
+
+		bsi->uport = NULL;
 	} else if (b == '1') {
 		BT_ERR("(bluesleep_write_proc_lpm) Reg HCI notifier.");
 		/* HCI_DEV_REG */
@@ -601,10 +610,9 @@ static void bluesleep_tx_timer_expire(unsigned long data)
 	} else {
 		BT_DBG("Tx data during last period");
 		mod_timer(&tx_timer, jiffies + (TX_TIMER_INTERVAL*HZ));
+		/* clear the incoming data flag */
+		clear_bit(BT_TXDATA, &flags);
 	}
-
-	/* clear the incoming data flag */
-	clear_bit(BT_TXDATA, &flags);
 }
 
 /**

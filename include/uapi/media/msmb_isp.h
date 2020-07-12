@@ -24,6 +24,8 @@
 
 #define ISP_STATS_STREAM_BIT  0x80000000
 
+#define VFE_HW_LIMIT 1
+
 struct msm_vfe_cfg_cmd_list;
 
 enum ISP_START_PIXEL_PATTERN {
@@ -293,9 +295,10 @@ struct msm_vfe_axi_plane_cfg {
 	uint8_t rdi_cid;/*CID 1-16*/
 };
 
-enum msm_stream_memory_input_t {
-	MEMORY_INPUT_DISABLED,
-	MEMORY_INPUT_ENABLED
+enum msm_stream_rdi_input_type {
+	MSM_CAMERA_RDI_MIN,
+	MSM_CAMERA_RDI_PDAF,
+	MSM_CAMERA_RDI_MAX,
 };
 
 struct msm_vfe_axi_stream_request_cmd {
@@ -318,7 +321,7 @@ struct msm_vfe_axi_stream_request_cmd {
 	uint32_t controllable_output;
 	uint32_t burst_len;
 	/* Flag indicating memory input stream */
-	enum msm_stream_memory_input_t memory_input;
+	enum msm_stream_rdi_input_type rdi_input_type;
 };
 
 struct msm_vfe_axi_stream_release_cmd {
@@ -455,6 +458,7 @@ enum msm_vfe_reg_cfg_type {
 	VFE_HW_UPDATE_UNLOCK,
 	SET_WM_UB_SIZE,
 	SET_UB_POLICY,
+	GET_VFE_HW_LIMIT,
 };
 
 struct msm_vfe_cfg_cmd2 {
@@ -726,6 +730,7 @@ struct msm_isp_fetch_eng_event {
 struct msm_isp_stats_event {
 	uint32_t stats_mask;                        /* 4 bytes */
 	uint8_t stats_buf_idxs[MSM_ISP_STATS_MAX];  /* 11 bytes */
+	uint8_t pd_stats_idx;
 };
 
 struct msm_isp_stream_ack {
@@ -841,6 +846,11 @@ struct msm_isp_dual_hw_master_slave_sync {
 	uint32_t reserved[2];
 };
 
+struct msm_vfe_dual_lpm_mode {
+	enum msm_vfe_axi_stream_src stream_src[VFE_AXI_SRC_MAX];
+	uint32_t num_src;
+	uint32_t lpm_mode;
+};
 #define V4L2_PIX_FMT_QBGGR8  v4l2_fourcc('Q', 'B', 'G', '8')
 #define V4L2_PIX_FMT_QGBRG8  v4l2_fourcc('Q', 'G', 'B', '8')
 #define V4L2_PIX_FMT_QGRBG8  v4l2_fourcc('Q', 'G', 'R', '8')
@@ -901,6 +911,7 @@ enum msm_isp_ioctl_cmd_code {
 	MSM_ISP_FETCH_ENG_MULTI_PASS_START,
 	MSM_ISP_MAP_BUF_START_MULTI_PASS_FE,
 	MSM_ISP_REQUEST_BUF_VER2,
+	MSM_ISP_DUAL_HW_LPM_MODE,
 };
 
 #define VIDIOC_MSM_VFE_REG_CFG \
@@ -1020,5 +1031,9 @@ enum msm_isp_ioctl_cmd_code {
 
 #define VIDIOC_MSM_ISP_REQUEST_BUF_VER2 \
 	_IOWR('V', MSM_ISP_REQUEST_BUF_VER2, struct msm_isp_buf_request_ver2)
+
+#define VIDIOC_MSM_ISP_DUAL_HW_LPM_MODE \
+	_IOWR('V', MSM_ISP_DUAL_HW_LPM_MODE, \
+	struct msm_vfe_dual_lpm_mode)
 
 #endif /* __MSMB_ISP__ */

@@ -1,23 +1,18 @@
 /*
- * snd-dbmdx-pcm.c -- DVF99 DBMDX ASoC platform driver
+ * snd-dbmdx-pcm.c -- DBMDX ASoC platform driver
  *
- *  Copyright (C) 2014 DSPG Technologies GmbH
+ * Copyright (C) 2014 DSP Group
  *
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
+
 
 #define DEBUG
 #include <linux/workqueue.h>
@@ -47,10 +42,12 @@
 #define MIN_PERIOD_SIZE		4096
 #define MAX_PERIOD_SIZE		(MAX_BUFFER_SIZE / 64)
 #define USE_FORMATS		(SNDRV_PCM_FMTBIT_S16_LE)
-#define USE_RATE		(SNDRV_PCM_RATE_16000 |	\
-				SNDRV_PCM_RATE_32000 |	\
-				SNDRV_PCM_RATE_48000)
+
+#ifdef DBMDX_PCM_RATE_8000_SUPPORTED
+#define USE_RATE_MIN		8000
+#else
 #define USE_RATE_MIN		16000
+#endif
 #define USE_RATE_MAX		48000
 #define USE_CHANNELS_MIN	1
 #ifdef DBMDX_4CHANNELS_SUPPORT
@@ -87,7 +84,17 @@ static struct snd_pcm_hardware dbmdx_pcm_hardware = {
 				 SNDRV_PCM_INFO_MMAP_VALID |
 				 SNDRV_PCM_INFO_BATCH),
 	.formats =		USE_FORMATS,
-	.rates =		USE_RATE,
+	.rates =		(SNDRV_PCM_RATE_16000 |
+#ifdef DBMDX_PCM_RATE_8000_SUPPORTED
+				SNDRV_PCM_RATE_8000  |
+#endif
+#ifdef DBMDX_PCM_RATE_32000_SUPPORTED
+				SNDRV_PCM_RATE_32000 |
+#endif
+#ifdef DBMDX_PCM_RATE_44100_SUPPORTED
+				SNDRV_PCM_RATE_44100 |
+#endif
+				SNDRV_PCM_RATE_48000),
 	.rate_min =		USE_RATE_MIN,
 	.rate_max =		USE_RATE_MAX,
 	.channels_min =		USE_CHANNELS_MIN,
@@ -286,28 +293,28 @@ int dbmdx_set_pcm_timer_mode(struct snd_pcm_substream *substream,
 	struct snd_dbmdx_runtime_data *prtd;
 
 	if (!substream) {
-			pr_debug("%s:Substream is NULL\n", __func__);
-			return -1;
+		pr_debug("%s:Substream is NULL\n", __func__);
+		return -EINVAL;
 	}
 
 	runtime = substream->runtime;
 
 	if (!runtime) {
-			pr_debug("%s:Runtime is NULL\n", __func__);
-			return -1;
+		pr_debug("%s:Runtime is NULL\n", __func__);
+		return -EINVAL;
 	}
 
 	prtd = runtime->private_data;
 
 	if (!prtd) {
-			pr_debug("%s:Runtime Pr. Data is NULL\n", __func__);
-			return -1;
+		pr_debug("%s:Runtime Pr. Data is NULL\n", __func__);
+		return -EINVAL;
 	}
 
 	if (enable_timer) {
 		if (!(prtd->capture_in_progress)) {
 			pr_debug("%s:Capture is not in progress\n", __func__);
-			return -1;
+			return -EINVAL;
 		}
 
 		if (prtd->timer_is_active) {
@@ -319,7 +326,7 @@ int dbmdx_set_pcm_timer_mode(struct snd_pcm_substream *substream,
 		if (ret < 0) {
 			pr_err("%s: failed to start capture device\n",
 				__func__);
-			return -3;
+			return -EIO;
 		}
 	} else {
 		if (!(prtd->timer_is_active)) {
@@ -330,7 +337,7 @@ int dbmdx_set_pcm_timer_mode(struct snd_pcm_substream *substream,
 		ret = dbmdx_stop_period_timer(substream);
 		if (ret < 0) {
 			pr_err("%s: failed to stop capture device\n", __func__);
-			return -2;
+			return -EIO;
 		}
 
 	}
@@ -367,21 +374,10 @@ static void  dbmdx_pcm_start_capture_work(struct work_struct *work)
 		pr_err("%s: failed to start capture device\n", __func__);
 		goto out;
 	}
-#if 1
+
 	msleep(DBMDX_MSLEEP_PCM_STREAMING_WORK);
-#endif
-#if 0
-	ret = dbmdx_start_period_timer(substream);
-	if (ret < 0) {
-		pr_err("%s: failed to start capture device\n", __func__);
-		prtd->capture_in_progress = 0;
-		dbmdx_stop_pcm_streaming();
-		goto out;
-	}
-#endif
 out:
 	pcm_command_in_progress(prtd, 0);
-	return;
 }
 
 static void dbmdx_pcm_stop_capture_work(struct work_struct *work)
@@ -400,7 +396,7 @@ static void dbmdx_pcm_stop_capture_work(struct work_struct *work)
 
 	if (!(prtd->capture_in_progress)) {
 		pr_debug("%s:Capture is not in progress\n", __func__);
-		return;
+		goto out;
 	}
 
 	ret = dbmdx_stop_pcm_streaming(codec);
@@ -415,10 +411,8 @@ static void dbmdx_pcm_stop_capture_work(struct work_struct *work)
 	}
 
 	prtd->capture_in_progress = 0;
-
+out:
 	pcm_command_in_progress(prtd, 0);
-
-	return;
 }
 
 static int dbmdx_pcm_open(struct snd_pcm_substream *substream)
@@ -742,7 +736,7 @@ static int dbmdx_pcm_platform_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id snd_soc_platform_of_ids[] = {
+static const struct of_device_id snd_soc_platform_of_ids[] = {
 	{ .compatible = "dspg,dbmdx-snd-soc-platform" },
 	{ },
 };

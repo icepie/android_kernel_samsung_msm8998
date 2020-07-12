@@ -19,21 +19,34 @@ static int ddi_spi_status = DDI_SPI_RESUME;
 int ss_spi_read(struct spi_device *spi, u8 rxaddr, u8 *buf, int size)
 {
 	int i;
-    u16 cmd_addr;
-	u16 rx_buf[256];
+	u16 cmd_addr;
+	u8 rx_buf[256];
+#if defined(CONFIG_SEC_FACTORY)
+	u8 dummy_buf;
+#endif
 
-    struct spi_message msg;
-    int ret;
+	struct spi_message msg;
+	int ret;
 
-    struct spi_transfer xfer_tx = {
-        .len        = 2,
-        .tx_buf     = (u8 *)&cmd_addr,
+	struct spi_transfer xfer_tx = {
+		.bits_per_word	= 9,
+		.len			= 2,
+		.tx_buf			= (u8 *)&cmd_addr,
 
-    };
-    struct spi_transfer xfer_rx = {
-        .len        = 0,
-        .rx_buf        = rx_buf,
-    };
+	};
+	struct spi_transfer xfer_rx = {
+		.bits_per_word	= 8,
+		.len			= size,
+		.rx_buf			= rx_buf,
+	};
+
+#if defined(CONFIG_SEC_FACTORY)
+	struct spi_transfer xfer_rx_dummy = {
+		.bits_per_word	= 8,
+		.len			= 1,
+		.rx_buf			= &dummy_buf,
+	};
+#endif
 
 	if (ddi_spi_status == DDI_SPI_SUSPEND) {
 		LCD_DEBUG("ddi spi is suspend..\n");
@@ -42,38 +55,41 @@ int ss_spi_read(struct spi_device *spi, u8 rxaddr, u8 *buf, int size)
 
 	mutex_lock(&ss_spi_lock);
 
-    pr_debug("[mdss spi] %s ++ \n", __func__);
+	pr_debug("[mdss spi] %s ++\n", __func__);
 
-    if (!spi) {
-        pr_err("[mdss spi] %s : no spi device..\n", __func__);
-        return 0;
-    }
+	if (!spi) {
+		pr_err("[mdss spi] %s : no spi device..\n", __func__);
+		goto err;
+	}
 
-	xfer_rx.len = size * 2;
-    cmd_addr = (0x0 << 8) | rxaddr;
+	cmd_addr = (0x0 << 8) | rxaddr;
 
-    spi_message_init(&msg);
-    spi_message_add_tail(&xfer_tx, &msg);
-    spi_message_add_tail(&xfer_rx, &msg);
+	spi_message_init(&msg);
+	spi_message_add_tail(&xfer_tx, &msg);
+	spi_message_add_tail(&xfer_rx, &msg);
+#if defined(CONFIG_SEC_FACTORY)
+	spi_message_add_tail(&xfer_rx_dummy, &msg);
+#endif
 
-    ret = spi_sync(spi, &msg);
+	ret = spi_sync(spi, &msg);
 	if (ret) {
 		pr_err("[mdss spi] %s : spi_sync fail..\n", __func__);
-		return -EINVAL;
+		goto err;
 	}
 
 	pr_debug("[mdss spi] rx(0x%x) : ", rxaddr);
 	for (i = 0; i<size; i++) {
-		buf[i] = rx_buf[i] & 0xFF;
+		buf[i] = rx_buf[i];
 		pr_debug("%02x ", buf[i]);
 	}
 	pr_debug("\n");
 
-    pr_debug("[mdss spi] %s -- \n", __func__);
+	pr_debug("[mdss spi] %s --\n", __func__);
 
+err:
 	mutex_unlock(&ss_spi_lock);
 
-    return size;
+	return size;
 }
 
 static int ss_spi_probe(struct spi_device *client)

@@ -197,6 +197,12 @@ config CERTIFY_HALL
 	help
 	  Enable Certify Hall Feature
 
+config FOLDER_HALL
+	bool "FOLDER HALL"
+	default n
+	help
+	  Enable FOLDER Hall Feature
+
 config KEYBOARD_GPIO
 	tristate "GPIO Buttons"
 	depends on GPIOLIB || COMPILE_TEST
@@ -272,6 +278,13 @@ config KEYBOARD_MATRIX
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called matrix_keypad.
+
+config SUPPORT_KEYPAD_LED
+	bool "SUPPORT KEYPAD LED"
+	depends on KEYBOARD_MATRIX
+	default n
+	help
+	  Say Y here to use the kaypad
 
 config KEYBOARD_HIL_OLD
 	tristate "HP HIL keyboard support (simple driver)"
@@ -731,4 +744,9 @@ config KEYBOARD_BCM
 	  To compile this driver as a module, choose M here: the
 	  module will be called bcm-keypad.
 
+config KEYBOARD_ABOV_TOUCH_FOLDER
+	tristate "Abov FT16XX touchkey"
+	depends on I2C
+	help
+	  Say Y here if you want to use ABOV MC96FT16XX chip as touchkey for folder model.
 endif

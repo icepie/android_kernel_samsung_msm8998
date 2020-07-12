@@ -73,6 +73,9 @@ enum wdsp_signal {
 	/* Other signals */
 	WDSP_CDC_DOWN_SIGNAL,
 	WDSP_CDC_UP_SIGNAL,
+
+	/* DBG only code */
+	WDSP_DBG_RAMDUMP_SIGNAL,
 };
 
 /*

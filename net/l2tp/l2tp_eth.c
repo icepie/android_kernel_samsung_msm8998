@@ -30,9 +30,6 @@
 #include <net/xfrm.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
-#include <linux/ip.h>
-#include <linux/ipv6.h>
-#include <linux/udp.h>
 
 #include "l2tp_core.h"
 
@@ -209,49 +206,6 @@ static void l2tp_eth_show(struct seq_file *m, void *arg)
 }
 #endif
 
-static void l2tp_eth_adjust_mtu(struct l2tp_tunnel *tunnel,
-				struct l2tp_session *session,
-				struct net_device *dev)
-{
-	unsigned int overhead = 0;
-	struct dst_entry *dst;
-	u32 l3_overhead = 0;
-
-	if (session->mtu != 0) {
-		dev->mtu = session->mtu;
-		dev->needed_headroom += session->hdr_len;
-		if (tunnel->encap == L2TP_ENCAPTYPE_UDP)
-			dev->needed_headroom += sizeof(struct udphdr);
-		return;
-	}
-	overhead = session->hdr_len;
-	l3_overhead = kernel_sock_ip_overhead(tunnel->sock);
-	if (!tunnel->sock || (l3_overhead == 0)) {
-		/* L3 Overhead couldn't be identified, dev mtu stays at 1500 */
-		return;
-	}
-	/* Adjust MTU, factor overhead - underlay L3, overlay L2 hdr */
-	overhead += ETH_HLEN + l3_overhead;
-	/* Additionally, if the encap is UDP, account for UDP header size */
-	if (tunnel->encap == L2TP_ENCAPTYPE_UDP) {
-		overhead += sizeof(struct udphdr);
-		dev->needed_headroom += sizeof(struct udphdr);
-	}
-	/* If PMTU discovery was enabled, use discovered MTU on L2TP device */
-	dst = sk_dst_get(tunnel->sock);
-	if (dst) {
-		/* dst_mtu will use PMTU if found, else fallback to intf MTU */
-		u32 pmtu = dst_mtu(dst);
-
-		if (pmtu != 0)
-			dev->mtu = pmtu;
-		dst_release(dst);
-	}
-	session->mtu = dev->mtu - overhead;
-	dev->mtu = session->mtu;
-	dev->needed_headroom += session->hdr_len;
-}
-
 static int l2tp_eth_create(struct net *net, u32 tunnel_id, u32 session_id, u32 peer_session_id, struct l2tp_session_cfg *cfg)
 {
 	struct net_device *dev;
@@ -301,10 +255,10 @@ static int l2tp_eth_create(struct net *net, u32 tunnel_id, u32 session_id, u32 p
 	}
 
 	dev_net_set(dev, net);
-    l2tp_eth_adjust_mtu(tunnel, session, dev);
-
-	dev->min_mtu = 0;
-    dev->max_mtu = ETH_MAX_MTU;
+	if (session->mtu == 0)
+		session->mtu = dev->mtu - session->hdr_len;
+	dev->mtu = session->mtu;
+	dev->needed_headroom += session->hdr_len;
 
 	priv = netdev_priv(dev);
 	priv->dev = dev;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,10 +22,18 @@
 #if defined(CONFIG_LEDS_S2MPB02)
 #include <linux/leds-s2mpb02.h>
 #endif
+
+#if defined(CONFIG_LEDS_KTD2692)
+#include <linux/leds-ktd2692.h>
+#endif
 extern unsigned int system_rev;
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
+
+#if defined(CONFIG_LEDS_KTD2692)
+extern void ktd2692_flash_on(unsigned data);
+#endif
 
 #if defined(CONFIG_LEDS_S2MPB02)
 #define FLASH_PINCTRL_STATE_SLEEP "flash_suspend"
@@ -162,6 +170,12 @@ static int32_t msm_flash_i2c_write_table(
 	conf_array.delay = settings->delay;
 	conf_array.reg_setting = settings->reg_setting_a;
 	conf_array.size = settings->size;
+
+	/* Validate the settings size */
+	if ((!conf_array.size) || (conf_array.size > MAX_I2C_REG_SET)) {
+		pr_err("failed: invalid size %d", conf_array.size);
+		return -EINVAL;
+	}
 
 	return flash_ctrl->flash_i2c_client.i2c_func_tbl->i2c_write_table(
 		&flash_ctrl->flash_i2c_client, &conf_array);
@@ -564,6 +578,66 @@ static int32_t msm_flash_init(
 	return 0;
 }
 
+static int32_t msm_flash_init_prepare(
+	struct msm_flash_ctrl_t *flash_ctrl,
+	struct msm_flash_cfg_data_t *flash_data)
+{
+#ifdef CONFIG_COMPAT
+	struct msm_flash_cfg_data_t flash_data_k;
+	struct msm_flash_init_info_t flash_init_info;
+	int32_t i = 0;
+
+	if (!is_compat_task()) {
+		/*for 64-bit usecase,it need copy the data to local memory*/
+		flash_data_k.cfg_type = flash_data->cfg_type;
+		for (i = 0; i < MAX_LED_TRIGGERS; i++) {
+			flash_data_k.flash_current[i] =
+				flash_data->flash_current[i];
+			flash_data_k.flash_duration[i] =
+				flash_data->flash_duration[i];
+		}
+
+		flash_data_k.cfg.flash_init_info = &flash_init_info;
+		if (copy_from_user(&flash_init_info,
+			(void __user *)(flash_data->cfg.flash_init_info),
+			sizeof(struct msm_flash_init_info_t))) {
+			pr_err("%s copy_from_user failed %d\n",
+				__func__, __LINE__);
+			return -EFAULT;
+		}
+		return msm_flash_init(flash_ctrl, &flash_data_k);
+	}
+	/*
+	 * for 32-bit usecase,it already copy the userspace
+	 * data to local memory in msm_flash_subdev_do_ioctl()
+	 * so here do not need copy from user
+	 */
+	return msm_flash_init(flash_ctrl, flash_data);
+#else
+	struct msm_flash_cfg_data_t flash_data_k;
+	struct msm_flash_init_info_t flash_init_info;
+	int32_t i = 0;
+
+	flash_data_k.cfg_type = flash_data->cfg_type;
+	for (i = 0; i < MAX_LED_TRIGGERS; i++) {
+		flash_data_k.flash_current[i] =
+			flash_data->flash_current[i];
+		flash_data_k.flash_duration[i] =
+			flash_data->flash_duration[i];
+	}
+
+	flash_data_k.cfg.flash_init_info = &flash_init_info;
+	if (copy_from_user(&flash_init_info,
+		(void __user *)(flash_data->cfg.flash_init_info),
+		sizeof(struct msm_flash_init_info_t))) {
+		pr_err("%s copy_from_user failed %d\n",
+			__func__, __LINE__);
+		return -EFAULT;
+	}
+	return msm_flash_init(flash_ctrl, &flash_data_k);
+#endif
+}
+
 static int32_t msm_flash_prepare(
 	struct msm_flash_ctrl_t *flash_ctrl)
 {
@@ -606,42 +680,6 @@ static int32_t msm_flash_prepare(
 	CDBG("%s:%d:Exit\n", __func__, __LINE__);
 	return ret;
 }
-
-#ifdef CONFIG_COMPAT
-static int32_t msm_flash_init_prepare(
-	struct msm_flash_ctrl_t *flash_ctrl,
-	struct msm_flash_cfg_data_t *flash_data)
-{
-	return msm_flash_init(flash_ctrl, flash_data);
-}
-#else
-static int32_t msm_flash_init_prepare(
-	struct msm_flash_ctrl_t *flash_ctrl,
-	struct msm_flash_cfg_data_t *flash_data)
-{
-	struct msm_flash_cfg_data_t flash_data_k;
-	struct msm_flash_init_info_t flash_init_info;
-	int32_t i = 0;
-
-	flash_data_k.cfg_type = flash_data->cfg_type;
-	for (i = 0; i < MAX_LED_TRIGGERS; i++) {
-		flash_data_k.flash_current[i] =
-			flash_data->flash_current[i];
-		flash_data_k.flash_duration[i] =
-			flash_data->flash_duration[i];
-	}
-
-	flash_data_k.cfg.flash_init_info = &flash_init_info;
-	if (copy_from_user(&flash_init_info,
-			(void *)(flash_data->cfg.flash_init_info),
-			sizeof(struct msm_flash_init_info_t))) {
-			pr_err("%s copy_from_user failed %d\n",
-				__func__, __LINE__);
-			return -EFAULT;
-		}
-	return msm_flash_init(flash_ctrl, &flash_data_k);
-}
-#endif
 
 static int32_t msm_flash_low(
 	struct msm_flash_ctrl_t *flash_ctrl,
@@ -769,6 +807,9 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 	case CFG_FLASH_INIT:
 #if defined(CONFIG_LEDS_S2MPB02)
 		pr_info("CAM Flash INIT\n");
+#elif defined(CONFIG_LEDS_KTD2692)
+		ktd2692_flash_on(0);
+		CDBG("Ktd2692 led turn off: CFG_FLASH_INIT\n");
 #endif
 		rc = msm_flash_init_prepare(flash_ctrl, flash_data);
 		break;
@@ -776,9 +817,12 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 		if (flash_ctrl->flash_state != MSM_CAMERA_FLASH_RELEASE) {
 #if defined(CONFIG_LEDS_S2MPB02)
 			pr_info("CAM Flash Release\n");
-			s2mpb02_led_en(S2MPB02_FLASH_LED_1, 0);/* flash, off */
-			s2mpb02_led_en(S2MPB02_TORCH_LED_1, 0);/* torch, off */
+			s2mpb02_led_en(S2MPB02_FLASH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* flash, off */
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* torch, off */
 			flash_ctrl->flash_state = MSM_CAMERA_FLASH_RELEASE;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(0);
+			CDBG("Ktd2692 led turn off: CFG_FLASH_RELEASE\n");
 #else
 			rc = flash_ctrl->func_tbl->camera_flash_release(
 				flash_ctrl);
@@ -793,9 +837,12 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 			(flash_ctrl->flash_state != MSM_CAMERA_FLASH_OFF)) {
 #if defined(CONFIG_LEDS_S2MPB02)
 			pr_info("CAM Flash OFF\n");
-			s2mpb02_led_en(S2MPB02_FLASH_LED_1, 0);/* flash, off */
-			s2mpb02_led_en(S2MPB02_TORCH_LED_1, 0);/* torch, off */
+			s2mpb02_led_en(S2MPB02_FLASH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* flash, off */
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* torch, off */
 			flash_ctrl->flash_state = MSM_CAMERA_FLASH_OFF;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(0);
+			CDBG("Ktd2692 led turn off: CFG_FLASH_OFF\n");
 #else
 			rc = flash_ctrl->func_tbl->camera_flash_off(
 				flash_ctrl, flash_data);
@@ -812,8 +859,11 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 			(flash_ctrl->flash_state == MSM_CAMERA_FLASH_INIT)) {
 #if defined(CONFIG_LEDS_S2MPB02)
 			pr_info("CAM Pre Flash ON\n");
-			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_240MA);/* torch, on */
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_240MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
 			flash_ctrl->flash_state = MSM_CAMERA_FLASH_LOW;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(1);
+			CDBG("Ktd2692 led turn on:CFG_FLASH_LOW\n");
 #else
 			rc = flash_ctrl->func_tbl->camera_flash_low(
 				flash_ctrl, flash_data);
@@ -831,11 +881,14 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 #if defined(CONFIG_LEDS_S2MPB02)
 			pr_info("CAM Torch Flash ON\n");
 #if defined(CONFIG_FLASH_CURRENT_JAPAN)
-			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_60MA);/* torch, on */
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_60MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
 #else
-			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_180MA);/* torch, on */
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_180MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
 #endif
 			flash_ctrl->flash_state = MSM_CAMERA_FLASH_LOW;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(1);
+			CDBG("Ktd2692 led turn on:CFG_FLASH_TORCH\n");
 #else
 			rc = flash_ctrl->func_tbl->camera_flash_low(
 				flash_ctrl, flash_data);
@@ -852,7 +905,7 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 			(flash_ctrl->flash_state == MSM_CAMERA_FLASH_INIT)) {
 #if defined(CONFIG_LEDS_S2MPB02)
 			pr_info("CAM Flash ON\n");
-			s2mpb02_led_en(S2MPB02_FLASH_LED_1, S2MPB02_FLASH_OUT_I_1200MA);/* flash, on */
+			s2mpb02_led_en(S2MPB02_FLASH_LED_1, S2MPB02_FLASH_OUT_I_1200MA, S2MPB02_LED_TURN_WAY_I2C);/* flash, on */
 			flash_ctrl->flash_state = MSM_CAMERA_FLASH_HIGH;
 #else
 			rc = flash_ctrl->func_tbl->camera_flash_high(
@@ -1311,13 +1364,13 @@ static long msm_flash_subdev_do_ioctl(
 	sd = vdev_to_v4l2_subdev(vdev);
 	u32 = (struct msm_flash_cfg_data_t32 *)arg;
 
-	flash_data.cfg_type = u32->cfg_type;
-	for (i = 0; i < MAX_LED_TRIGGERS; i++) {
-		flash_data.flash_current[i] = u32->flash_current[i];
-		flash_data.flash_duration[i] = u32->flash_duration[i];
-	}
 	switch (cmd) {
 	case VIDIOC_MSM_FLASH_CFG32:
+		flash_data.cfg_type = u32->cfg_type;
+		for (i = 0; i < MAX_LED_TRIGGERS; i++) {
+			flash_data.flash_current[i] = u32->flash_current[i];
+			flash_data.flash_duration[i] = u32->flash_duration[i];
+		}
 		cmd = VIDIOC_MSM_FLASH_CFG;
 		switch (flash_data.cfg_type) {
 		case CFG_FLASH_OFF:
@@ -1359,6 +1412,9 @@ static long msm_flash_subdev_do_ioctl(
 			break;
 		}
 		break;
+	case VIDIOC_MSM_FLASH_CFG: 
+		pr_err("invalid cmd 0x%x received\n", cmd); 
+		return -EINVAL; 
 	default:
 		return msm_flash_subdev_ioctl(sd, cmd, arg);
 	}

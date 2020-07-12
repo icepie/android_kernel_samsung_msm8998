@@ -91,3 +91,9 @@ config SLPI_MOTOR
 	default n
 	help
 	  Support the motor state function
+	  
+config SLPI_MAG_CALIB_RESET
+	tristate "Sensors support Reset Mag Calibration"
+	default n
+	help
+	  Support the Reset Mag Calibration function

@@ -458,6 +458,31 @@ static void sm5720_set_manual_usb_path(struct regmap_desc *pdesc)
 	sm5720_set_switching_mode(pdesc, SWMODE_MANUAL);
 }
 
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+static void sm5720_set_manual_audio_path(struct regmap_desc *pdesc)
+{
+	int ret, value, attr;
+
+	attr = MANSW1_DM_CON_SW;
+	value = 2;
+	ret = regmap_write_value(pdesc, attr, value);
+	if (ret < 0)
+		pr_err("%s MANSW1 DM_CON_AUDIO reg write fail.\n", __func__);
+	else
+		_REGMAP_TRACE(pdesc, 'w', ret, attr, value);
+
+	attr = MANSW1_DP_CON_SW;
+	value = 2;
+	ret = regmap_write_value(pdesc, attr, value);
+	if (ret < 0)
+		pr_err("%s MANSW1 DP_CON_AUDIO reg write fail.\n", __func__);
+	else
+		_REGMAP_TRACE(pdesc, 'w', ret, attr, value);
+
+	sm5720_set_switching_mode(pdesc, SWMODE_MANUAL);
+}
+#endif
+
 static void sm5720_set_jig_on(struct regmap_desc *pdesc, int state)
 {
 	int attr, value;
@@ -741,6 +766,9 @@ static struct vendor_ops sm5720_muic_vendor_ops = {
 	.set_switch = sm5720_set_switching_mode,
 	.enable_chgdet = sm5720_enable_chgdet,
 	.set_manual_usb_path = sm5720_set_manual_usb_path,
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+	.set_manual_audio_path = sm5720_set_manual_audio_path,
+#endif
 	.set_adc_scan_mode = sm5720_set_adc_scan_mode,
 	.get_adc_scan_mode = sm5720_get_adc_scan_mode,
 	.set_jig_on = sm5720_set_jig_on,

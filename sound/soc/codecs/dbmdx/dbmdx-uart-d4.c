@@ -1,5 +1,5 @@
 /*
- * DSPG DBMD4 UART interface driver
+ * DSPG DBMD4/DBMD6/DBMD8 UART interface driver
  *
  * Copyright (C) 2014 DSP Group
  *
@@ -110,7 +110,8 @@ static int dbmd4_uart_sync(struct dbmdx_private *p)
 	}
 
 	/* Read divider register to verify that baud rate was locked
-	   successfully */
+	 *  successfully
+	 */
 	rc = uart_write_data(p, read_divider, sizeof(read_divider));
 	if (rc != sizeof(read_divider)) {
 		dev_err(uart_p->dev, "%s: could not read divider (send)\n",
@@ -121,7 +122,7 @@ static int dbmd4_uart_sync(struct dbmdx_private *p)
 	rc = uart_read_data(p, rx_divider, 6);
 	if (rc < 0) {
 		dev_err(uart_p->dev,
-			"%s: could not read divider data (recieve)\n",
+			"%s: could not read divider data (receive)\n",
 			__func__);
 		return  -EAGAIN;
 	}
@@ -175,7 +176,7 @@ static int dbmd4_uart_reset(struct dbmdx_private *p)
 	if (ret) {
 		dev_err(p->dev, "%s: failed configure uart\n",
 			__func__);
-		return -1;
+		return -EIO;
 	}
 
 
@@ -183,8 +184,9 @@ static int dbmd4_uart_reset(struct dbmdx_private *p)
 
 	dev_dbg(p->dev, "%s: start boot sync\n", __func__);
 
-	/* reset the chip */
-	p->reset_sequence(p);
+	if (!(p->boot_mode & DBMDX_BOOT_MODE_RESET_DISABLED))
+		/* reset the chip */
+		p->reset_sequence(p);
 
 	/* delay before sending commands */
 	if (p->clk_get_rate(p, DBMDX_CLK_MASTER) <= 32768)
@@ -193,15 +195,18 @@ static int dbmd4_uart_reset(struct dbmdx_private *p)
 		usleep_range(DBMDX_USLEEP_UART_D4_AFTER_RESET,
 			DBMDX_USLEEP_UART_D4_AFTER_RESET + 5000);
 
-	/* check if firmware sync is ok */
-	ret = dbmd4_uart_sync(p);
-	if (ret != 0) {
-		dev_err(uart_p->dev, "%s: sync failed\n",
-			__func__);
-		return  -EAGAIN;
-	}
+	if (!(p->cur_boot_options & DBMDX_BOOT_OPT_VA_NO_UART_SYNC)) {
 
-	dev_dbg(p->dev, "%s: boot sync successful\n", __func__);
+		/* check if firmware sync is ok */
+		ret = dbmd4_uart_sync(p);
+		if (ret != 0) {
+			dev_err(uart_p->dev, "%s: sync failed\n",
+				__func__);
+			return  -EAGAIN;
+		}
+
+		dev_dbg(p->dev, "%s: boot sync successful\n", __func__);
+	}
 
 	uart_flush_rx_fifo(uart_p);
 
@@ -217,13 +222,23 @@ static int dbmd4_uart_load_firmware(const void *fw_data, size_t fw_size,
 				(struct dbmdx_uart_private *)p->chip->pdata;
 	int ret;
 
+	/* verify chip id */
+	if (p->cur_boot_options & DBMDX_BOOT_OPT_VERIFY_CHIP_ID) {
+		ret = uart_verify_chip_id(p);
+		if (ret < 0) {
+			dev_err(p->dev, "%s: couldn't verify chip id\n",
+					__func__);
+			return -EIO;
+		}
+	}
 
-	/* send CRC clear command */
-	ret = send_uart_cmd_boot(p, DBMDX_CLEAR_CHECKSUM);
-	if (ret) {
-		dev_err(p->dev, "%s: failed to clear CRC\n",
-			 __func__);
-		return -1;
+	if (!(p->cur_boot_options & DBMDX_BOOT_OPT_DONT_CLR_CRC)) {
+		/* send CRC clear command */
+		ret = send_uart_cmd_boot(p, DBMDX_CLEAR_CHECKSUM);
+		if (ret) {
+			dev_err(p->dev, "%s: failed to clear CRC\n", __func__);
+			return -EIO;
+		}
 	}
 
 	/* send firmware */
@@ -231,17 +246,18 @@ static int dbmd4_uart_load_firmware(const void *fw_data, size_t fw_size,
 	if (ret != (fw_size - 4)) {
 		dev_err(p->dev, "%s: -----------> load firmware error\n",
 			__func__);
-		return -1;
+		return -EIO;
 	}
 
 	/* verify checksum */
-	if (checksum) {
+	if (checksum && !(p->cur_boot_options &
+					DBMDX_BOOT_OPT_DONT_VERIFY_CRC)) {
 		ret = uart_verify_boot_checksum(p, checksum, chksum_len);
 		if (ret < 0) {
 			dev_err(uart_p->dev,
 				"%s: could not verify checksum\n",
 				__func__);
-			return -1;
+			return -EIO;
 		}
 	}
 
@@ -263,6 +279,12 @@ static int dbmd4_uart_boot(const void *fw_data, size_t fw_size,
 	dev_dbg(uart_p->dev, "%s\n", __func__);
 
 	do {
+		if ((p->boot_mode & DBMDX_BOOT_MODE_RESET_DISABLED) &&
+			(fw_load_retry != RETRY_COUNT)) {
+			fw_load_retry = -1;
+			break;
+		}
+
 		reset_retry = RETRY_COUNT;
 		do {
 			ret = dbmd4_uart_reset(p);
@@ -272,8 +294,8 @@ static int dbmd4_uart_boot(const void *fw_data, size_t fw_size,
 
 		/* Unable to reset device */
 		if (reset_retry <= 0) {
-			dev_err(p->dev,
-				"%s, reset device err\n", __func__);
+			dev_err(p->dev,	"%s, reset device err\n",
+				__func__);
 			return -ENODEV;
 		}
 
@@ -290,36 +312,28 @@ static int dbmd4_uart_boot(const void *fw_data, size_t fw_size,
 			}
 		}
 
-		ret = send_uart_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
-		if (ret) {
-			dev_err(p->dev, "%s: booting the firmware failed\n",
-				__func__);
-			continue;
+		if (!(p->cur_boot_options &
+			DBMDX_BOOT_OPT_DONT_SEND_START_BOOT)) {
+			/* send boot command */
+			ret = send_uart_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
+			if (ret) {
+				dev_err(p->dev,
+				"%s: booting the firmware failed\n", __func__);
+				continue;
+			}
 		}
 
 		usleep_range(DBMDX_USLEEP_UART_D4_AFTER_LOAD_FW,
 			DBMDX_USLEEP_UART_D4_AFTER_LOAD_FW + 1000);
 
-		if (p->pdata->uart_low_speed_enabled)
-			ret = uart_set_speed(p, DBMDX_VA_SPEED_NORMAL);
-		else
-			ret = uart_set_speed(p, DBMDX_VA_SPEED_BUFFERING);
-
-		if (ret) {
-			dev_err(p->dev,
-				"%s: failed to send change speed command\n",
-				__func__);
-			continue;
-		}
-
 		/* everything went well */
 		break;
 	} while (--fw_load_retry);
 
-	if (!fw_load_retry) {
+	if (fw_load_retry <= 0) {
 		dev_err(p->dev, "%s: exceeded max attepmts to load fw\n",
 				__func__);
-		return -1;
+		return -EIO;
 	}
 
 	return 0;
@@ -630,21 +644,24 @@ static int dbmd4_uart_probe(struct platform_device *pdev)
 }
 
 
-static const struct of_device_id dbmd_4_6_uart_of_match[] = {
+static const struct of_device_id dbmd_4_8_uart_of_match[] = {
 	{ .compatible = "dspg,dbmdx-uart", },
 	{ .compatible = "dspg,dbmd4-uart", },
 	{ .compatible = "dspg,dbmd6-uart", },
+	{ .compatible = "dspg,dbmd8-uart", },
 	{},
 };
 #ifdef CONFIG_SND_SOC_DBMDX
-MODULE_DEVICE_TABLE(of, dbmd_4_6_uart_of_match);
+MODULE_DEVICE_TABLE(of, dbmd_4_8_uart_of_match);
 #endif
 
-static struct platform_driver dbmd_4_6_uart_platform_driver = {
+static struct platform_driver dbmd_4_8_uart_platform_driver = {
 	.driver = {
-		.name = "dbmd_4_6-uart",
+		.name = "dbmd_4_8-uart",
 		.owner = THIS_MODULE,
-		.of_match_table = dbmd_4_6_uart_of_match,
+#ifdef CONFIG_OF
+		.of_match_table = dbmd_4_8_uart_of_match,
+#endif
 		.pm = &dbmdx_uart_pm,
 	},
 	.probe =  dbmd4_uart_probe,
@@ -652,31 +669,31 @@ static struct platform_driver dbmd_4_6_uart_platform_driver = {
 };
 
 #ifdef CONFIG_SND_SOC_DBMDX
-static int __init dbmd_4_6_modinit(void)
+static int __init dbmd_4_8_modinit(void)
 {
-	return platform_driver_register(&dbmd_4_6_uart_platform_driver);
+	return platform_driver_register(&dbmd_4_8_uart_platform_driver);
 }
-module_init(dbmd_4_6_modinit);
+module_init(dbmd_4_8_modinit);
 
-static void __exit dbmd_4_6_exit(void)
+static void __exit dbmd_4_8_exit(void)
 {
-	platform_driver_unregister(&dbmd_4_6_uart_platform_driver);
+	platform_driver_unregister(&dbmd_4_8_uart_platform_driver);
 }
-module_exit(dbmd_4_6_exit);
+module_exit(dbmd_4_8_exit);
 #else
 int dbmd4_uart_init_interface(void)
 {
-	return platform_driver_register(&dbmd_4_6_uart_platform_driver);
+	return platform_driver_register(&dbmd_4_8_uart_platform_driver);
 }
 
 void  dbmd4_uart_deinit_interface(void)
 {
-	platform_driver_unregister(&dbmd_4_6_uart_platform_driver);
+	platform_driver_unregister(&dbmd_4_8_uart_platform_driver);
 }
 
 int (*dbmdx_init_interface)(void) = &dbmd4_uart_init_interface;
 void (*dbmdx_deinit_interface)(void) = &dbmd4_uart_deinit_interface;
 #endif
 
-MODULE_DESCRIPTION("DSPG DBMD4/DBMD6 UART interface driver");
+MODULE_DESCRIPTION("DSPG DBMD4/DBMD6/DBMD8 UART interface driver");
 MODULE_LICENSE("GPL");

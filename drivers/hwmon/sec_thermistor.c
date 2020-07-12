@@ -48,6 +48,7 @@ enum sec_thermistor_type {
 	TYPE_SEC_THREM_AP,	/* Close to AP */
 	TYPE_SEC_THREM_PA,	/* Close to PA */
 	TYPE_SEC_THREM_CAM_FLASH,  /* Camera Flash Thermistor */
+	TYPE_SEC_THREM_WF,  /* WIFI Thermistor */
 	NR_TYPE_SEC_TERM
 };
 
@@ -55,6 +56,7 @@ static const struct platform_device_id sec_thermistor_id[] = {
 	{ "sec-ap-thermistor", TYPE_SEC_THREM_AP },
 	{ "sec-pa-thermistor", TYPE_SEC_THREM_PA },
 	{ "sec-cf-thermistor", TYPE_SEC_THREM_CAM_FLASH },
+	{ "sec-wf-thermistor", TYPE_SEC_THREM_WF },
 	{ },
 };
 
@@ -65,6 +67,8 @@ static const struct of_device_id sec_therm_match[] = {
 		.data = &sec_thermistor_id[TYPE_SEC_THREM_PA] },
 	{ .compatible = "samsung,sec-cf-thermistor",
 		.data = &sec_thermistor_id[TYPE_SEC_THREM_CAM_FLASH] },
+	{ .compatible = "samsung,sec-wf-thermistor",
+		.data = &sec_thermistor_id[TYPE_SEC_THREM_WF] },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, sec_therm_match);
@@ -327,6 +331,7 @@ static int sec_therm_probe(struct platform_device *pdev)
 	case TYPE_SEC_THREM_AP:
 	case TYPE_SEC_THREM_PA:
 	case TYPE_SEC_THREM_CAM_FLASH:
+	case TYPE_SEC_THREM_WF:
 		/* Allow only a single device instance for each device type */
 		if (sec_therm_single_inst[pdev_id->driver_data])
 			return -EPERM;

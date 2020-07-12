@@ -229,4 +229,6 @@ source "drivers/ccic/Kconfig"
 source "drivers/adsp_factory/Kconfig"
 
 source "drivers/fingerprint/Kconfig"
+
+source "drivers/redriver/Kconfig"
 endmenu

@@ -254,4 +254,6 @@ int sm5720_charger_oper_table_init(struct i2c_client *i2c);
 int sm5720_charger_oper_get_current_status(void);
 int sm5720_charger_oper_get_current_op_mode(void);
 
+int sm5720_charger_oper_get_cv_batreg(void);
+
 #endif /* __SM5720_CHARGER_H */

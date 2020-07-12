@@ -26,14 +26,14 @@
 
 #define RAWDATA_TIMER_MS 200
 #define RAWDATA_TIMER_MARGIN_MS	20
-#define PROX_AVG_COUNT	40
+#define PROX_AVG_COUNT 40
 #define PROX_ALERT_THRESHOLD 200
-#define PROX_TH_READ	0
-#define PROX_TH_WRITE	1
-#define BUFFER_MAX      128
-#define PROX_REG_START  0x80
-#define PROX_DETECT_HIGH_TH  16368
-#define PROX_DETECT_LOW_TH   1000
+#define PROX_TH_READ 0
+#define PROX_TH_WRITE 1
+#define BUFFER_MAX 128
+#define PROX_REG_START 0x80
+#define PROX_DETECT_HIGH_TH 16368
+#define PROX_DETECT_LOW_TH 1000
 
 extern unsigned int system_rev;
 
@@ -62,6 +62,7 @@ static ssize_t prox_name_show(struct device *dev,
 {
 #ifdef CONFIG_SEC_CRUISERLTE_PROJECT
 	unsigned int rev = system_rev;
+
 	if (rev == 3 || rev == 4)
 		return snprintf(buf, PAGE_SIZE, "%s\n", "TMD4904");
 #endif
@@ -176,14 +177,23 @@ static ssize_t prox_cancel_show(struct device *dev,
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_data message;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_PROX;
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_GET_CALIB_DATA, 0, 0);
+	data->calib_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_GET_CALIB_DATA, 0, 0);
 
-	while (!(data->calib_ready_flag & 1 << ADSP_FACTORY_PROX))
+	while (!(data->calib_ready_flag & 1 << ADSP_FACTORY_PROX) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
 
-	data->calib_ready_flag &= 0 << ADSP_FACTORY_PROX;
+	data->calib_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d,%d,%d\n", 0, 0, 0);
+	}
 
 	pr_info("[FACTORY] %s: %d,%d,%d\n", __func__,
 		data->sensor_calib_data[ADSP_FACTORY_PROX].offset,
@@ -202,26 +212,37 @@ static ssize_t prox_cancel_store(struct device *dev,
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_data message;
 	int enable = 0;
+	uint8_t cnt = 0;
 
 	if (kstrtoint(buf, 10, &enable)) {
 		pr_err("[FACTORY] %s: kstrtoint fail\n", __func__);
-		return -EINVAL;
+		return size;
 	}
+
 	if (enable > 0)
 		enable = 1;
 
 	message.sensor_type = ADSP_FACTORY_PROX;
 	message.param1 = enable;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_CALIB_STORE_DATA, 0, 0);
+	data->calib_store_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_CALIB_STORE_DATA, 0, 0);
 
-	while (!(data->calib_store_ready_flag & 1 << ADSP_FACTORY_PROX))
+	while (!(data->calib_store_ready_flag & 1 << ADSP_FACTORY_PROX) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
+
+	data->calib_store_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return size;
+	}
 
 	if (data->sensor_calib_result[ADSP_FACTORY_PROX].result < 0)
 		pr_err("[FACTORY] %s: failed\n", __func__);
 
-	data->calib_store_ready_flag |= 0 << ADSP_FACTORY_PROX;
 
 	pr_info("[FACTORY] %s: result(%d)\n", __func__,
 		data->sensor_calib_result[ADSP_FACTORY_PROX].result);
@@ -234,22 +255,31 @@ static ssize_t prox_thresh_high_show(struct device *dev,
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_big_data message;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_PROX;
 	message.msg_size = 4;
 	message.int_msg[0] = PROX_TH_READ;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_THD_HI_DATA, 0, 0);
-	
-	while (!(data->th_read_flag & 1 << PROX_THRESHOLD))
+	data->th_read_flag &= ~(1 << PROX_THRESHOLD);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_THD_HI_DATA, 0, 0);
+
+	while (!(data->th_read_flag & 1 << PROX_THRESHOLD) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
 
-	data->th_read_flag &= 0 << PROX_THRESHOLD;
+	data->th_read_flag &= ~(1 << PROX_THRESHOLD);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d\n",	 0);
+	}
 
 	pr_info("[FACTORY] %s: %d,%d\n", __func__, data->pth.th_high,
 		data->pth.th_low);
 
-	return snprintf(buf, PAGE_SIZE, "%d\n",	data->pth.th_high);
+	return snprintf(buf, PAGE_SIZE, "%d\n",	 data->pth.th_high);
 }
 
 static ssize_t prox_thresh_high_store(struct device *dev,
@@ -260,7 +290,7 @@ static ssize_t prox_thresh_high_store(struct device *dev,
 
 	if (kstrtoint(buf, 10, &thd)) {
 		pr_err("[FACTORY] %s: kstrtoint fail\n", __func__);
-		return -EINVAL;
+		return size;
 	}
 	pr_info("[FACTORY] %s: thd:%d\n", __func__, thd);
 	message.sensor_type = ADSP_FACTORY_PROX;
@@ -268,7 +298,8 @@ static ssize_t prox_thresh_high_store(struct device *dev,
 	message.int_msg[0] = PROX_TH_WRITE;
 	message.int_msg[1] = thd;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_THD_HI_DATA, 0, 0);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_THD_HI_DATA, 0, 0);
 
 	return size;
 }
@@ -278,22 +309,31 @@ static ssize_t prox_thresh_low_show(struct device *dev,
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_big_data message;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_PROX;
 	message.msg_size = 4;
 	message.int_msg[0] = PROX_TH_READ;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_THD_LO_DATA, 0, 0);
-	
-	while (!(data->th_read_flag & 1 << PROX_THRESHOLD))
+	data->th_read_flag &= ~(1 << PROX_THRESHOLD);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_THD_LO_DATA, 0, 0);
+
+	while (!(data->th_read_flag & 1 << PROX_THRESHOLD) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
 
-	data->th_read_flag &= 0 << PROX_THRESHOLD;
+	data->th_read_flag &= ~(1 << PROX_THRESHOLD);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d\n",	 0);
+	}
 
 	pr_info("[FACTORY] %s: %d,%d\n", __func__, data->pth.th_high,
 		data->pth.th_low);
 
-	return snprintf(buf, PAGE_SIZE, "%d\n",	data->pth.th_low);
+	return snprintf(buf, PAGE_SIZE, "%d\n",	 data->pth.th_low);
 }
 
 static ssize_t prox_thresh_low_store(struct device *dev,
@@ -304,7 +344,7 @@ static ssize_t prox_thresh_low_store(struct device *dev,
 
 	if (kstrtoint(buf, 10, &thd)) {
 		pr_err("[FACTORY] %s: kstrtoint fail\n", __func__);
-		return -EINVAL;
+		return size;
 	}
 
 	pr_info("[FACTORY] %s: thd:%d\n", __func__, thd);
@@ -313,7 +353,8 @@ static ssize_t prox_thresh_low_store(struct device *dev,
 	message.int_msg[0] = PROX_TH_WRITE;
 	message.int_msg[1] = thd;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_THD_LO_DATA, 0, 0);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_THD_LO_DATA, 0, 0);
 
 	return size;
 }
@@ -329,6 +370,7 @@ static ssize_t barcode_emul_enable_store(struct device *dev,
 {
 	int iRet;
 	int64_t dEnable;
+
 	iRet = kstrtoll(buf, 10, &dEnable);
 	if (iRet < 0)
 		return iRet;
@@ -344,14 +386,23 @@ static ssize_t prox_cancel_pass_show(struct device *dev,
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_data message;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_PROX;
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_GET_CALIB_DATA, 0, 0);
+	data->calib_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_GET_CALIB_DATA, 0, 0);
 
-	while (!(data->calib_ready_flag & 1 << ADSP_FACTORY_PROX))
+	while (!(data->calib_ready_flag & 1 << ADSP_FACTORY_PROX) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
 
-	data->calib_ready_flag &= 0 << ADSP_FACTORY_PROX;
+	data->calib_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d\n",	 0);
+	}
 
 	pr_info("[FACTORY] %s: %d\n", __func__,
 		data->sensor_calib_data[ADSP_FACTORY_PROX].cal_done);
@@ -364,8 +415,8 @@ static ssize_t prox_default_trim_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
-
 #ifdef CONFIG_SUPPORT_PROX_AUTO_CAL
+
 	pr_info("[FACTORY] %s: %d\n", __func__,
 		data->sensor_data[ADSP_FACTORY_PROX].offset);
 
@@ -373,14 +424,23 @@ static ssize_t prox_default_trim_show(struct device *dev,
 		data->sensor_data[ADSP_FACTORY_PROX].offset);
 #else
 	struct msg_data message;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_PROX;
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_GET_CALIB_DATA, 0, 0);
+	data->calib_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_GET_CALIB_DATA, 0, 0);
 
-	while (!(data->calib_ready_flag & 1 << ADSP_FACTORY_PROX))
+	while (!(data->calib_ready_flag & 1 << ADSP_FACTORY_PROX) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
 
-	data->calib_ready_flag &= 0 << ADSP_FACTORY_PROX;
+	data->calib_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d\n",	 0);
+	}
 
 	pr_info("[FACTORY] %s: %d\n", __func__,
 		data->sensor_calib_data[ADSP_FACTORY_PROX].trim);
@@ -396,17 +456,26 @@ static ssize_t prox_thresh_detect_high_show(struct device *dev,
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_big_data message;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_PROX;
 	message.msg_size = 4;
 	message.int_msg[0] = PROX_TH_READ;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_HD_THD_HI_DATA, 0, 0);
+	data->th_read_flag &= ~(1 << PROX_HD_THRESHOLD);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_HD_THD_HI_DATA, 0, 0);
 
-	while (!(data->th_read_flag & 1 << PROX_HD_THRESHOLD))
+	while (!(data->th_read_flag & 1 << PROX_HD_THRESHOLD) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
 
-	data->th_read_flag &= 0 << PROX_HD_THRESHOLD;
+	data->th_read_flag &= ~(1 << PROX_HD_THRESHOLD);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d\n",	 0);
+	}
 
 	pr_info("[FACTORY] %s: %d,%d\n", __func__, data->pth.hd_th_high,
 		data->pth.hd_th_low);
@@ -423,7 +492,7 @@ static ssize_t prox_thresh_detect_high_store(struct device *dev,
 
 	if (kstrtoint(buf, 10, &thd)) {
 		pr_err("[FACTORY] %s: kstrtoint fail\n", __func__);
-		return -EINVAL;
+		return size;
 	}
 	pr_info("[FACTORY] %s: thd:%d\n", __func__, thd);
 	message.sensor_type = ADSP_FACTORY_PROX;
@@ -431,7 +500,8 @@ static ssize_t prox_thresh_detect_high_store(struct device *dev,
 	message.int_msg[0] = PROX_TH_WRITE;
 	message.int_msg[1] = thd;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_HD_THD_HI_DATA, 0, 0);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_HD_THD_HI_DATA, 0, 0);
 
 	return size;
 }
@@ -441,17 +511,26 @@ static ssize_t prox_thresh_detect_low_show(struct device *dev,
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_big_data message;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_PROX;
 	message.msg_size = 4;
 	message.int_msg[0] = PROX_TH_READ;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_HD_THD_LO_DATA, 0, 0);
+	data->th_read_flag &= ~(1 << PROX_HD_THRESHOLD);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_HD_THD_LO_DATA, 0, 0);
 
-	while (!(data->th_read_flag & 1 << PROX_HD_THRESHOLD))
+	while (!(data->th_read_flag & 1 << PROX_HD_THRESHOLD) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
 
-	data->th_read_flag &= 0 << PROX_HD_THRESHOLD;
+	data->th_read_flag &= ~(1 << PROX_HD_THRESHOLD);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d\n",	 0);
+	}
 
 	pr_info("[FACTORY] %s: %d,%d\n", __func__, data->pth.hd_th_high,
 		data->pth.hd_th_low);
@@ -467,7 +546,7 @@ static ssize_t prox_thresh_detect_low_store(struct device *dev,
 
 	if (kstrtoint(buf, 10, &thd)) {
 		pr_err("[FACTORY] %s: kstrtoint fail\n", __func__);
-		return -EINVAL;
+		return size;
 	}
 	pr_info("[FACTORY] %s: thd:%d\n", __func__, thd);
 	message.sensor_type = ADSP_FACTORY_PROX;
@@ -475,7 +554,8 @@ static ssize_t prox_thresh_detect_low_store(struct device *dev,
 	message.int_msg[0] = PROX_TH_WRITE;
 	message.int_msg[1] = thd;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_HD_THD_LO_DATA, 0, 0);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_HD_THD_LO_DATA, 0, 0);
 
 	return size;
 }
@@ -492,9 +572,8 @@ static ssize_t prox_light_get_dhr_sensor_info_show(struct device *dev,
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_data message;
-	unsigned long timeout;
-        uint8_t prox_reg_buf[BUFFER_MAX] ={0, };
-	uint8_t chipId = 0;
+	uint8_t prox_reg_buf[BUFFER_MAX] = {0, };
+	uint8_t chipId = 0, cnt = 0;
 	uint16_t high_th = 0, low_th = 0;
 	uint16_t hd_th_high = 0, hd_th_low = 0;
 	uint8_t p_drive_cur = 0, per_time = 0, p_pulse = 0;
@@ -504,24 +583,24 @@ static ssize_t prox_light_get_dhr_sensor_info_show(struct device *dev,
 
 	message.sensor_type = ADSP_FACTORY_PROX;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
+	data->dump_reg_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
 	adsp_unicast(&message, sizeof(message),
 		NETLINK_MESSAGE_DUMP_REGISTER, 0, 0);
 
-	timeout = jiffies + (3 * HZ);
-	while (!(data->dump_reg_ready_flag & 1 << ADSP_FACTORY_PROX)) {
+	while (!(data->dump_reg_ready_flag & 1 << ADSP_FACTORY_PROX) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
-		if (time_after(jiffies, timeout)) {
-			pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
-			data->dump_reg_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
-			goto exit;
-		}
+
+	data->dump_reg_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		goto exit;
 	}
 
 	memcpy(prox_reg_buf, data->dump_registers[ADSP_FACTORY_PROX].reg,
 		sizeof(prox_reg_buf));
 
-	data->dump_reg_ready_flag &= ~(1 << ADSP_FACTORY_PROX);
-	
 	chipId = prox_reg_buf[0x92 - PROX_REG_START];
 	high_th = (u16) prox_reg_buf[0x8D - PROX_REG_START] << 8 |
 		prox_reg_buf[0x8C - PROX_REG_START];
@@ -545,7 +624,7 @@ exit:
 		__func__, chipId, high_th, low_th, hd_th_high, hd_th_low,
 		p_drive_cur, per_time, p_pulse, p_gain, p_time,
 		p_pulse_len, l_atime, offset);
-	
+
 	return snprintf(buf, PAGE_SIZE, "\"THD\":\"%d %d %d %d\","\
 		"\"PDRIVE_CURRENT\":\"%02x\","\
 		"\"PERSIST_TIME\":\"%02x\","\
@@ -584,7 +663,8 @@ static DEVICE_ATTR(thresh_detect_low, S_IRUGO | S_IWUSR | S_IWGRP,
 	prox_thresh_detect_low_show, prox_thresh_detect_low_store);
 #endif
 static DEVICE_ATTR(prox_alert_thresh, S_IRUGO, prox_alert_thresh_show, NULL);
-static DEVICE_ATTR(dhr_sensor_info, S_IRUSR | S_IRGRP, prox_light_get_dhr_sensor_info_show, NULL);
+static DEVICE_ATTR(dhr_sensor_info, S_IRUSR | S_IRGRP,
+	prox_light_get_dhr_sensor_info_show, NULL);
 
 static struct device_attribute *prox_attrs[] = {
 	&dev_attr_vendor,
@@ -617,7 +697,7 @@ static int __init tmd490x_prox_factory_init(void)
 	pdata->prox_timer.function = prox_timer_func;
 	pdata->prox_wq = create_singlethread_workqueue("prox_wq");
 
- 	/* this is the thread function we run on the work queue */
+	/* this is the thread function we run on the work queue */
 	INIT_WORK(&pdata->work_prox, prox_work_func);
 
 	pdata->avgwork_check = 0;

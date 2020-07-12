@@ -69,9 +69,6 @@ ktime_t alarm_expires_remaining(const struct alarm *alarm);
 
 /* Provide way to access the rtc device being used by alarmtimers */
 struct rtc_device *alarmtimer_get_rtcdev(void);
-#if defined(CONFIG_RTC_AUTO_PWRON)
-int alarm_set_alarm_boot(char *alarm_data);
-#endif
 #ifdef CONFIG_RTC_DRV_QPNP
 extern bool poweron_alarm;
 #endif

@@ -72,6 +72,7 @@
 #include <linux/types.h>
 #include <linux/socket.h>
 #include <linux/in.h>
+#include <linux/in6.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -89,6 +90,7 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/random.h>
 #include <linux/slab.h>
+#include <linux/netfilter/xt_qtaguid.h>
 
 #include <asm/uaccess.h>
 
@@ -98,6 +100,7 @@
 #include <linux/netdevice.h>
 #include <net/checksum.h>
 #include <net/ip.h>
+#include <net/ipv6.h>
 #include <net/protocol.h>
 #include <net/arp.h>
 #include <net/route.h>
@@ -124,12 +127,12 @@
 #ifdef CONFIG_ANDROID_PARANOID_NETWORK
 #include <linux/android_aid.h>
 
-/* START_OF_KNOX_VPN */
+/* START_OF_KNOX_NPA */
 #include <net/ncm.h>
 #include <linux/kfifo.h>
 #include <asm/current.h>
 #include <linux/pid.h>
-/* END_OF_KNOX_VPN */
+/* END_OF_KNOX_NPA */
 
 static inline int current_has_network(void)
 {
@@ -409,64 +412,14 @@ out_rcu_unlock:
 	goto out;
 }
 
-/** The function is used to check if the ncm feature is enabled or not; if enabled then collect the socket meta-data information; **/
+/* START_OF_KNOX_NPA */
+/** The function is used to check if the ncm feature is enabled or not; if enabled then it calls knox_collect_socket_data function in ncm.c to record all the socket data; **/
 static void knox_collect_metadata(struct socket *sock) {
     if(check_ncm_flag()) {
-        struct knox_socket_metadata* ksm = kzalloc(sizeof(struct knox_socket_metadata),GFP_KERNEL);
-
-        struct sock *sk = sock->sk;
-        struct inet_sock *inet = inet_sk(sk);
-
-        struct pid *pid_struct;
-        struct task_struct *task;
-
-        struct pid *parent_pid_struct;
-        struct task_struct *parent_task;
-
-        struct timespec close_timespec;
-
-        if(ksm == NULL) return;
-
-        if((sock->ops->family == AF_INET) && (sk->inet_src_masq != 0)) {
-            pid_struct = find_get_pid(current->tgid);
-            task = pid_task(pid_struct,PIDTYPE_PID);
-            if(task != NULL) {
-                memcpy(ksm->process_name,task->comm, sizeof(ksm->process_name));
-                if(task->parent != NULL) {
-                    parent_pid_struct = find_get_pid(task->parent->tgid);
-                    parent_task = pid_task(parent_pid_struct,PIDTYPE_PID);
-                    if(parent_task != NULL) {
-                        memcpy(ksm->parent_process_name,parent_task->comm,sizeof(ksm->parent_process_name));
-                        ksm->knox_puid = parent_task->cred->uid.val;
-                    }
-                }
-            }
-
-            ksm->srcport = ntohs(inet->inet_sport);
-            ksm->dstport = ntohs(inet->inet_dport);
-
-            sprintf(ksm->srcaddr,"%pI4",(void *)&sk->inet_src_masq);
-            sprintf(ksm->dstaddr,"%pI4",(void *)&inet->inet_daddr);
-
-            ksm->knox_sent = sock->knox_sent;
-            ksm->knox_recv = sock->knox_recv;
-            ksm->knox_uid = sk->knox_uid;
-            ksm->knox_pid = sk->knox_pid;
-            ksm->trans_proto = sk->sk_protocol;
-
-            memcpy(ksm->domain_name,sk->domain_name,sizeof(ksm->domain_name)-1);
-
-            ksm->open_time = sk->open_time;
-
-            close_timespec = current_kernel_time();
-            ksm->close_time = close_timespec.tv_sec;
-
-            insert_data_kfifo_kthread(ksm);
-        } else {
-            kfree(ksm);
-        }
+		knox_collect_socket_data(sock);
     }
 }
+/* END_OF_KNOX_NPA */
 
 /*
  *	The peer socket should always be NULL (or else). When we call this
@@ -480,6 +433,9 @@ int inet_release(struct socket *sock)
 	if (sk) {
 		long timeout;
 
+#ifdef CONFIG_NETFILTER_XT_MATCH_QTAGUID
+		qtaguid_untag(sock, true);
+#endif
 		/* Applications forget to leave groups before exiting */
 		ip_mc_drop_socket(sk);
 
@@ -494,7 +450,9 @@ int inet_release(struct socket *sock)
 		if (sock_flag(sk, SOCK_LINGER) &&
 		    !(current->flags & PF_EXITING))
 			timeout = sk->sk_lingertime;
-		knox_collect_metadata(sock);
+        /* START_OF_KNOX_NPA */
+        knox_collect_metadata(sock);
+        /* END_OF_KNOX_NPA */
 		sock->sk = NULL;
 		sk->sk_prot->close(sk, timeout);
 	}
@@ -1111,7 +1069,7 @@ static struct inet_protosw inetsw_array[] =
 		.type =       SOCK_DGRAM,
 		.protocol =   IPPROTO_ICMP,
 		.prot =       &ping_prot,
-		.ops =        &inet_dgram_ops,
+		.ops =        &inet_sockraw_ops,
 		.flags =      INET_PROTOSW_REUSE,
        },
 
@@ -1480,7 +1438,7 @@ static struct sk_buff **inet_gro_receive(struct sk_buff **head,
 	skb_gro_pull(skb, sizeof(*iph));
 	skb_set_transport_header(skb, skb_gro_offset(skb));
 
-	pp = ops->callbacks.gro_receive(head, skb);
+	pp = call_gro_receive(ops->callbacks.gro_receive, head, skb);
 
 out_unlock:
 	rcu_read_unlock();
@@ -1544,6 +1502,13 @@ out_unlock:
 	rcu_read_unlock();
 
 	return err;
+}
+
+static int ipip_gro_complete(struct sk_buff *skb, int nhoff)
+{
+	skb->encapsulation = 1;
+	skb_shinfo(skb)->gso_type |= SKB_GSO_IPIP;
+	return inet_gro_complete(skb, nhoff);
 }
 
 int inet_ctl_sock_create(struct sock **sk, unsigned short family,
@@ -1774,7 +1739,7 @@ static const struct net_offload ipip_offload = {
 	.callbacks = {
 		.gso_segment	= inet_gso_segment,
 		.gro_receive	= ipip_gro_receive,
-		.gro_complete	= inet_gro_complete,
+		.gro_complete	= ipip_gro_complete,
 	},
 };
 

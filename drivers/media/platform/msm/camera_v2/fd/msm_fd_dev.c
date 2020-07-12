@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -436,6 +436,7 @@ static int msm_fd_open(struct file *file)
 	ctx->vb2_q.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
 	ctx->vb2_q.io_modes = VB2_USERPTR;
 	ctx->vb2_q.timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+	mutex_init(&ctx->lock);
 	ret = vb2_queue_init(&ctx->vb2_q);
 	if (ret < 0) {
 		dev_err(device->dev, "Error queue init\n");
@@ -443,7 +444,7 @@ static int msm_fd_open(struct file *file)
 	}
 
 	ctx->mem_pool.fd_device = ctx->fd_device;
-	ctx->stats = vmalloc(sizeof(*ctx->stats) * MSM_FD_MAX_RESULT_BUFS);
+	ctx->stats = vzalloc(sizeof(*ctx->stats) * MSM_FD_MAX_RESULT_BUFS);
 	if (!ctx->stats) {
 		dev_err(device->dev, "No memory for face statistics\n");
 		ret = -ENOMEM;
@@ -486,7 +487,9 @@ static int msm_fd_release(struct file *file)
 	msm_cpp_vbif_register_error_handler((void *)ctx,
 		VBIF_CLIENT_FD, NULL);
 
+	mutex_lock(&ctx->lock);
 	vb2_queue_release(&ctx->vb2_q);
+	mutex_unlock(&ctx->lock);
 
 	vfree(ctx->stats);
 
@@ -516,7 +519,9 @@ static unsigned int msm_fd_poll(struct file *file,
 	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 	unsigned int ret;
 
+	mutex_lock(&ctx->lock);
 	ret = vb2_poll(&ctx->vb2_q, file, wait);
+	mutex_unlock(&ctx->lock);
 
 	if (atomic_read(&ctx->subscribed_for_event)) {
 		poll_wait(file, &ctx->fh.wait, wait);
@@ -754,9 +759,9 @@ static int msm_fd_reqbufs(struct file *file,
 	int ret;
 	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
 
-	mutex_lock(&ctx->fd_device->recovery_lock);
+	mutex_lock(&ctx->lock);
 	ret = vb2_reqbufs(&ctx->vb2_q, req);
-	mutex_unlock(&ctx->fd_device->recovery_lock);
+	mutex_unlock(&ctx->lock);
 	return ret;
 }
 
@@ -772,9 +777,9 @@ static int msm_fd_qbuf(struct file *file, void *fh,
 	int ret;
 	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
 
-	mutex_lock(&ctx->fd_device->recovery_lock);
+	mutex_lock(&ctx->lock);
 	ret = vb2_qbuf(&ctx->vb2_q, pb);
-	mutex_unlock(&ctx->fd_device->recovery_lock);
+	mutex_unlock(&ctx->lock);
 	return ret;
 
 }
@@ -791,9 +796,9 @@ static int msm_fd_dqbuf(struct file *file,
 	int ret;
 	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
 
-	mutex_lock(&ctx->fd_device->recovery_lock);
+	mutex_lock(&ctx->lock);
 	ret = vb2_dqbuf(&ctx->vb2_q, pb, file->f_flags & O_NONBLOCK);
-	mutex_unlock(&ctx->fd_device->recovery_lock);
+	mutex_unlock(&ctx->lock);
 	return ret;
 }
 
@@ -809,7 +814,9 @@ static int msm_fd_streamon(struct file *file,
 	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
 	int ret;
 
+	mutex_lock(&ctx->lock);
 	ret = vb2_streamon(&ctx->vb2_q, buf_type);
+	mutex_unlock(&ctx->lock);
 	if (ret < 0)
 		dev_err(ctx->fd_device->dev, "Stream on fails\n");
 
@@ -828,7 +835,9 @@ static int msm_fd_streamoff(struct file *file,
 	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
 	int ret;
 
+	mutex_lock(&ctx->lock);
 	ret = vb2_streamoff(&ctx->vb2_q, buf_type);
+	mutex_unlock(&ctx->lock);
 	if (ret < 0)
 		dev_err(ctx->fd_device->dev, "Stream off fails\n");
 

@@ -79,7 +79,6 @@ config CORESIGHT_SOURCE_ETM3X
 
 config CORESIGHT_SOURCE_ETM4X
 	bool "CoreSight Embedded Trace Macrocell 4.x driver"
-	depends on ARM64
 	select CORESIGHT_LINKS_AND_SINKS
 	help
 	  This driver provides support for the ETM4.x tracer module, tracing the
@@ -113,7 +112,7 @@ config CORESIGHT_QCOM_REPLICATOR
 
 config CORESIGHT_STM
 	bool "CoreSight System Trace Macrocell driver"
-	depends on CORESIGHT_LINKS_AND_SINKS
+	select CORESIGHT_LINKS_AND_SINKS
 	help
 	  This driver provides support for hardware assisted software
 	  instrumentation based tracing. This is primarily useful for
@@ -136,6 +135,17 @@ config CORESIGHT_CTI
 	  used to input or output i.e. pass cross trigger events from one
 	  hardware component to another. It can also be used to pass
 	  software generated events.
+
+config CORESIGHT_CTI_SAVE_DISABLE
+	bool "Turn off CTI save and restore"
+	depends on CORESIGHT_CTI
+	help
+	  Turns off CoreSight CTI save and restore support for cpu CTIs. This
+	  avoids voting for the clocks during probe as well as the associated
+	  save and restore latency at the cost of breaking cpu CTI support on
+	  targets where cpu CTIs have to be preserved across power collapse.
+
+	  If unsure, say 'N' here to avoid breaking cpu CTI support.
 
 config CORESIGHT_TPDA
 	bool "CoreSight Trace, Profiling & Diagnostics Aggregator driver"

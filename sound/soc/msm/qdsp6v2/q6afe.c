@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -40,6 +40,7 @@ enum {
 	AFE_FB_SPKR_PROT_CAL,
 	AFE_HW_DELAY_CAL,
 	AFE_SIDETONE_CAL,
+	AFE_SIDETONE_IIR_CAL,
 	AFE_TOPOLOGY_CAL,
 	AFE_CUST_TOPOLOGY_CAL,
 	AFE_FB_SPKR_PROT_TH_VI_CAL,
@@ -116,12 +117,15 @@ struct afe_ctl {
 	struct audio_cal_info_sp_ex_vi_ftm_cfg	ex_ftm_cfg;
 	struct afe_sp_th_vi_get_param_resp	th_vi_resp;
 	struct afe_sp_ex_vi_get_param_resp	ex_vi_resp;
+	struct afe_av_dev_drift_get_param_resp	av_dev_drift_resp;
 	int vi_tx_port;
 	int vi_rx_port;
 	uint32_t afe_sample_rates[AFE_MAX_PORTS];
 	struct aanc_data aanc_info;
 	struct mutex afe_cmd_lock;
 	int set_custom_topology;
+	int dev_acdb_id[AFE_MAX_PORTS];
+	routing_cb rt_cb;
 };
 
 static atomic_t afe_ports_mad_type[SLIMBUS_PORT_LAST - SLIMBUS_0_RX];
@@ -151,7 +155,7 @@ int afe_get_topology(int port_id)
 	int topology;
 	int port_index = afe_get_port_index(port_id);
 
-	if ((port_index < 0) || (port_index > AFE_MAX_PORTS)) {
+	if ((port_index < 0) || (port_index >= AFE_MAX_PORTS)) {
 		pr_err("%s: Invalid port index %d\n", __func__, port_index);
 		topology = -EINVAL;
 		goto done;
@@ -191,6 +195,38 @@ static void afe_callback_debug_print(struct apr_client_data *data)
 	else
 		pr_debug("%s: code = 0x%x, size = %d\n",
 			__func__, data->opcode, data->payload_size);
+}
+
+static void av_dev_drift_afe_cb_handler(uint32_t *payload,
+					uint32_t payload_size)
+{
+	u32 param_id;
+	struct afe_av_dev_drift_get_param_resp *resp =
+		(struct afe_av_dev_drift_get_param_resp *) payload;
+
+	if (!(&(resp->pdata))) {
+		pr_err("%s: Error: resp pdata is NULL\n", __func__);
+		return;
+	}
+
+	param_id = resp->pdata.param_id;
+	if (param_id == AFE_PARAM_ID_DEV_TIMING_STATS) {
+		if (payload_size < sizeof(this_afe.av_dev_drift_resp)) {
+			pr_err("%s: Error: received size %d, resp size %zu\n",
+				__func__, payload_size,
+				sizeof(this_afe.av_dev_drift_resp));
+			return;
+		}
+		memcpy(&this_afe.av_dev_drift_resp, payload,
+				sizeof(this_afe.av_dev_drift_resp));
+		if (!this_afe.av_dev_drift_resp.status) {
+			atomic_set(&this_afe.state, 0);
+		} else {
+			pr_debug("%s: av_dev_drift_resp status: %d", __func__,
+				  this_afe.av_dev_drift_resp.status);
+			atomic_set(&this_afe.state, -1);
+		}
+	}
 }
 
 static int32_t sp_make_afe_callback(uint32_t *payload, uint32_t payload_size)
@@ -278,6 +314,7 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 		mutex_lock(&this_afe.cal_data[AFE_CUST_TOPOLOGY_CAL]->lock);
 		this_afe.set_custom_topology = 1;
 		mutex_unlock(&this_afe.cal_data[AFE_CUST_TOPOLOGY_CAL]->lock);
+		rtac_clear_mapping(AFE_RTAC_CAL);
 
 		if (this_afe.apr) {
 			apr_reset(this_afe.apr);
@@ -312,10 +349,7 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 	}
 	afe_callback_debug_print(data);
 	if (data->opcode == AFE_PORT_CMDRSP_GET_PARAM_V2) {
-		u8 *payload = data->payload;
-
-		if (rtac_make_afe_callback(data->payload, data->payload_size))
-			return 0;
+		uint32_t *payload = data->payload;
 
 		if (!payload || (data->token >= AFE_MAX_PORTS)) {
 			pr_err("%s: Error: size %d payload %pK token %d\n",
@@ -323,9 +357,19 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 				payload, data->token);
 			return -EINVAL;
 		}
-		if (sp_make_afe_callback(data->payload, data->payload_size))
-			return -EINVAL;
 
+		if (payload[2] == AFE_PARAM_ID_DEV_TIMING_STATS) {
+			av_dev_drift_afe_cb_handler(data->payload,
+						    data->payload_size);
+		} else {
+			if (rtac_make_afe_callback(data->payload,
+						   data->payload_size))
+				return 0;
+
+			if (sp_make_afe_callback(data->payload,
+						 data->payload_size))
+				return -EINVAL;
+		}
 		wake_up(&this_afe.wait[data->token]);
 	} else if (data->payload_size) {
 		uint32_t *payload;
@@ -572,7 +616,6 @@ int afe_get_port_type(u16 port_id)
 		break;
 
 	default:
-		WARN_ON(1);
 		pr_err("%s: Invalid port id = 0x%x\n",
 			__func__, port_id);
 		ret = -EINVAL;
@@ -717,9 +760,11 @@ static int afe_send_cal_block(u16 port_id, struct cal_block_data *cal_block)
 	int						result = 0;
 	int						index = 0;
 	struct afe_audioif_config_command_no_payload	afe_cal;
-#ifdef CONFIG_SEC_SND_ADAPTATION	
+#ifdef CONFIG_SEC_SND_ADAPTATION
+#if defined(CONFIG_SND_SOC_MAXIM_DSM)
 	int topology_id = 0;
-#endif /* CONFIG_SEC_SND_ADAPTATION */	
+#endif
+#endif /* CONFIG_SEC_SND_ADAPTATION */
 
 	if (!cal_block) {
 		pr_debug("%s: No AFE cal to send!\n", __func__);
@@ -733,7 +778,7 @@ static int afe_send_cal_block(u16 port_id, struct cal_block_data *cal_block)
 	}
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		result = -EINVAL;
@@ -741,6 +786,7 @@ static int afe_send_cal_block(u16 port_id, struct cal_block_data *cal_block)
 	}
 
 #ifdef CONFIG_SEC_SND_ADAPTATION
+#if defined(CONFIG_SND_SOC_MAXIM_DSM)
 	afe_get_cal_topology_id(port_id, &topology_id);
 	if (((port_id == SLIMBUS_0_RX) && (topology_id == AFE_TOPOLOGY_ID_DSM_RX)) ||
 		((port_id == SLIMBUS_0_TX) && (topology_id == AFE_TOPOLOGY_ID_DSM_TX))) {
@@ -748,7 +794,8 @@ static int afe_send_cal_block(u16 port_id, struct cal_block_data *cal_block)
 				__func__, port_id, topology_id);
 		goto done;
 	}
-#endif /* CONFIG_SEC_SND_ADAPTATION */	
+#endif
+#endif /* CONFIG_SEC_SND_ADAPTATION */
 
 	afe_cal.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
@@ -887,7 +934,7 @@ static int afe_spk_ramp_dn_cfg(int port)
 		goto fail_cmd;
 	}
 	index = q6audio_get_port_index(port);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		ret = -EINVAL;
@@ -968,7 +1015,7 @@ static int afe_spk_prot_prepare(int src_port, int dst_port, int param_id,
 		goto fail_cmd;
 	}
 	index = q6audio_get_port_index(src_port);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		ret = -EINVAL;
@@ -1195,6 +1242,7 @@ static int afe_send_hw_delay(u16 port_id, u32 rate)
 
 	pr_debug("%s:\n", __func__);
 
+	memset(&delay_entry, 0, sizeof(delay_entry));
 	delay_entry.sample_rate = rate;
 	if (afe_get_port_type(port_id) == MSM_AFE_PORT_TYPE_TX)
 		ret = afe_get_cal_hw_delay(TX_DEVICE, &delay_entry);
@@ -1213,7 +1261,7 @@ static int afe_send_hw_delay(u16 port_id, u32 rate)
 	}
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		ret = -EINVAL;
@@ -1262,6 +1310,10 @@ static struct cal_block_data *afe_find_cal_topo_id_by_port(
 	struct cal_block_data	*cal_block = NULL;
 	int32_t path;
 	struct audio_cal_info_afe_top *afe_top;
+	int afe_port_index = q6audio_get_port_index(port_id);
+
+	if (afe_port_index < 0)
+		goto err_exit;
 
 	list_for_each_safe(ptr, next,
 		&cal_type->cal_blocks) {
@@ -1273,12 +1325,25 @@ static struct cal_block_data *afe_find_cal_topo_id_by_port(
 		afe_top =
 		(struct audio_cal_info_afe_top *)cal_block->cal_info;
 		if (afe_top->path == path) {
-			pr_debug("%s: top_id:%x acdb_id:%d afe_port:%d\n",
-			__func__, afe_top->topology, afe_top->acdb_id,
-			q6audio_get_port_id(port_id));
-			return cal_block;
+			if (this_afe.dev_acdb_id[afe_port_index] > 0) {
+				if (afe_top->acdb_id ==
+				    this_afe.dev_acdb_id[afe_port_index]) {
+					pr_debug("%s: top_id:%x acdb_id:%d afe_port_id:%d\n",
+						 __func__, afe_top->topology,
+						 afe_top->acdb_id,
+						 q6audio_get_port_id(port_id));
+					return cal_block;
+				}
+			} else {
+				pr_debug("%s: top_id:%x acdb_id:%d afe_port:%d\n",
+				 __func__, afe_top->topology, afe_top->acdb_id,
+				 q6audio_get_port_id(port_id));
+				return cal_block;
+			}
 		}
 	}
+
+err_exit:
 	return NULL;
 }
 
@@ -1335,7 +1400,7 @@ static int afe_send_port_topology_id(u16 port_id)
 	u32 topology_id = 0;
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS - 1) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -1381,6 +1446,7 @@ static int afe_send_port_topology_id(u16 port_id)
 	}
 
 	this_afe.topology[index] = topology_id;
+	rtac_update_afe_topology(port_id);
 done:
 	pr_debug("%s: AFE set topology id 0x%x  enable for port 0x%x ret %d\n",
 			__func__, topology_id, port_id, ret);
@@ -1422,10 +1488,47 @@ done:
 	return ret;
 }
 
+static struct cal_block_data *afe_find_cal(int cal_index, int port_id)
+{
+	struct list_head *ptr, *next;
+	struct cal_block_data *cal_block = NULL;
+	struct audio_cal_info_afe *afe_cal_info = NULL;
+	int afe_port_index = q6audio_get_port_index(port_id);
+
+	pr_debug("%s: cal_index %d port_id %d port_index %d\n", __func__,
+		  cal_index, port_id, afe_port_index);
+	if (afe_port_index < 0) {
+		pr_err("%s: Error getting AFE port index %d\n",
+			__func__, afe_port_index);
+		goto exit;
+	}
+
+	list_for_each_safe(ptr, next,
+			   &this_afe.cal_data[cal_index]->cal_blocks) {
+		cal_block = list_entry(ptr, struct cal_block_data, list);
+		afe_cal_info = cal_block->cal_info;
+		if ((afe_cal_info->acdb_id ==
+		     this_afe.dev_acdb_id[afe_port_index]) &&
+		    (afe_cal_info->sample_rate ==
+		     this_afe.afe_sample_rates[afe_port_index])) {
+			pr_debug("%s: cal block is a match, size is %zd\n",
+				 __func__, cal_block->cal_data.size);
+			goto exit;
+		}
+	}
+	pr_err("%s: no matching cal_block found\n", __func__);
+	cal_block = NULL;
+
+exit:
+	return cal_block;
+}
+
 static void send_afe_cal_type(int cal_index, int port_id)
 {
 	struct cal_block_data		*cal_block = NULL;
 	int ret;
+	int afe_port_index = q6audio_get_port_index(port_id);
+
 	pr_debug("%s:\n", __func__);
 
 	if (this_afe.cal_data[cal_index] == NULL) {
@@ -1434,8 +1537,22 @@ static void send_afe_cal_type(int cal_index, int port_id)
 		goto done;
 	}
 
+	if (afe_port_index < 0) {
+		pr_err("%s: Error getting AFE port index %d\n",
+			__func__, afe_port_index);
+		goto done;
+	}
+
 	mutex_lock(&this_afe.cal_data[cal_index]->lock);
-	cal_block = cal_utils_get_only_cal_block(this_afe.cal_data[cal_index]);
+
+	if (((cal_index == AFE_COMMON_RX_CAL) ||
+	     (cal_index == AFE_COMMON_TX_CAL)) &&
+	    (this_afe.dev_acdb_id[afe_port_index] > 0))
+		cal_block = afe_find_cal(cal_index, port_id);
+	else
+		cal_block = cal_utils_get_only_cal_block(
+				this_afe.cal_data[cal_index]);
+
 	if (cal_block == NULL) {
 		pr_err("%s cal_block not found!!\n", __func__);
 		goto unlock;
@@ -1692,7 +1809,7 @@ static int afe_send_slimbus_slave_port_cfg(
 
 	pr_debug("%s: enter, port_id =  0x%x\n", __func__, port_id);
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -1746,7 +1863,7 @@ static int afe_aanc_port_cfg(void *apr, uint16_t tx_port, uint16_t rx_port)
 	}
 
 	index = q6audio_get_port_index(tx_port);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -1831,7 +1948,7 @@ static int afe_aanc_mod_enable(void *apr, uint16_t tx_port, uint16_t enable)
 	}
 
 	index = q6audio_get_port_index(tx_port);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -1946,7 +2063,8 @@ int afe_port_set_mad_type(u16 port_id, enum afe_mad_type mad_type)
 {
 	int i;
 
-	if (port_id == AFE_PORT_ID_TERTIARY_MI2S_TX) {
+	if (port_id == AFE_PORT_ID_TERTIARY_MI2S_TX ||
+		port_id == AFE_PORT_ID_INT3_MI2S_TX) {
 		mad_type = MAD_SW_AUDIO;
 		return 0;
 	}
@@ -1964,7 +2082,8 @@ enum afe_mad_type afe_port_get_mad_type(u16 port_id)
 {
 	int i;
 
-	if (port_id == AFE_PORT_ID_TERTIARY_MI2S_TX)
+	if (port_id == AFE_PORT_ID_TERTIARY_MI2S_TX ||
+		port_id == AFE_PORT_ID_INT3_MI2S_TX)
 		return MAD_SW_AUDIO;
 
 	i = port_id - SLIMBUS_0_RX;
@@ -2053,7 +2172,7 @@ int afe_send_spdif_clk_cfg(struct afe_param_id_spdif_clk_cfg *cfg,
 		return ret;
 	}
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -2139,7 +2258,7 @@ int afe_send_spdif_ch_status_cfg(struct afe_param_id_spdif_ch_status_cfg
 		return ret;
 	}
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -2213,7 +2332,7 @@ static int afe_send_cmd_port_start(u16 port_id)
 
 	pr_debug("%s: enter\n", __func__);
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -2284,7 +2403,7 @@ int afe_spdif_port_start(u16 port_id, struct afe_spdif_port_config *spdif_port,
 	pr_debug("%s: port id: 0x%x\n", __func__, port_id);
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -2359,7 +2478,7 @@ int afe_send_slot_mapping_cfg(
 	pr_debug("%s: port id: 0x%x\n", __func__, port_id);
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -2438,7 +2557,7 @@ int afe_send_custom_tdm_header_cfg(
 	pr_debug("%s: port id: 0x%x\n", __func__, port_id);
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -2502,7 +2621,7 @@ fail_cmd:
 }
 
 int afe_tdm_port_start(u16 port_id, struct afe_tdm_port_config *tdm_port,
-		u32 rate)
+		       u32 rate, u16 num_groups)
 {
 	struct afe_audioif_config_command config;
 	int ret = 0;
@@ -2518,7 +2637,7 @@ int afe_tdm_port_start(u16 port_id, struct afe_tdm_port_config *tdm_port,
 	pr_debug("%s: port id: 0x%x\n", __func__, port_id);
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -2535,9 +2654,17 @@ int afe_tdm_port_start(u16 port_id, struct afe_tdm_port_config *tdm_port,
 		return ret;
 	}
 
-	/* Also send the topology id here: */
+	if ((index >= 0) && (index < AFE_MAX_PORTS)) {
+		this_afe.afe_sample_rates[index] = rate;
+
+		if (this_afe.rt_cb)
+			this_afe.dev_acdb_id[index] = this_afe.rt_cb(port_id);
+	}
+
+	/* Also send the topology id here if multiple ports: */
 	port_index = afe_get_port_index(port_id);
-	if (!(this_afe.afe_cal_mode[port_index] == AFE_CAL_MODE_NONE)) {
+	if (!(this_afe.afe_cal_mode[port_index] == AFE_CAL_MODE_NONE) &&
+	    num_groups > 1) {
 		/* One time call: only for first time */
 		afe_send_custom_topology();
 		afe_send_port_topology_id(port_id);
@@ -2599,11 +2726,14 @@ int afe_tdm_port_start(u16 port_id, struct afe_tdm_port_config *tdm_port,
 		ret = -EINVAL;
 		goto fail_cmd;
 	}
-
-	ret = afe_send_slot_mapping_cfg(&tdm_port->slot_mapping, port_id);
-	if (ret < 0) {
-		pr_err("%s: afe send failed %d\n", __func__, ret);
-		goto fail_cmd;
+	/* slot mapping is not need if there is only one group */
+	if (num_groups > 1) {
+		ret = afe_send_slot_mapping_cfg(&tdm_port->slot_mapping,
+						port_id);
+		if (ret < 0) {
+			pr_err("%s: afe send failed %d\n", __func__, ret);
+			goto fail_cmd;
+		}
 	}
 
 	if (tdm_port->custom_tdm_header.header_type) {
@@ -2629,6 +2759,11 @@ void afe_set_cal_mode(u16 port_id, enum afe_cal_mode afe_cal_mode)
 	this_afe.afe_cal_mode[port_index] = afe_cal_mode;
 }
 
+void afe_set_routing_callback(routing_cb cb)
+{
+	this_afe.rt_cb = cb;
+}
+
 int afe_port_send_usb_dev_param(u16 port_id, union afe_port_config *afe_config)
 {
 	struct afe_usb_audio_dev_param_command config;
@@ -2640,7 +2775,7 @@ int afe_port_send_usb_dev_param(u16 port_id, union afe_port_config *afe_config)
 		goto exit;
 	}
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid! for port ID 0x%x\n",
 				__func__, index, port_id);
 		ret = -EINVAL;
@@ -2674,6 +2809,21 @@ int afe_port_send_usb_dev_param(u16 port_id, union afe_port_config *afe_config)
 		ret = -EINVAL;
 		goto exit;
 	}
+
+	config.pdata.param_id = AFE_PARAM_ID_USB_AUDIO_DEV_LPCM_FMT;
+	config.pdata.param_size = sizeof(config.lpcm_fmt);
+	config.lpcm_fmt.cfg_minor_version =
+		AFE_API_MINIOR_VERSION_USB_AUDIO_CONFIG;
+	config.lpcm_fmt.endian = afe_config->usb_audio.endian;
+
+	ret = afe_apr_send_pkt(&config, &this_afe.wait[index]);
+	if (ret) {
+		pr_err("%s: AFE device param cmd LPCM_FMT failed %d\n",
+			__func__, ret);
+		ret = -EINVAL;
+		goto exit;
+	}
+
 exit:
 	return ret;
 }
@@ -2697,6 +2847,11 @@ static int q6afe_send_enc_config(u16 port_id,
 	}
 	memset(&config, 0, sizeof(config));
 	index = q6audio_get_port_index(port_id);
+	if (index < 0) {
+		pr_err("%s: Invalid index number: %d\n", __func__, index);
+		return -EINVAL;
+	}
+
 	config.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
 	config.hdr.pkt_size = sizeof(config);
@@ -2834,7 +2989,7 @@ static int __afe_port_start(u16 port_id, union afe_port_config *afe_config,
 	pr_info("%s: port id: 0x%x\n", __func__, port_id);
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -2849,6 +3004,13 @@ static int __afe_port_start(u16 port_id, union afe_port_config *afe_config,
 	if (ret != 0) {
 		pr_err("%s: Q6 interface prepare failed %d\n", __func__, ret);
 		return ret;
+	}
+
+	if ((index >= 0) && (index < AFE_MAX_PORTS)) {
+		this_afe.afe_sample_rates[index] = rate;
+
+		if (this_afe.rt_cb)
+			this_afe.dev_acdb_id[index] = this_afe.rt_cb(port_id);
 	}
 
 	mutex_lock(&this_afe.afe_cmd_lock);
@@ -2948,6 +3110,20 @@ static int __afe_port_start(u16 port_id, union afe_port_config *afe_config,
 	case AFE_PORT_ID_QUINARY_MI2S_RX:
 	case AFE_PORT_ID_QUINARY_MI2S_TX:
 	case AFE_PORT_ID_SENARY_MI2S_TX:
+	case AFE_PORT_ID_INT0_MI2S_RX:
+	case AFE_PORT_ID_INT0_MI2S_TX:
+	case AFE_PORT_ID_INT1_MI2S_RX:
+	case AFE_PORT_ID_INT1_MI2S_TX:
+	case AFE_PORT_ID_INT2_MI2S_RX:
+	case AFE_PORT_ID_INT2_MI2S_TX:
+	case AFE_PORT_ID_INT3_MI2S_RX:
+	case AFE_PORT_ID_INT3_MI2S_TX:
+	case AFE_PORT_ID_INT4_MI2S_RX:
+	case AFE_PORT_ID_INT4_MI2S_TX:
+	case AFE_PORT_ID_INT5_MI2S_RX:
+	case AFE_PORT_ID_INT5_MI2S_TX:
+	case AFE_PORT_ID_INT6_MI2S_RX:
+	case AFE_PORT_ID_INT6_MI2S_TX:
 		cfg_type = AFE_PARAM_ID_I2S_CONFIG;
 		break;
 	case HDMI_RX:
@@ -3040,7 +3216,6 @@ static int __afe_port_start(u16 port_id, union afe_port_config *afe_config,
 
 	port_index = afe_get_port_index(port_id);
 	if ((port_index >= 0) && (port_index < AFE_MAX_PORTS)) {
-		this_afe.afe_sample_rates[port_index] = rate;
 		/*
 		 * If afe_port_start() for tx port called before
 		 * rx port, then aanc rx sample rate is zero. So,
@@ -3325,6 +3500,34 @@ int afe_get_port_index(u16 port_id)
 		return IDX_AFE_PORT_ID_QUATERNARY_TDM_RX_7;
 	case AFE_PORT_ID_QUATERNARY_TDM_TX_7:
 		return IDX_AFE_PORT_ID_QUATERNARY_TDM_TX_7;
+	case AFE_PORT_ID_INT0_MI2S_RX:
+		return IDX_AFE_PORT_ID_INT0_MI2S_RX;
+	case AFE_PORT_ID_INT0_MI2S_TX:
+		return IDX_AFE_PORT_ID_INT0_MI2S_TX;
+	case AFE_PORT_ID_INT1_MI2S_RX:
+		return IDX_AFE_PORT_ID_INT1_MI2S_RX;
+	case AFE_PORT_ID_INT1_MI2S_TX:
+		return IDX_AFE_PORT_ID_INT1_MI2S_TX;
+	case AFE_PORT_ID_INT2_MI2S_RX:
+		return IDX_AFE_PORT_ID_INT2_MI2S_RX;
+	case AFE_PORT_ID_INT2_MI2S_TX:
+		return IDX_AFE_PORT_ID_INT2_MI2S_TX;
+	case AFE_PORT_ID_INT3_MI2S_RX:
+		return IDX_AFE_PORT_ID_INT3_MI2S_RX;
+	case AFE_PORT_ID_INT3_MI2S_TX:
+		return IDX_AFE_PORT_ID_INT3_MI2S_TX;
+	case AFE_PORT_ID_INT4_MI2S_RX:
+		return IDX_AFE_PORT_ID_INT4_MI2S_RX;
+	case AFE_PORT_ID_INT4_MI2S_TX:
+		return IDX_AFE_PORT_ID_INT4_MI2S_TX;
+	case AFE_PORT_ID_INT5_MI2S_RX:
+		return IDX_AFE_PORT_ID_INT5_MI2S_RX;
+	case AFE_PORT_ID_INT5_MI2S_TX:
+		return IDX_AFE_PORT_ID_INT5_MI2S_TX;
+	case AFE_PORT_ID_INT6_MI2S_RX:
+		return IDX_AFE_PORT_ID_INT6_MI2S_RX;
+	case AFE_PORT_ID_INT6_MI2S_TX:
+		return IDX_AFE_PORT_ID_INT6_MI2S_TX;
 	default:
 		pr_err("%s: port 0x%x\n", __func__, port_id);
 		return -EINVAL;
@@ -3349,7 +3552,7 @@ int afe_open(u16 port_id,
 	pr_err("%s: port_id 0x%x rate %d\n", __func__, port_id, rate);
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -3374,6 +3577,14 @@ int afe_open(u16 port_id,
 		pr_err("%s: Q6 interface prepare failed %d\n", __func__, ret);
 		return -EINVAL;
 	}
+
+	if ((index >= 0) && (index < AFE_MAX_PORTS)) {
+		this_afe.afe_sample_rates[index] = rate;
+
+		if (this_afe.rt_cb)
+			this_afe.dev_acdb_id[index] = this_afe.rt_cb(port_id);
+	}
+
 	/* Also send the topology id here: */
 	afe_send_custom_topology(); /* One time call: only for first time  */
 	afe_send_port_topology_id(port_id);
@@ -3517,7 +3728,7 @@ int afe_loopback(u16 enable, u16 rx_port, u16 tx_port)
 	}
 
 	index = q6audio_get_port_index(rx_port);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -3583,7 +3794,7 @@ int afe_loopback_gain(u16 port_id, u16 volume)
 		goto fail_cmd;
 	}
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -3686,7 +3897,7 @@ int afe_start_pseudo_port(u16 port_id)
 	}
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -3729,7 +3940,7 @@ int afe_pseudo_port_stop_nowait(u16 port_id)
 		return -EINVAL;
 	}
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -3890,7 +4101,7 @@ int afe_stop_pseudo_port(u16 port_id)
 	}
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -4179,7 +4390,7 @@ int afe_cmd_memory_map_nowait(int port_id, phys_addr_t dma_addr_p,
 		rtac_set_afe_handle(this_afe.apr);
 	}
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -4443,7 +4654,7 @@ int afe_unregister_get_events(u16 port_id)
 	}
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -4787,7 +4998,7 @@ int afe_dtmf_generate_rx(int64_t duration_in_ms,
 		goto fail_cmd;
 	}
 	index = q6audio_get_port_index(this_afe.dtmf_gen_rx_portid);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		ret = -EINVAL;
@@ -4816,58 +5027,249 @@ fail_cmd:
 	return ret;
 }
 
-int afe_sidetone(u16 tx_port_id, u16 rx_port_id, u16 enable, uint16_t gain)
+static int afe_sidetone_iir(u16 tx_port_id)
 {
-	struct afe_loopback_cfg_v1 cmd_sidetone;
-	int ret = 0;
+	struct afe_loopback_iir_cfg_v2 iir_sidetone;
+	int ret;
 	int index = 0;
+	uint16_t size = 0;
+	int cal_index = AFE_SIDETONE_IIR_CAL;
+	int iir_pregain = 0;
+	int iir_num_biquad_stages = 0;
+	int iir_enable;
+	struct cal_block_data *cal_block;
+	int mid;
 
-	pr_info("%s: tx_port_id: 0x%x rx_port_id: 0x%x enable:%d gain:%d\n",
-			__func__, tx_port_id, rx_port_id, enable, gain);
-	index = q6audio_get_port_index(rx_port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
-		pr_err("%s: AFE port index[%d] invalid!\n",
-				__func__, index);
-		return -EINVAL;
+	memset(&iir_sidetone, 0, sizeof(iir_sidetone));
+	index = q6audio_get_port_index(tx_port_id);
+	iir_sidetone.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
+				     APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
+	iir_sidetone.hdr.pkt_size = sizeof(iir_sidetone);
+	iir_sidetone.hdr.src_port = 0;
+	iir_sidetone.hdr.dest_port = 0;
+	iir_sidetone.hdr.token = index;
+	iir_sidetone.hdr.opcode = AFE_PORT_CMD_SET_PARAM_V2;
+	iir_sidetone.param.port_id = tx_port_id;
+	iir_sidetone.param.payload_address_lsw = 0x00;
+	iir_sidetone.param.payload_address_msw = 0x00;
+	iir_sidetone.param.mem_map_handle = 0x00;
+
+	if (this_afe.cal_data[cal_index] == NULL) {
+		pr_err("%s: cal data is NULL\n", __func__);
+		ret = -EINVAL;
+		goto done;
 	}
-	ret = q6audio_validate_port(rx_port_id);
-	if (ret < 0) {
-		pr_err("%s: Invalid port 0x%x %d", __func__, rx_port_id, ret);
-		return -EINVAL;
+	mutex_lock(&this_afe.cal_data[cal_index]->lock);
+	cal_block = cal_utils_get_only_cal_block(this_afe.cal_data[cal_index]);
+	if (cal_block == NULL) {
+		pr_err("%s: cal_block not found\n ", __func__);
+		mutex_unlock(&this_afe.cal_data[cal_index]->lock);
+		ret = -EINVAL;
+		goto done;
 	}
 
+	iir_pregain = ((struct audio_cal_info_sidetone_iir *)
+			cal_block->cal_info)->pregain;
+	iir_enable = ((struct audio_cal_info_sidetone_iir *)
+			cal_block->cal_info)->iir_enable;
+	iir_num_biquad_stages = ((struct audio_cal_info_sidetone_iir *)
+			cal_block->cal_info)->num_biquad_stages;
+	mid = ((struct audio_cal_info_sidetone_iir *)
+			cal_block->cal_info)->mid;
+
+	/*
+	 * calculate the actual size of payload based on no of stages
+	 * enabled in calibration
+	 */
+	size = (MAX_SIDETONE_IIR_DATA_SIZE / MAX_NO_IIR_FILTER_STAGE) *
+		iir_num_biquad_stages;
+	/*
+	 * For an odd number of stages, 2 bytes of padding are
+	 * required at the end of the payload.
+	 */
+	if (iir_num_biquad_stages % 2) {
+		pr_debug("%s: adding 2 to size:%d\n", __func__, size);
+		size = size + 2;
+	}
+	memcpy(&iir_sidetone.st_iir_filter_config_data.iir_config,
+		&((struct audio_cal_info_sidetone_iir *)
+		cal_block->cal_info)->iir_config,
+		sizeof(iir_sidetone.st_iir_filter_config_data.iir_config));
+	mutex_unlock(&this_afe.cal_data[cal_index]->lock);
+
+	/*
+	 * Calculate the payload size for setparams command
+	 */
+	iir_sidetone.param.payload_size = (sizeof(iir_sidetone) -
+				sizeof(struct apr_hdr) -
+				sizeof(struct afe_port_cmd_set_param_v2) -
+				(MAX_SIDETONE_IIR_DATA_SIZE - size));
+
+	pr_debug("%s: payload size :%d\n", __func__,
+		 iir_sidetone.param.payload_size);
+
+	/*
+	 * Set IIR enable params
+	 */
+	iir_sidetone.st_iir_enable_pdata.module_id = mid;
+	iir_sidetone.st_iir_enable_pdata.param_id =
+			AFE_PARAM_ID_ENABLE;
+	iir_sidetone.st_iir_enable_pdata.param_size =
+			sizeof(iir_sidetone.st_iir_mode_enable_data);
+	iir_sidetone.st_iir_mode_enable_data.enable = iir_enable;
+
+	/*
+	 * Set IIR filter config params
+	 */
+	iir_sidetone.st_iir_filter_config_pdata.module_id = mid;
+	iir_sidetone.st_iir_filter_config_pdata.param_id =
+			AFE_PARAM_ID_SIDETONE_IIR_FILTER_CONFIG;
+	iir_sidetone.st_iir_filter_config_pdata.param_size =
+		sizeof(iir_sidetone.st_iir_filter_config_data.num_biquad_stages)
+		+
+		sizeof(iir_sidetone.st_iir_filter_config_data.pregain) + size;
+	iir_sidetone.st_iir_filter_config_pdata.reserved = 0;
+	iir_sidetone.st_iir_filter_config_data.num_biquad_stages =
+			iir_num_biquad_stages;
+	iir_sidetone.st_iir_filter_config_data.pregain = iir_pregain;
+	pr_debug("%s: tx(0x%x)mid(0x%x)iir_en(%d)stg(%d)gain(0x%x)size(%d)\n",
+		  __func__, tx_port_id, mid,
+		  iir_sidetone.st_iir_mode_enable_data.enable,
+		  iir_sidetone.st_iir_filter_config_data.num_biquad_stages,
+		  iir_sidetone.st_iir_filter_config_data.pregain,
+		  iir_sidetone.st_iir_filter_config_pdata.param_size);
+	ret = afe_apr_send_pkt(&iir_sidetone, &this_afe.wait[index]);
+	if (ret)
+		pr_err("%s: AFE sidetone failed for tx_port(0x%x)\n",
+			 __func__, tx_port_id);
+
+done:
+	return ret;
+
+}
+
+static int afe_sidetone(u16 tx_port_id, u16 rx_port_id, bool enable)
+{
+	struct afe_st_loopback_cfg_v1 cmd_sidetone;
+	int ret;
+	int index;
+	int cal_index = AFE_SIDETONE_CAL;
+	int sidetone_gain;
+	int sidetone_enable;
+	struct cal_block_data *cal_block;
+	int mid = 0;
+
+	memset(&cmd_sidetone, 0, sizeof(cmd_sidetone));
+	if (this_afe.cal_data[cal_index] == NULL) {
+		pr_err("%s: cal data is NULL\n", __func__);
+		ret = -EINVAL;
+		goto done;
+	}
+	mutex_lock(&this_afe.cal_data[cal_index]->lock);
+	cal_block = cal_utils_get_only_cal_block(this_afe.cal_data[cal_index]);
+	if (cal_block == NULL) {
+		pr_err("%s: cal_block not found\n", __func__);
+		mutex_unlock(&this_afe.cal_data[cal_index]->lock);
+		ret = -EINVAL;
+		goto done;
+	}
+	sidetone_gain = ((struct audio_cal_info_sidetone *)
+			 cal_block->cal_info)->gain;
+	sidetone_enable = ((struct audio_cal_info_sidetone *)
+			 cal_block->cal_info)->enable;
+	mid = ((struct audio_cal_info_sidetone *)
+			 cal_block->cal_info)->mid;
+	mutex_unlock(&this_afe.cal_data[cal_index]->lock);
+
+	index = q6audio_get_port_index(tx_port_id);
 	cmd_sidetone.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
 	cmd_sidetone.hdr.pkt_size = sizeof(cmd_sidetone);
 	cmd_sidetone.hdr.src_port = 0;
 	cmd_sidetone.hdr.dest_port = 0;
-	cmd_sidetone.hdr.token = 0;
+	cmd_sidetone.hdr.token = index;
 	cmd_sidetone.hdr.opcode = AFE_PORT_CMD_SET_PARAM_V2;
-	/* should it be rx or tx port id ?? , bharath*/
 	cmd_sidetone.param.port_id = tx_port_id;
-	/* size of data param & payload */
 	cmd_sidetone.param.payload_size = (sizeof(cmd_sidetone) -
 			sizeof(struct apr_hdr) -
 			sizeof(struct afe_port_cmd_set_param_v2));
 	cmd_sidetone.param.payload_address_lsw = 0x00;
 	cmd_sidetone.param.payload_address_msw = 0x00;
 	cmd_sidetone.param.mem_map_handle = 0x00;
-	cmd_sidetone.pdata.module_id = AFE_MODULE_LOOPBACK;
-	cmd_sidetone.pdata.param_id = AFE_PARAM_ID_LOOPBACK_CONFIG;
-	/* size of actual payload only */
-	cmd_sidetone.pdata.param_size =  cmd_sidetone.param.payload_size -
-				sizeof(struct afe_port_param_data_v2);
+	cmd_sidetone.gain_pdata.module_id = AFE_MODULE_LOOPBACK;
+	cmd_sidetone.gain_pdata.param_id = AFE_PARAM_ID_LOOPBACK_GAIN_PER_PATH;
+	/*
+	 * size of actual payload only
+	 */
+	cmd_sidetone.gain_pdata.param_size = sizeof(
+					     struct afe_loopback_sidetone_gain);
+	cmd_sidetone.gain_data.rx_port_id = rx_port_id;
+	cmd_sidetone.gain_data.gain = sidetone_gain;
 
-	cmd_sidetone.loopback_cfg_minor_version =
+	cmd_sidetone.cfg_pdata.module_id = AFE_MODULE_LOOPBACK;
+	cmd_sidetone.cfg_pdata.param_id = AFE_PARAM_ID_LOOPBACK_CONFIG;
+	/*
+	 * size of actual payload only
+	 */
+	cmd_sidetone.cfg_pdata.param_size = sizeof(struct loopback_cfg_data);
+	cmd_sidetone.cfg_data.loopback_cfg_minor_version =
 					AFE_API_VERSION_LOOPBACK_CONFIG;
-	cmd_sidetone.dst_port_id = rx_port_id;
-	cmd_sidetone.routing_mode = LB_MODE_SIDETONE;
-	cmd_sidetone.enable = enable;
+	cmd_sidetone.cfg_data.dst_port_id = rx_port_id;
+	cmd_sidetone.cfg_data.routing_mode = LB_MODE_SIDETONE;
+	cmd_sidetone.cfg_data.enable = enable;
+
+	pr_debug("%s rx(0x%x) tx(0x%x) enable(%d) mid(0x%x) gain(%d) sidetone_enable(%d)\n",
+		  __func__, rx_port_id, tx_port_id,
+		  enable, mid, sidetone_gain, sidetone_enable);
 
 	ret = afe_apr_send_pkt(&cmd_sidetone, &this_afe.wait[index]);
 	if (ret)
-		pr_err("%s: sidetone failed tx_port:0x%x rx_port:0x%x ret%d\n",
-		__func__, tx_port_id, rx_port_id, ret);
+		pr_err("%s: AFE sidetone send failed for tx_port:%d rx_port:%d ret:%d\n",
+			__func__, tx_port_id, rx_port_id, ret);
+done:
+	return ret;
+}
+
+int afe_sidetone_enable(u16 tx_port_id, u16 rx_port_id, bool enable)
+{
+	int ret;
+	int index;
+
+	index = q6audio_get_port_index(rx_port_id);
+	if (index < 0 || index >= AFE_MAX_PORTS) {
+		pr_err("%s: AFE port index[%d] invalid!\n",
+				__func__, index);
+		ret = -EINVAL;
+		goto done;
+	}
+	if (q6audio_validate_port(rx_port_id) < 0) {
+		pr_err("%s: Invalid port 0x%x\n",
+				__func__, rx_port_id);
+		ret = -EINVAL;
+		goto done;
+	}
+	index = q6audio_get_port_index(tx_port_id);
+	if (index < 0 || index >= AFE_MAX_PORTS) {
+		pr_err("%s: AFE port index[%d] invalid!\n",
+				__func__, index);
+		ret = -EINVAL;
+		goto done;
+	}
+	if (q6audio_validate_port(tx_port_id) < 0) {
+		pr_err("%s: Invalid port 0x%x\n",
+				__func__, tx_port_id);
+		ret = -EINVAL;
+		goto done;
+	}
+	if (enable) {
+		ret = afe_sidetone_iir(tx_port_id);
+		if (ret)
+			goto done;
+	}
+
+	ret = afe_sidetone(tx_port_id, rx_port_id, enable);
+
+done:
 	return ret;
 }
 
@@ -5000,6 +5402,20 @@ int afe_validate_port(u16 port_id)
 	case AFE_PORT_ID_QUATERNARY_TDM_TX_6:
 	case AFE_PORT_ID_QUATERNARY_TDM_RX_7:
 	case AFE_PORT_ID_QUATERNARY_TDM_TX_7:
+	case AFE_PORT_ID_INT0_MI2S_RX:
+	case AFE_PORT_ID_INT1_MI2S_RX:
+	case AFE_PORT_ID_INT2_MI2S_RX:
+	case AFE_PORT_ID_INT3_MI2S_RX:
+	case AFE_PORT_ID_INT4_MI2S_RX:
+	case AFE_PORT_ID_INT5_MI2S_RX:
+	case AFE_PORT_ID_INT6_MI2S_RX:
+	case AFE_PORT_ID_INT0_MI2S_TX:
+	case AFE_PORT_ID_INT1_MI2S_TX:
+	case AFE_PORT_ID_INT2_MI2S_TX:
+	case AFE_PORT_ID_INT3_MI2S_TX:
+	case AFE_PORT_ID_INT4_MI2S_TX:
+	case AFE_PORT_ID_INT5_MI2S_TX:
+	case AFE_PORT_ID_INT6_MI2S_TX:
 	{
 		ret = 0;
 		break;
@@ -5120,7 +5536,7 @@ int afe_close(int port_id)
 
 	port_id = q6audio_convert_virtual_to_portid(port_id);
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -5151,6 +5567,7 @@ int afe_close(int port_id)
 	if ((port_index >= 0) && (port_index < AFE_MAX_PORTS)) {
 		this_afe.afe_sample_rates[port_index] = 0;
 		this_afe.topology[port_index] = 0;
+		this_afe.dev_acdb_id[port_index] = 0;
 	} else {
 		pr_err("%s: port %d\n", __func__, port_index);
 		ret = -EINVAL;
@@ -5278,7 +5695,7 @@ int afe_set_lpass_clock(u16 port_id, struct afe_clk_cfg *cfg)
 		return ret;
 	}
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -5444,7 +5861,7 @@ int afe_set_lpass_clock_v2(u16 port_id, struct afe_clk_set *cfg)
 	int ret = 0;
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -5477,7 +5894,7 @@ int afe_set_lpass_internal_digital_codec_clock(u16 port_id,
 		return ret;
 	}
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -5558,7 +5975,7 @@ int afe_enable_lpass_core_shared_clock(u16 port_id, u32 enable)
 	int ret = 0;
 
 	index = q6audio_get_port_index(port_id);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		return -EINVAL;
@@ -5818,6 +6235,88 @@ done:
 	return ret;
 }
 
+int afe_get_av_dev_drift(struct afe_param_id_dev_timing_stats *timing_stats,
+			 u16 port)
+{
+	int ret = -EINVAL;
+	int index = 0;
+	struct afe_av_dev_drift_get_param av_dev_drift;
+
+	if (!timing_stats) {
+		pr_err("%s: Invalid params\n", __func__);
+		goto exit;
+	}
+
+	ret = q6audio_validate_port(port);
+	if (ret < 0) {
+		pr_err("%s: invalid port 0x%x ret %d\n", __func__, port, ret);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	index = q6audio_get_port_index(port);
+	if (index < 0 || index >= AFE_MAX_PORTS) {
+		pr_err("%s: Invalid AFE port index[%d]\n",
+				__func__, index);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	memset(&av_dev_drift, 0, sizeof(struct afe_av_dev_drift_get_param));
+
+	av_dev_drift.hdr.hdr_field =
+		APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
+				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
+	av_dev_drift.hdr.pkt_size = sizeof(av_dev_drift);
+	av_dev_drift.hdr.src_port = 0;
+	av_dev_drift.hdr.dest_port = 0;
+	av_dev_drift.hdr.token = index;
+	av_dev_drift.hdr.opcode =  AFE_PORT_CMD_GET_PARAM_V2;
+	av_dev_drift.get_param.mem_map_handle = 0;
+	av_dev_drift.get_param.module_id = AFE_MODULE_AUDIO_DEV_INTERFACE;
+	av_dev_drift.get_param.param_id = AFE_PARAM_ID_DEV_TIMING_STATS;
+	av_dev_drift.get_param.payload_address_lsw = 0;
+	av_dev_drift.get_param.payload_address_msw = 0;
+	av_dev_drift.get_param.payload_size = sizeof(av_dev_drift)
+		- sizeof(av_dev_drift.get_param) - sizeof(av_dev_drift.hdr);
+	av_dev_drift.get_param.port_id = q6audio_get_port_id(port);
+	av_dev_drift.pdata.module_id = AFE_MODULE_AUDIO_DEV_INTERFACE;
+	av_dev_drift.pdata.param_id = AFE_PARAM_ID_DEV_TIMING_STATS;
+	av_dev_drift.pdata.param_size = sizeof(av_dev_drift.timing_stats);
+	atomic_set(&this_afe.status, 0);
+	atomic_set(&this_afe.state, 1);
+	ret = apr_send_pkt(this_afe.apr, (uint32_t *)&av_dev_drift);
+	if (ret < 0) {
+		pr_err("%s: get param port 0x%x param id[0x%x] failed %d\n",
+			__func__, port, av_dev_drift.get_param.param_id, ret);
+		goto exit;
+	}
+
+	ret = wait_event_timeout(this_afe.wait[index],
+			(atomic_read(&this_afe.state) == 0),
+			msecs_to_jiffies(TIMEOUT_MS));
+	if (!ret) {
+		pr_err("%s: wait_event timeout\n", __func__);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	if (atomic_read(&this_afe.status) > 0) {
+		pr_err("%s: config cmd failed [%s]\n",
+				__func__, adsp_err_get_err_str(
+					atomic_read(&this_afe.status)));
+		ret = adsp_err_get_lnx_err_code(
+				atomic_read(&this_afe.status));
+		goto exit;
+	}
+
+	memcpy(timing_stats, &this_afe.av_dev_drift_resp.timing_stats,
+	       sizeof(this_afe.av_dev_drift_resp.timing_stats));
+	ret = 0;
+exit:
+	return ret;
+}
+
 int afe_spk_prot_get_calib_data(struct afe_spkr_prot_get_vi_calib *calib_resp)
 {
 	int ret = -EINVAL;
@@ -5837,7 +6336,7 @@ int afe_spk_prot_get_calib_data(struct afe_spkr_prot_get_vi_calib *calib_resp)
 		goto fail_cmd;
 	}
 	index = q6audio_get_port_index(port);
-	if (index < 0 || index > AFE_MAX_PORTS) {
+	if (index < 0 || index >= AFE_MAX_PORTS) {
 		pr_err("%s: AFE port index[%d] invalid!\n",
 				__func__, index);
 		ret = -EINVAL;
@@ -5965,6 +6464,9 @@ static int get_cal_type_index(int32_t cal_type)
 		break;
 	case AFE_SIDETONE_CAL_TYPE:
 		ret = AFE_SIDETONE_CAL;
+		break;
+	case AFE_SIDETONE_IIR_CAL_TYPE:
+		ret = AFE_SIDETONE_IIR_CAL;
 		break;
 	case AFE_TOPOLOGY_CAL_TYPE:
 		ret = AFE_TOPOLOGY_CAL;
@@ -6213,8 +6715,6 @@ static int afe_set_cal_fb_spkr_prot(int32_t cal_type, size_t data_size,
 	mutex_lock(&this_afe.cal_data[AFE_FB_SPKR_PROT_CAL]->lock);
 	memcpy(&this_afe.prot_cfg, &cal_data->cal_info,
 		sizeof(this_afe.prot_cfg));
-	this_afe.th_ftm_cfg.mode = this_afe.prot_cfg.mode;
-	this_afe.ex_ftm_cfg.mode = this_afe.prot_cfg.mode;
 	mutex_unlock(&this_afe.cal_data[AFE_FB_SPKR_PROT_CAL]->lock);
 done:
 	return ret;
@@ -6356,8 +6856,6 @@ static int afe_get_cal_fb_spkr_prot(int32_t cal_type, size_t data_size,
 		cal_data->cal_info.r0[SP_V2_SPKR_1] = -1;
 		cal_data->cal_info.r0[SP_V2_SPKR_2] = -1;
 	}
-	this_afe.th_ftm_cfg.mode = this_afe.prot_cfg.mode;
-	this_afe.ex_ftm_cfg.mode = this_afe.prot_cfg.mode;
 	mutex_unlock(&this_afe.cal_data[AFE_FB_SPKR_PROT_CAL]->lock);
 	__pm_relax(&wl.ws);
 done:
@@ -6380,6 +6878,7 @@ static int afe_map_cal_data(int32_t cal_type,
 	}
 
 
+	mutex_lock(&this_afe.afe_cmd_lock);
 	atomic_set(&this_afe.mem_map_cal_index, cal_index);
 	ret = afe_cmd_memory_map(cal_block->cal_data.paddr,
 			cal_block->map_data.map_size);
@@ -6392,10 +6891,12 @@ static int afe_map_cal_data(int32_t cal_type,
 			__func__,
 			&cal_block->cal_data.paddr,
 			cal_block->map_data.map_size);
+		mutex_unlock(&this_afe.afe_cmd_lock);
 		goto done;
 	}
 	cal_block->map_data.q6map_handle = atomic_read(&this_afe.
 		mem_map_cal_handles[cal_index]);
+	mutex_unlock(&this_afe.afe_cmd_lock);
 done:
 	return ret;
 }
@@ -6484,6 +6985,11 @@ static int afe_init_cal_data(void)
 		{NULL, NULL, cal_utils_match_buf_num} },
 
 		{{AFE_SIDETONE_CAL_TYPE,
+		{NULL, NULL, NULL,
+		afe_set_cal, NULL, NULL} },
+		{NULL, NULL, cal_utils_match_buf_num} },
+
+		{{AFE_SIDETONE_IIR_CAL_TYPE,
 		{NULL, NULL, NULL,
 		afe_set_cal, NULL, NULL} },
 		{NULL, NULL, cal_utils_match_buf_num} },
@@ -6615,6 +7121,8 @@ static int __init afe_init(void)
 	mutex_init(&this_afe.afe_cmd_lock);
 	for (i = 0; i < AFE_MAX_PORTS; i++) {
 		this_afe.afe_cal_mode[i] = AFE_CAL_MODE_DEFAULT;
+		this_afe.afe_sample_rates[i] = 0;
+		this_afe.dev_acdb_id[i] = 0;
 		init_waitqueue_head(&this_afe.wait[i]);
 	}
 	wakeup_source_init(&wl.ws, "spkr-prot");

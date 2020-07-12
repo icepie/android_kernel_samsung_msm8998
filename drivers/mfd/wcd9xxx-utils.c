@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -287,7 +287,7 @@ static u32 wcd9xxx_validate_dmic_sample_rate(struct device *dev,
 	return dmic_sample_rate;
 
 undefined_rate:
-	dev_info(dev, "%s: Invalid %s = %d, for mclk %d\n",
+	dev_dbg(dev, "%s: Invalid %s = %d, for mclk %d\n",
 		 __func__, dmic_rate_type, dmic_sample_rate, mclk_rate);
 	dmic_sample_rate = WCD9XXX_DMIC_SAMPLE_RATE_UNDEFINED;
 
@@ -317,11 +317,11 @@ struct wcd9xxx_pdata *wcd9xxx_populate_dt_data(struct device *dev)
 	struct wcd9xxx_gain_table default_table[MAX_IMPEDANCE_TALBE] = {
 		{    0,       0, 6},
 		{    1,      13, 0},
-		{   14,      42, 4},
+		{   14,      25, 3},
+		{   26,      42, 4},		
 		{   43,     100, 5},
 		{  101,     200, 7},
-		{  201,     450, 8},
-		{  451,    1000, 8},
+		{  201,    1000, 8},
 		{ 1001, INT_MAX, 6},
 	};
 
@@ -699,7 +699,7 @@ int wcd9xxx_reset(struct device *dev)
 		return -EINVAL;
 	}
 
-	value = msm_cdc_get_gpio_state(wcd9xxx->wcd_rst_np);
+	value = msm_cdc_pinctrl_get_state(wcd9xxx->wcd_rst_np);
 	if (value > 0) {
 		wcd9xxx->avoid_cdc_rstlow = 1;
 		return 0;

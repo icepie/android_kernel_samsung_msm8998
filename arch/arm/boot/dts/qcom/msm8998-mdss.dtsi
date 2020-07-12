@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -45,6 +45,7 @@
 
 		/* VBIF QoS remapper settings*/
 		qcom,mdss-vbif-qos-rt-setting = <1 2 2 2>;
+		qcom,mdss-vbif-qos-nrt-setting = <1 1 1 1>;
 		qcom,vbif-settings = <0x00ac 0x00000040>,
 				     <0x00d0 0x00001010>; /* v1 only */
 
@@ -127,7 +128,7 @@
 				    <0x012ac 0xc0000ccc>,
 				    <0x012b4 0xc0000ccc>,
 				    <0x012bc 0x00cccccc>,
-				    <0x012c4 0x000000cc>,
+				    <0x012c4 0x0000cccc>,
 				    <0x013a8 0x0cccc0c0>,
 				    <0x013b0 0xccccc0c0>,
 				    <0x013b8 0xcccc0000>,
@@ -171,6 +172,9 @@
 				     <0x4a000 0x4a2bc>,
 				     <0x55000 0x5522c>,
 				     <0x57000 0x5722c>,
+				     <0x61000 0x61014>,
+				     <0x61800 0x61888>,
+				     <0x62000 0x62088>,
 				     <0x66000 0x662c0>,
 				     <0x6b000 0x6b268>,
 				     <0x6b800 0x6ba68>,
@@ -192,6 +196,7 @@
 			"LAYER_0", "LAYER_1", "LAYER_2",
 			"LAYER_3", "LAYER_4", "LAYER_5",
 			"DSPP_0",  "DSPP_1",
+			"DEST_SCALER_OP", "DEST_SCALER_0", "DEST_SCALER_1",
 			"WB_2",
 			"INTF_0", "INTF_1",  "INTF_2", "INTF_3",
 			"PP_0",    "PP_1", "PP_4",
@@ -207,7 +212,7 @@
 
 		qcom,mdss-pp-offsets {
 			qcom,mdss-sspp-mdss-igc-lut-off = <0x2000>;
-			qcom,mdss-sspp-vig-pcc-off = <0x1780>;
+			qcom,mdss-sspp-vig-pcc-off = <0x1b00>;
 			qcom,mdss-sspp-rgb-pcc-off = <0x380>;
 			qcom,mdss-sspp-dma-pcc-off = <0x380>;
 			qcom,mdss-lm-pgc-off = <0x3c0>;
@@ -330,6 +335,7 @@
 				qcom,supply-max-voltage = <0>;
 				qcom,supply-enable-load = <0>;
 				qcom,supply-disable-load = <0>;
+				qcom,supply-lp-mode-disable-allowed;
 			};
 		};
 
@@ -358,6 +364,7 @@
 				qcom,supply-max-voltage = <880000>;
 				qcom,supply-enable-load = <73400>;
 				qcom,supply-disable-load = <32>;
+				qcom,supply-lp-mode-disable-allowed;
 			};
 		};
 
@@ -377,6 +384,8 @@
 			wqhd-vddio-supply = <&pm8998_l14>;
 			qcom,mdss-mdp = <&mdss_mdp>;
 			qcom,mdss-fb-map = <&mdss_fb0>;
+
+			qcom,null-insertion-enabled;
 
 			clocks = <&clock_mmss clk_mmss_mdss_byte0_clk>,
 				 <&clock_mmss clk_mmss_mdss_pclk0_clk>,
@@ -413,6 +422,8 @@
 			wqhd-vddio-supply = <&pm8998_l14>;
 			qcom,mdss-mdp = <&mdss_mdp>;
 			qcom,mdss-fb-map = <&mdss_fb0>;
+
+			qcom,null-insertion-enabled;
 
 			clocks = <&clock_mmss clk_mmss_mdss_byte1_clk>,
 				 <&clock_mmss clk_mmss_mdss_pclk1_clk>,
@@ -482,16 +493,32 @@
 			 <&clock_mmss clk_mmss_mdss_dp_link_clk>,
 			 <&clock_mmss clk_mmss_mdss_dp_link_intf_clk>,
 			 <&clock_mmss clk_mmss_mdss_dp_crypto_clk>,
-			 <&clock_mmss clk_mmss_mdss_dp_pixel_clk>;
+			 <&clock_mmss clk_mmss_mdss_dp_pixel_clk>,
+			 <&mdss_dp_pll clk_vco_divided_clk_src_mux>,
+			 <&mdss_dp_pll clk_vco_divsel_two_clk_src>,
+			 <&mdss_dp_pll clk_vco_divsel_four_clk_src>;
 		clock-names = "core_mnoc_clk", "core_iface_clk", "core_bus_clk",
 			"core_mdp_core_clk", "core_alt_iface_clk",
 			"core_aux_clk", "core_ref_clk_src", "core_ref_clk",
 			"ctrl_link_clk", "ctrl_link_iface_clk",
-			"ctrl_crypto_clk", "ctrl_pixel_clk";
+			"ctrl_crypto_clk", "ctrl_pixel_clk", "pixel_parent",
+			"pixel_clk_two_div", "pixel_clk_four_div";
 
 		qcom,dp-usbpd-detection = <&pmi8998_pdphy>;
 
 		qcom,msm_ext_disp = <&msm_ext_disp>;
+
+		qcom,aux-cfg0-settings = [1c 00];
+		qcom,aux-cfg1-settings = [20 13 23 1d];
+		qcom,aux-cfg2-settings = [24 00];
+		qcom,aux-cfg3-settings = [28 00];
+		qcom,aux-cfg4-settings = [2c 0a];
+		qcom,aux-cfg5-settings = [30 26];
+		qcom,aux-cfg6-settings = [34 0a];
+		qcom,aux-cfg7-settings = [38 03];
+		qcom,aux-cfg8-settings = [3c bb];
+		qcom,aux-cfg9-settings = [40 03];
+		qcom,logical2physical-lane-map = [02 03 01 00];
 
 		qcom,core-supply-entries {
 			#address-cells = <1>;
@@ -639,5 +666,4 @@
 		qcom,pluggable;
 	};
 };
-
 #include "msm8998-mdss-panels.dtsi"

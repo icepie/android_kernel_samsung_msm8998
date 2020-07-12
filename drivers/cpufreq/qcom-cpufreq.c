@@ -3,7 +3,7 @@
  * MSM architecture cpufreq driver
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2017, The Linux Foundation. All rights reserved.
  * Author: Mike A. Chan <mikechan@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -413,6 +413,19 @@ static void cpufreq_boot_limit_expired(unsigned long data);
 static void cpufreq_boot_limit_start(int period);
 extern void cpufreq_boot_limit_update(int period);
 
+#if defined(CONFIG_SEC_NAD)
+void nad_set_unlimit_cpufreq(int period)
+{
+	if(period < cpufreq_boot_limit.num_period + 1)
+		period = cpufreq_boot_limit.num_period + 1;
+	
+	cpufreq_boot_limit_start(period);
+	
+	pr_info("hunny %s, set over period:%d\n", __func__, cpufreq_boot_limit.num_period + 1);
+}
+EXPORT_SYMBOL(nad_set_unlimit_cpufreq);
+#endif
+
 static void cpufreq_boot_limit_start(int period)
 {
 	if (period >= cpufreq_boot_limit.num_period)
@@ -588,8 +601,10 @@ static int __init msm_cpufreq_probe(struct platform_device *pdev)
 	for_each_possible_cpu(cpu) {
 		snprintf(clk_name, sizeof(clk_name), "cpu%d_clk", cpu);
 		c = devm_clk_get(dev, clk_name);
-		if (IS_ERR(c))
+		if (cpu == 0 && IS_ERR(c))
 			return PTR_ERR(c);
+		else if (IS_ERR(c))
+			c = cpu_clk[cpu-1];
 		cpu_clk[cpu] = c;
 	}
 	hotplug_ready = true;

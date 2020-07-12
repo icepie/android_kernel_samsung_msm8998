@@ -1382,7 +1382,7 @@ static bool usb_match_any_interface_for_mdm(struct usb_device *udev,
 
 			intf = &cache->altsetting[0];
 
-			if (!whitelist_array[get_class_index(intf->desc.bInterfaceClass)]) { 
+			if (!whitelist_array[get_class_index(intf->desc.bInterfaceClass)]) {
 				pr_info("%s : FAIL,%x interface, it's not in whitelist\n",
 					__func__, intf->desc.bInterfaceClass);
 				return false;
@@ -1430,26 +1430,26 @@ void set_notify_mdm(struct usb_notify_dev *udev, int disable)
 	struct usb_notify *u_notify = (struct usb_notify *)(n->u_notify);
 
 	switch (disable) {
-		case NOTIFY_MDM_TYPE_ON:
-			send_otg_notify(n, NOTIFY_EVENT_MDM_ON_OFF, 1);
-			if (is_host_cable_enable(n)) {
-				pr_info("%s event=%s(%lu) disable\n", __func__,
-					event_string(VIRT_EVENT(u_notify->c_type)),
-						VIRT_EVENT(u_notify->c_type));
+	case NOTIFY_MDM_TYPE_ON:
+		send_otg_notify(n, NOTIFY_EVENT_MDM_ON_OFF, 1);
+		if (is_host_cable_enable(n)) {
+			pr_info("%s event=%s(%lu) disable\n", __func__,
+				event_string(VIRT_EVENT(u_notify->c_type)),
+					VIRT_EVENT(u_notify->c_type));
 
-				if (!n->auto_drive_vbus &&
-					(u_notify->typec_status.power_role
-					== HNOTIFY_SOURCE)
-					&& check_event_type(u_notify->c_type)
-					& NOTIFY_EVENT_NEED_VBUSDRIVE)
-					send_otg_notify(n, NOTIFY_EVENT_DRIVE_VBUS, 0);
+			if (!n->auto_drive_vbus &&
+				(u_notify->typec_status.power_role
+				== HNOTIFY_SOURCE)
+				&& check_event_type(u_notify->c_type)
+				& NOTIFY_EVENT_NEED_VBUSDRIVE)
+				send_otg_notify(n, NOTIFY_EVENT_DRIVE_VBUS, 0);
 
-				send_otg_notify(n, VIRT_EVENT(u_notify->c_type), 0);
-			}
-			break;
-		case NOTIFY_MDM_TYPE_OFF:
-			send_otg_notify(n, NOTIFY_EVENT_MDM_ON_OFF, 0);
-			break;
+			send_otg_notify(n, VIRT_EVENT(u_notify->c_type), 0);
+		}
+		break;
+	case NOTIFY_MDM_TYPE_OFF:
+		send_otg_notify(n, NOTIFY_EVENT_MDM_ON_OFF, 0);
+		break;
 	}
 }
 #endif
@@ -1924,10 +1924,10 @@ int inc_hw_param(struct otg_notify *n,
 	struct usb_notify *u_notify;
 	int ret = 0;
 
-        if (!n) {
-	    pr_err("%s otg_notify is null\n", __func__);
-            return -ENODEV;
-        }
+	if (!n) {
+		pr_err("%s otg_notify is null\n", __func__);
+		return -ENODEV;
+	}
 
 	u_notify = (struct usb_notify *)(n->u_notify);
 

@@ -129,6 +129,20 @@ void set_manual_usb_path(muic_data_t *pmuic)
 	}
 }
 
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+void set_manual_audio_path(muic_data_t *pmuic)
+{
+	struct vendor_ops *pvendor = pmuic->regmapdesc->vendorops;
+	
+	if (pvendor) {
+		pr_info("MUIC: %s", __func__);
+		pvendor->set_manual_audio_path(pmuic->regmapdesc);
+	} else{
+		pr_info("MUIC: %s: No Vendor API ready.\n", __func__);
+	}
+}
+#endif
+
 int get_adc_scan_mode(muic_data_t *pmuic)
 {
 	struct vendor_ops *pvendor = pmuic->regmapdesc->vendorops;
@@ -216,34 +230,34 @@ int com_to_usb_cp(muic_data_t *pmuic)
 int cable_redetection(muic_data_t *pmuic)
 {
 	struct vendor_ops *pvendor = pmuic->regmapdesc->vendorops;
-	
+
 	switch (pvendor->bcd_rescan(pmuic->regmapdesc)) {
-		case CHGTYPE_NONE:
-			pmuic->legacy_dev = ATTACHED_DEV_UNDEFINED_CHARGING_MUIC;
-			com_to_open_with_vbus(pmuic);
-			break;
-		case CHGTYPE_DCP:
-		case CHGTYPE_U200:
-		case CHGTYPE_LO_TA:
-			pmuic->legacy_dev = ATTACHED_DEV_TA_MUIC;
-			com_to_open_with_vbus(pmuic);
-			break;
-		case CHGTYPE_CDP:
-			pmuic->legacy_dev = ATTACHED_DEV_CDP_MUIC;
-			break;
-		case CHGTYPE_SDP:
-			pmuic->legacy_dev = ATTACHED_DEV_USB_MUIC;
-			break;
-		case CHGTYPE_TIMEOUT_SDP:
-			pmuic->legacy_dev = ATTACHED_DEV_TIMEOUT_OPEN_MUIC;
-			break;
-		default:
-			pr_info("%s: Unsupported Chger Type\n", __func__);
-		return 0;
-		}
+	case CHGTYPE_NONE:
+		pmuic->legacy_dev = ATTACHED_DEV_UNDEFINED_CHARGING_MUIC;
+		com_to_open_with_vbus(pmuic);
+		break;
+	case CHGTYPE_DCP:
+	case CHGTYPE_U200:
+	case CHGTYPE_LO_TA:
+		pmuic->legacy_dev = ATTACHED_DEV_TA_MUIC;
+		com_to_open_with_vbus(pmuic);
+		break;
+	case CHGTYPE_CDP:
+		pmuic->legacy_dev = ATTACHED_DEV_CDP_MUIC;
+		break;
+	case CHGTYPE_SDP:
+		pmuic->legacy_dev = ATTACHED_DEV_USB_MUIC;
+		break;
+	case CHGTYPE_TIMEOUT_SDP:
+		pmuic->legacy_dev = ATTACHED_DEV_TIMEOUT_OPEN_MUIC;
+		break;
+	default:
+		pr_info("%s: Unsupported Chger Type\n", __func__);
+	return 0;
+	}
 
 	muic_notifier_attach_attached_dev(pmuic->legacy_dev);
-	
+
 	return 0;
 }
 

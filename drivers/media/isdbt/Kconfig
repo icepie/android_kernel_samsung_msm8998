@@ -7,6 +7,12 @@ choice
 	prompt "isdbt driver"
 	default ISDBT_FC8300_SPI
 
+	config ISDBT_FC83X7_SPI
+		bool "ISDBT_FC83X7_SPI"
+
+	config ISDBT_FC8350_SPI
+		bool "ISDBT_FC8350_SPI"
+
 	config ISDBT_FC8300_SPI
 		bool "ISDBT_FC8300_SPI"
 

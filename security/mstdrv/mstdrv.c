@@ -30,6 +30,16 @@
 #include <linux/err.h>
 #include "mstdrv.h"
 #include <linux/power_supply.h>
+#include <linux/msm_pcie.h>
+#include <linux/threads.h>
+#include <linux/cpumask.h>
+#include <linux/percpu-defs.h>
+#include <linux/cpu.h>
+#include <linux/cpumask.h>
+#include <linux/cpufreq.h>
+#include <../../kernel/sched/sched.h>
+#include <linux/workqueue.h>
+#include <linux/msm-bus.h>
 
 /* defines */
 #define	ON				1	// On state
@@ -50,6 +60,7 @@
 #define SVC_MST_ID			0x000A0000	// need to check ID
 #define MST_CREATE_CMD(x)		(SVC_MST_ID | x)	// Create MST commands
 #define MST_TA				"mst"
+#define MAX_CLUSTERS 2 
 
 #define psy_do_property(name, function, property, value) \
 {    \
@@ -96,6 +107,39 @@ typedef struct mst_rsp_s {
 	uint32_t status;
 } __attribute__ ((packed)) mst_rsp_t;
 
+static struct msm_bus_paths ss_mst_usecases[] = { 
+    { 
+	.vectors = (struct msm_bus_vectors[]){ 
+	    { 
+		.src = 1, 
+		.dst = 512, 
+		.ab = 0, 
+		.ib = 0, 
+	    }, 
+	}, 
+	.num_paths = 1, 
+    }, 
+    { 
+	.vectors = (struct msm_bus_vectors[]){ 
+	    {
+		.src = 1,
+		.dst = 512,
+		.ab = 4068000000,
+		.ib = 4068000000,
+	    },
+	},
+	.num_paths = 1,
+    },
+};
+
+static struct msm_bus_scale_pdata ss_mst_bus_client_pdata = { 
+    .usecase = ss_mst_usecases, 
+    .num_usecases = ARRAY_SIZE(ss_mst_usecases), 
+    .name = "ss_mst", 
+}; 
+
+uint32_t ss_mst_bus_hdl;
+
 /* extern function declarations */
 extern int qseecom_start_app(struct qseecom_handle **handle, char *app_name, uint32_t size);
 extern int qseecom_shutdown_app(struct qseecom_handle **handle);
@@ -114,6 +158,9 @@ static inline struct power_supply *get_power_supply_by_name(char *name)
 	else
 		return power_supply_get_by_name(name);
 }
+static void of_mst_hw_onoff(bool on);
+static int boost_enable(void);
+static int boost_disable(void);
 
 /* global variables */
 static int mst_pwr_en = 0;		// MST_PWR_EN pin
@@ -125,6 +172,14 @@ static DEVICE_ATTR(transmit, 0770, show_mst_drv, store_mst_drv);	// define devic
 static bool mst_power_on = 0;		// to track current level of mst signal
 static struct qseecom_handle *qhandle;
 static int nfc_state = 0;
+static int wpc_det;
+
+/* cpu freq control variables */
+extern int num_clusters;
+extern struct sched_cluster *sched_cluster[NR_CPUS];
+unsigned int cluster_freq[MAX_CLUSTERS];
+struct workqueue_struct *cluster_freq_ctrl_wq;
+struct delayed_work dwork;
 
 DEFINE_MUTEX(mst_mutex);
 
@@ -134,6 +189,21 @@ static struct of_device_id mst_match_ldo_table[] = {
 	{},
 };
 
+static int mst_ldo_device_suspend(struct platform_device *dev, pm_message_t state)
+{
+	int ret = 0;
+	/* Boost Disable */
+	printk("%s : boost disable to back to Normal", __func__);
+	ret = boost_disable();
+	if (ret)
+	    printk("%s : boost disable is failed, ret = %d\n"
+		, __func__, ret);
+	/* PCIe LPM Enable */
+	sec_pcie_l1ss_enable(L1SS_MST);
+	
+	return 0;
+}
+
 static struct platform_driver sec_mst_ldo_driver = {
 	.driver = {
 		.owner = THIS_MODULE,
@@ -141,9 +211,59 @@ static struct platform_driver sec_mst_ldo_driver = {
 		.of_match_table = mst_match_ldo_table,
 	},
 	.probe = mst_ldo_device_probe,
+	.suspend = mst_ldo_device_suspend,
 };
 
 EXPORT_SYMBOL_GPL(mst_drv_dev);
+
+/**
+ * boost_enable - set all CPUs freq upto Max
+ * boost_disable - set all CPUs freq back to Normal
+ */
+static void mst_cluster_freq_ctrl_worker(struct work_struct *work)
+{
+	//struct delayed_work *dwork = to_delayed_work(work);
+	of_mst_hw_onoff(OFF);
+	return;
+}
+
+static int boost_enable(void)
+{
+	pr_info("boost_enable: bump up snoc clock request\n");
+	if (0 == ss_mst_bus_hdl){
+	    ss_mst_bus_hdl = msm_bus_scale_register_client(&ss_mst_bus_client_pdata);
+	    if (ss_mst_bus_hdl) { 
+		if(msm_bus_scale_client_update_request(ss_mst_bus_hdl, 1)) {
+		    pr_err("[SS_MST] fail to update request!\n");
+		    WARN_ON(1); 
+		    msm_bus_scale_unregister_client(ss_mst_bus_hdl);
+		    ss_mst_bus_hdl = 0;
+		}
+	    } else {
+		pr_err("[SS_MST] fail to register snoc clock config! ss_mst_bus_hdl = %d\n",
+			ss_mst_bus_hdl);
+	    }
+	}
+
+	return ss_mst_bus_hdl;
+}
+
+static int boost_disable(void)
+{
+	pr_info("boost_disable: bump up snoc clock remove\n");
+	if (ss_mst_bus_hdl) {
+	    if(msm_bus_scale_client_update_request(ss_mst_bus_hdl, 0))
+		WARN_ON(1);
+
+	    msm_bus_scale_unregister_client(ss_mst_bus_hdl);
+	    ss_mst_bus_hdl = 0;
+	} else {
+	    pr_err("[SS_MST] fail to unregister snoc clock config! ss_mst_bus_hdl = %d\n",
+			ss_mst_bus_hdl);
+	}
+
+	return ss_mst_bus_hdl;
+}
 
 /**
  * mst_ctrl_of_mst_hw_onoff - function to disable/enable MST whenever samsung pay app wants
@@ -168,20 +288,32 @@ extern void mst_ctrl_of_mst_hw_onoff(bool on){
 	if(on) {
 		printk("[MST] %s : nfc_status gets back to 0(unlock)\n", __func__);
 		nfc_state = 0;
-	}else{
-		value.intval = MST_MODE_OFF;
-		psy_do_property("mfc-charger", set, POWER_SUPPLY_PROP_TECHNOLOGY, value);
-		printk("%s : MST_MODE_OFF notify : %d\n", __func__, value.intval);
-
-		usleep_range(800, 1000);
-		printk("%s : msleep(1)\n", __func__);		
-
+	} else {
 		gpio_set_value(mst_pwr_en, 0);
 		printk("%s : mst_pwr_en gets the LOW\n", __func__);
 
+		usleep_range(800, 1000);
+		printk("%s : msleep(1)\n", __func__);
+
+		value.intval = MST_MODE_OFF;
+		psy_do_property("mfc-charger", set,
+				POWER_SUPPLY_PROP_TECHNOLOGY, value);
+		printk("%s : MST_MODE_OFF notify : %d\n", __func__,
+		       value.intval);
+
+		/* Boost Disable */
+		printk("%s : boost disable to back to Normal", __func__);
+		ret = boost_disable();
+		if (ret)
+		    printk("%s : boost disable is failed, ret = %d\n"
+			, __func__, ret);
+		/* PCIe LPM Enable */
+		sec_pcie_l1ss_enable(L1SS_MST);
+
 		ret = regulator_disable(regulator3_0);
 		if (ret < 0) {
-			printk("%s : regulator 3.0 is not disabled\n", __func__);
+			printk("%s : regulator 3.0 is not disabled\n",
+			       __func__);
 		}
 		printk("%s : regulator 3.0 is disabled\n", __func__);
 		printk("%s : nfc_status gets 1(lock)\n", __func__);
@@ -221,25 +353,45 @@ static void of_mst_hw_onoff(bool on){
 		printk(KERN_ERR "[MST] %s: regulator3_0 is invalid(NULL)\n", __func__);
 		return ;
 	}
-	if(on) {
+	if (on) {
 		ret = regulator_enable(regulator3_0);
 		if (ret < 0) {
-			printk("[MST] %s : regulator 3.0 is not enable\n", __func__);
+			printk("[MST] %s : regulator 3.0 is not enable\n",
+			       __func__);
 		}
 		printk("%s : regulator 3.0 is enabled\n", __func__);
-		
-		gpio_set_value(mst_pwr_en, 1);
-		printk("%s : mst_pwr_en gets the HIGH\n", __func__);		
-		
-		printk("%s : MST_MODE_ON notify start\n", __func__);		
+
+		printk("%s : MST_MODE_ON notify start\n", __func__);
 		value.intval = MST_MODE_ON;
 
-		psy_do_property("mfc-charger", set, POWER_SUPPLY_PROP_TECHNOLOGY, value);
-		printk("%s : MST_MODE_ON notified : %d\n", __func__, value.intval);
-		
-		mdelay(20);
+		psy_do_property("mfc-charger", set,
+				POWER_SUPPLY_PROP_TECHNOLOGY, value);
+		printk("%s : MST_MODE_ON notified : %d\n", __func__,
+		       value.intval);
 
-		while (--retry_cnt){
+		gpio_set_value(mst_pwr_en, 1);
+		usleep_range(3600, 4000);
+		gpio_set_value(mst_pwr_en, 0);
+		mdelay(50);
+
+		gpio_set_value(mst_pwr_en, 1);
+		printk("%s : mst_pwr_en gets the HIGH\n", __func__);
+
+		/* Boost Enable */
+		cancel_delayed_work_sync(&dwork);
+		printk("%s : boost enable for performacne", __func__);
+		ret = boost_enable();
+		if (!ret)
+		    printk("%s : boost enable is failed, ret = %d\n",
+			    __func__, ret);
+		queue_delayed_work(cluster_freq_ctrl_wq, &dwork, 90 * HZ);
+
+		/* PCIe LPM Disable */
+		sec_pcie_l1ss_disable(L1SS_MST);
+
+		mdelay(40);
+
+		while (--retry_cnt) {
 			psy_do_property("mfc-charger", get, POWER_SUPPLY_PROP_TECHNOLOGY, value);
 			//printk("%s : check mst mode status : %d\n", __func__, value.intval);
 			if(value.intval == 0x02){
@@ -247,27 +399,39 @@ static void of_mst_hw_onoff(bool on){
 				retry_cnt = 1;
 				break;
 			}
-			usleep_range(1600, 2000);
+			usleep_range(3600, 4000);
 		}
 
 		if(!retry_cnt){
 			printk("%s : timeout !!! : %d\n", __func__, value.intval);
 		}
 
-	}else{
-		value.intval = MST_MODE_OFF;
-		psy_do_property("mfc-charger", set, POWER_SUPPLY_PROP_TECHNOLOGY, value);
-		printk("%s : MST_MODE_OFF notify : %d\n", __func__, value.intval);
-
-		usleep_range(800, 1000);
-		printk("%s : msleep(1)\n", __func__);		
-
+	} else {
 		gpio_set_value(mst_pwr_en, 0);
 		printk("%s : mst_pwr_en gets the LOW\n", __func__);
 
+		usleep_range(800, 1000);
+		printk("%s : msleep(1)\n", __func__);
+
+		value.intval = MST_MODE_OFF;
+		psy_do_property("mfc-charger", set,
+				POWER_SUPPLY_PROP_TECHNOLOGY, value);
+		printk("%s : MST_MODE_OFF notify : %d\n", __func__,
+		       value.intval);
+
+		/* Boost Disable */
+		printk("%s : boost disable to back to Normal", __func__);
+		ret = boost_disable();
+		if (ret)
+		    printk("%s : boost disable is failed, ret = %d\n"
+			, __func__, ret);
+		/* PCIe LPM Enable */
+		sec_pcie_l1ss_enable(L1SS_MST);
+
 		ret = regulator_disable(regulator3_0);
 		if (ret < 0) {
-			printk("%s : regulator 3.0 is not disabled\n", __func__);
+			printk("%s : regulator 3.0 is not disabled\n",
+			       __func__);
 		}
 		printk("%s : regulator 3.0 is disabled\n", __func__);
 	}
@@ -371,6 +535,11 @@ static ssize_t store_mst_drv(struct device *dev,
 
 	sscanf(buf, "%20s\n", test_result);
 
+	if (wpc_det && (gpio_get_value(wpc_det) == 1)) {
+		printk("[MST] Wireless charging is ongoing, do not proceed MST work\n");
+		return count;
+	}
+
 	switch(test_result[0]){
 
 		case CMD_MST_LDO_OFF:
@@ -436,6 +605,21 @@ static ssize_t store_mst_drv(struct device *dev,
 static int sec_mst_gpio_init(struct device *dev)
 {
 	int ret = 0;
+	struct device_node *np;
+	enum of_gpio_flags irq_gpio_flags;
+
+	/* get wireless chraging check gpio */
+	np = of_find_node_by_name(NULL, "battery");
+	if (!np) {
+		pr_err("%s np NULL\n", __func__);
+	} else {
+		/* wpc_det */
+		wpc_det = of_get_named_gpio_flags(np, "battery,wpc_det",
+			0, &irq_gpio_flags);
+		if (ret < 0) {
+			dev_err(dev, "%s : can't get wpc_det\r\n", __FUNCTION__);
+		}
+	}
 
 	mst_pwr_en = of_get_named_gpio(dev->of_node, "sec-mst,mst-pwr-gpio", OFF);
 
@@ -548,6 +732,10 @@ static int __init mst_drv_init(void)
 	printk(KERN_ERR "[MST] %s\n", __func__);
 	ret = platform_driver_register(&sec_mst_ldo_driver);
 	printk(KERN_ERR "[MST] MST_LDO_DRV]]] init , ret val : %d\n",ret);
+
+	cluster_freq_ctrl_wq = create_singlethread_workqueue("mst_cluster_freq_ctrl_wq");
+	INIT_DELAYED_WORK(&dwork, mst_cluster_freq_ctrl_worker);
+
 	return ret;
 }
 

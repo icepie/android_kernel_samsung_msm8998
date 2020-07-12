@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,10 +22,12 @@
 #include <linux/irqreturn.h>
 #include <linux/irqdomain.h>
 #include <linux/mdss_io_util.h>
+#include <linux/mdss_smmu_ext.h>
 
 #include <linux/msm-bus.h>
 #include <linux/file.h>
 #include <linux/dma-direction.h>
+#include <soc/qcom/cx_ipeak.h>
 
 #include "mdss_panel.h"
 
@@ -43,6 +45,7 @@ enum mdss_mdp_clk_type {
 	MDSS_CLK_MDP_LUT,
 	MDSS_CLK_MDP_VSYNC,
 	MDSS_CLK_MNOC_AHB,
+	MDSS_CLK_THROTTLE_AXI,
 	MDSS_MAX_CLK
 };
 
@@ -164,6 +167,7 @@ enum mdss_hw_quirk {
 	MDSS_QUIRK_SRC_SPLIT_ALWAYS,
 	MDSS_QUIRK_MMSS_GDSC_COLLAPSE,
 	MDSS_QUIRK_MDP_CLK_SET_RATE,
+	MDSS_QUIRK_HDR_SUPPORT_ENABLED,
 	MDSS_QUIRK_MAX,
 };
 
@@ -207,6 +211,15 @@ enum mdss_mdp_pipe_type {
 	MDSS_MDP_PIPE_TYPE_MAX,
 };
 
+enum mdss_mdp_intf_index {
+	MDSS_MDP_NO_INTF,
+	MDSS_MDP_INTF0,
+	MDSS_MDP_INTF1,
+	MDSS_MDP_INTF2,
+	MDSS_MDP_INTF3,
+	MDSS_MDP_MAX_INTF
+};
+
 struct reg_bus_client {
 	char name[MAX_CLIENT_NAME_LEN];
 	short usecase_ndx;
@@ -215,7 +228,7 @@ struct reg_bus_client {
 };
 
 struct mdss_smmu_client {
-	struct device *dev;
+	struct mdss_smmu_intf base;
 	struct dma_iommu_mapping *mmu_mapping;
 	struct dss_module_power mp;
 	struct reg_bus_client *reg_bus_clt;
@@ -223,7 +236,7 @@ struct mdss_smmu_client {
 	bool domain_reattach;
 	bool handoff_pending;
 	void __iomem *mmu_base;
-	int domain;
+	struct list_head _client;
 };
 
 struct mdss_mdp_qseed3_lut_tbl {
@@ -242,6 +255,13 @@ struct mdss_scaler_block {
 	u32 *dest_scaler_off;
 	u32 *dest_scaler_lut_off;
 	struct mdss_mdp_qseed3_lut_tbl lut_tbl;
+
+	/*
+	 * Lock is mainly to serialize access to LUT.
+	 * LUT values come asynchronously from userspace
+	 * via ioctl.
+	 */
+	struct mutex scaler_lock;	
 };
 
 struct mdss_data_type;
@@ -259,7 +279,7 @@ struct mdss_smmu_ops {
 	void (*smmu_unmap_dma_buf)(struct sg_table *table, int domain,
 			int dir, struct dma_buf *dma_buf);
 	int (*smmu_dma_alloc_coherent)(struct device *dev, size_t size,
-			dma_addr_t *phys, dma_addr_t *iova, void *cpu_addr,
+			dma_addr_t *phys, dma_addr_t *iova, void **cpu_addr,
 			gfp_t gfp, int domain);
 	void (*smmu_dma_free_coherent)(struct device *dev, size_t size,
 			void *cpu_addr, dma_addr_t phys, dma_addr_t iova,
@@ -531,6 +551,10 @@ struct mdss_data_type {
 	struct mdss_mdp_destination_scaler *ds;
 	u32 sec_disp_en;
 	u32 sec_cam_en;
+	u32 sec_session_cnt;
+	wait_queue_head_t secure_waitq;
+	struct cx_ipeak_client *mdss_cx_ipeak;
+	struct mult_factor bus_throughput_factor;
 };
 
 extern struct mdss_data_type *mdss_res;
@@ -573,11 +597,15 @@ struct mdss_util_intf {
 	int (*iommu_ctrl)(int enable);
 	void (*iommu_lock)(void);
 	void (*iommu_unlock)(void);
+	void (*vbif_reg_lock)(void);
+	void (*vbif_reg_unlock)(void);
+	int (*secure_session_ctrl)(int enable);
 	void (*bus_bandwidth_ctrl)(int enable);
 	int (*bus_scale_set_quota)(int client, u64 ab_quota, u64 ib_quota);
 	int (*panel_intf_status)(u32 disp_num, u32 intf_type);
 	struct mdss_panel_cfg* (*panel_intf_type)(int intf_val);
 	int (*dyn_clk_gating_ctrl)(int enable);
+	bool (*mdp_handoff_pending)(void);
 };
 
 struct mdss_util_intf *mdss_get_util_intf(void);

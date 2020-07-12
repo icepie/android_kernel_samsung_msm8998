@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,10 +18,13 @@
 	container_of(obj, struct kgsl_drawobj_sync, base)
 #define CMDOBJ(obj) \
 	container_of(obj, struct kgsl_drawobj_cmd, base)
+#define SPARSEOBJ(obj) \
+	container_of(obj, struct kgsl_drawobj_sparse, base)
 
 #define CMDOBJ_TYPE     BIT(0)
 #define MARKEROBJ_TYPE  BIT(1)
 #define SYNCOBJ_TYPE    BIT(2)
+#define SPARSEOBJ_TYPE  BIT(3)
 
 /**
  * struct kgsl_drawobj - KGSL drawobj descriptor
@@ -45,7 +48,7 @@ struct kgsl_drawobj {
  * struct kgsl_drawobj_cmd - KGSL command obj, This covers marker
  * cmds also since markers are special form of cmds that do not
  * need their cmds to be executed.
- * @base: Base kgsl_drawobj
+ * @base: Base kgsl_drawobj, this needs to be the first entry
  * @priv: Internal flags
  * @global_ts: The ringbuffer timestamp corresponding to this
  *    command obj
@@ -111,6 +114,7 @@ struct kgsl_drawobj_sync {
  *           register this event
  * @timestamp: Pending timestamp for the event
  * @handle: Pointer to a sync fence handle
+ * @handle_lock: Spin lock to protect handle
  * @device: Pointer to the KGSL device
  */
 struct kgsl_drawobj_sync_event {
@@ -120,7 +124,24 @@ struct kgsl_drawobj_sync_event {
 	struct kgsl_context *context;
 	unsigned int timestamp;
 	struct kgsl_sync_fence_waiter *handle;
+	spinlock_t handle_lock;
 	struct kgsl_device *device;
+};
+
+/**
+ * struct kgsl_drawobj_sparse - KGSl sparse obj descriptor
+ * @base: Base kgsl_obj, this needs to be the first entry
+ * @id: virtual id of the bind/unbind
+ * @sparselist: list of binds/unbinds
+ * @size: Size of kgsl_sparse_bind_object
+ * @count: Number of elements in list
+ */
+struct kgsl_drawobj_sparse {
+	struct kgsl_drawobj base;
+	unsigned int id;
+	struct list_head sparselist;
+	unsigned int size;
+	unsigned int count;
 };
 
 #define KGSL_DRAWOBJ_FLAGS \
@@ -172,9 +193,15 @@ int kgsl_drawobj_sync_add_synclist(struct kgsl_device *device,
 int kgsl_drawobj_sync_add_sync(struct kgsl_device *device,
 		struct kgsl_drawobj_sync *syncobj,
 		struct kgsl_cmd_syncpoint *sync);
+struct kgsl_drawobj_sparse *kgsl_drawobj_sparse_create(
+		struct kgsl_device *device,
+		struct kgsl_context *context, unsigned int flags);
+int kgsl_drawobj_sparse_add_sparselist(struct kgsl_device *device,
+		struct kgsl_drawobj_sparse *sparseobj, unsigned int id,
+		void __user *ptr, unsigned int size, unsigned int count);
 
-int kgsl_drawobj_init(void);
-void kgsl_drawobj_exit(void);
+int kgsl_drawobjs_cache_init(void);
+void kgsl_drawobjs_cache_exit(void);
 
 void kgsl_dump_syncpoints(struct kgsl_device *device,
 	struct kgsl_drawobj_sync *syncobj);

@@ -63,9 +63,10 @@
 #endif
 
 #include <soc/qcom/scm.h>
+#include <linux/regulator/consumer.h>
+#include <linux/platform_device.h>
 
 #if defined(CONFIG_ARCH_MSM8974) || defined(CONFIG_ARCH_MSM8226)
-#include <linux/regulator/consumer.h>
 #include <linux/clk.h>
 #endif
 
@@ -105,14 +106,17 @@ enum sec_debug_upload_cause_t {
 	UPLOAD_CAUSE_PERIPHERAL_ERR = 0x000000FF,
 	UPLOAD_CAUSE_NON_SECURE_WDOG_BARK = 0x00000DBA,
 	UPLOAD_CAUSE_NON_SECURE_WDOG_BITE = 0x00000DBE,
-    UPLOAD_CAUSE_POWER_THERMAL_RESET = 0x00000075,
+        UPLOAD_CAUSE_POWER_THERMAL_RESET = 0x00000075,
 	UPLOAD_CAUSE_SECURE_WDOG_BITE = 0x00005DBE,
 	UPLOAD_CAUSE_BUS_HANG = 0x000000B5,
+	UPLOAD_CAUSE_RECOVERY_ERR = 0x00007763,
 #if defined(CONFIG_SEC_NAD)
 	UPLOAD_CAUSE_NAD_SRTEST = 0x00000A3E,
 	UPLOAD_CAUSE_NAD_QMVSDDR = 0x00000A29,
 	UPLOAD_CAUSE_NAD_QMVSCACHE = 0x00000AED,
 	UPLOAD_CAUSE_NAD_PMIC = 0x00000AB8,
+	UPLOAD_CAUSE_NAD_SDCARD = 0x00000A7C,
+	UPLOAD_CAUSE_NAD_CRYPTO = 0x00000ACF,
 	UPLOAD_CAUSE_NAD_FAIL = 0x00000A65,
 #endif
 };
@@ -128,6 +132,10 @@ char *klog_read_buf = NULL;
 char *klog_buf = NULL;
 char *tzlog_buf = NULL;
 uint32_t klog_size = 0;
+
+static DEFINE_MUTEX(klog_mutex);
+static DEFINE_MUTEX(summary_mutex);
+static DEFINE_MUTEX(tzlog_mutex);
 
 /* enable sec_debug feature */
 static unsigned enable = 1;
@@ -619,6 +627,44 @@ static int dbg_set_cpu_affinity(const char *val, struct kernel_param *kp)
 	return 0;
 }
 
+/* sysfs for recovery_cause */
+#ifdef CONFIG_USER_RESET_DEBUG
+static ssize_t show_recovery_cause(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	char recovery_cause[256];
+
+	sec_get_param(param_index_reboot_recovery_cause, recovery_cause);
+	snprintf(buf, sizeof(recovery_cause), "%s", recovery_cause);
+	pr_info("%s: %s\n", __func__, recovery_cause);
+	return strlen(buf);
+}
+
+static ssize_t store_recovery_cause(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	char recovery_cause[256];
+
+	if (strlen(buf) > sizeof(recovery_cause)) {
+		pr_err("%s: input buffer length is out of range.\n", __func__);
+		return count;
+	}
+	snprintf(recovery_cause, sizeof(recovery_cause), "%s:%d ", current->comm, task_pid_nr(current));
+	if (strlen(recovery_cause) + strlen(buf) >= sizeof(recovery_cause)) {
+		pr_err("%s: input buffer length is out of range.\n", __func__);
+		return count;
+	}
+	strncat(recovery_cause, buf, strlen(buf));
+	sec_set_param(param_index_reboot_recovery_cause, recovery_cause);
+	pr_info("%s: %s\n", __func__, recovery_cause);
+
+	return count;
+}
+
+static DEVICE_ATTR(recovery_cause, 0660, show_recovery_cause, store_recovery_cause);
+
+#endif
+
 /* for sec debug level */
 static int __init sec_debug_level(char *str)
 {
@@ -653,7 +699,17 @@ static void sec_debug_set_upload_magic(unsigned magic)
 static int sec_debug_normal_reboot_handler(struct notifier_block *nb,
 		unsigned long l, void *p)
 {
+	char recovery_cause[256];
+
 	pr_err("sec_debug_normal_reboot_handler.\n");
+
+	if (p != NULL) {
+		if ((l == SYS_RESTART) && !strncmp((char *)p, "recovery", 8)) {
+			show_recovery_cause(NULL, NULL, recovery_cause);
+			if  (!recovery_cause[0] || !strlen(recovery_cause))
+				store_recovery_cause(NULL, NULL, "", 0);
+		}
+	}
 
 	sec_debug_set_upload_magic(0x0);
 	return 0;
@@ -772,6 +828,7 @@ static int sec_debug_panic_handler(struct notifier_block *nb,
 		unsigned long l, void *buf)
 {
 	unsigned int len, i;
+
 	emerg_pet_watchdog();//CTC-should be modify
 
 #ifdef CONFIG_USER_RESET_DEBUG
@@ -804,6 +861,10 @@ static int sec_debug_panic_handler(struct notifier_block *nb,
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_DSPS_RST_ERR);
 	else if (!strnicmp(buf, "subsys", len))
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_PERIPHERAL_ERR);
+	else if (!strnicmp(buf, "recovery", len)){
+		sec_debug_set_upload_cause(UPLOAD_CAUSE_RECOVERY_ERR);
+		sec_debug_hw_reset();
+	}
 #if defined(CONFIG_SEC_NAD)
 	else if (!strnicmp(buf, "nad_srtest", len))
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_NAD_SRTEST);
@@ -813,8 +874,12 @@ static int sec_debug_panic_handler(struct notifier_block *nb,
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_NAD_QMVSCACHE);
 	else if (!strnicmp(buf, "nad_pmic", len))
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_NAD_PMIC);
+	else if (!strnicmp(buf, "nad_sdcard", len))
+		sec_debug_set_upload_cause(UPLOAD_CAUSE_NAD_SDCARD);
 	else if (!strnicmp(buf, "nad_fail", len))
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_NAD_FAIL);
+	else if (!strnicmp(buf, "nad_crypto", len))
+		sec_debug_set_upload_cause(UPLOAD_CAUSE_NAD_CRYPTO);
 #endif
 	else
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_KERNEL_PANIC);
@@ -859,6 +924,42 @@ void sec_debug_prepare_for_wdog_bark_reset(void)
 #if defined(CONFIG_TOUCHSCREEN_DUMP_MODE)
 struct tsp_dump_callbacks dump_callbacks;
 #endif
+
+#define PWRKEY_CRASH_TIMEOUT 6000
+static struct timer_list pwrkey_crash_timer;
+
+void long_press_pwrkey_timer_init(void)
+{
+	init_timer(&pwrkey_crash_timer);
+}
+
+static void long_press_trigger_force_crash(unsigned long data)
+{
+	pr_err( "Force Trigger by S/W before long press over 6 sec : %s\n", __func__);
+	emerg_pet_watchdog();
+	dump_all_task_info();
+	dump_cpu_stat();
+	panic("Crash Key");
+}
+
+static void long_press_pwrkey_timer_set(void)
+{
+	del_timer(&pwrkey_crash_timer);
+	pwrkey_crash_timer.data = 0;
+	pwrkey_crash_timer.function = long_press_trigger_force_crash;
+	pwrkey_crash_timer.expires = jiffies + msecs_to_jiffies(PWRKEY_CRASH_TIMEOUT);
+	add_timer(&pwrkey_crash_timer);
+}
+
+static int long_press_pwrkey_timer_pending(void)
+{
+	return timer_pending(&pwrkey_crash_timer);
+}
+
+void long_press_pwrkey_timer_clear(void)
+{
+	del_timer(&pwrkey_crash_timer);
+}
 
 void sec_debug_check_crash_key(unsigned int code, int value)
 {
@@ -918,22 +1019,33 @@ void sec_debug_check_crash_key(unsigned int code, int value)
 
 	switch (state) {
 	case NONE:
-		if (code == KEY_VOLUMEDOWN && value)
+		if (code == KEY_VOLUMEDOWN && value) {
 			state = STEP1;
-		else
+		} else {
 			state = NONE;
+		}
+		if(long_press_pwrkey_timer_pending())
+			long_press_pwrkey_timer_clear();
 		break;
 	case STEP1:
-		if (code == KEY_POWER && value)
+		if (code == KEY_POWER && value) {
 			state = STEP2;
-		else
+			if(!long_press_pwrkey_timer_pending())
+				long_press_pwrkey_timer_set();
+		} else {
 			state = NONE;
+			if(long_press_pwrkey_timer_pending())
+				long_press_pwrkey_timer_clear();
+		}
 		break;
 	case STEP2:
-		if (code == KEY_POWER && !value)
+		if (code == KEY_POWER && !value) {
 			state = STEP3;
-		else
+		} else {
 			state = NONE;
+		}
+		if(long_press_pwrkey_timer_pending())
+			long_press_pwrkey_timer_clear();
 		break;
 	case STEP3:
 		if (code == KEY_POWER && value) {
@@ -1067,6 +1179,49 @@ static int __init sec_dt_addr_init(void)
 	pr_emerg("%s: upload_cause addr : 0x%lx(0x%x)\n", __func__,
 		(unsigned long)upload_cause,(unsigned int)virt_to_phys(upload_cause));
 
+	return 0;
+}
+
+static int sec_debug_parse_dt(struct device *dev)
+{
+	struct device_node *np;
+	struct regulator *vdd_cx_reg;
+	u32 vdd_cx_min = 0, vdd_cx_max = 0;
+	int ret = 0;
+
+	np = of_find_compatible_node(NULL, NULL, "samsung,sec_debug");
+	if (!np) {
+		pr_err("unable to find DT imem restart reason node\n");
+		return -ENODEV;
+	}
+
+	/* Workaround for lpm watchdog during VDD_MIN for MSM8998 */
+	if (lpcharge)	{
+		vdd_cx_reg = devm_regulator_get(dev, "vdd-cx");
+
+		if (IS_ERR(vdd_cx_reg)) {
+			pr_err("%s: vdd_cx_reg is Empty\n", __func__);
+			return 0;
+		}
+
+		ret = of_property_read_u32(np, "vdd-cx-min-volts", &vdd_cx_min);
+		if (ret) {
+			pr_err("%s: vdd-cx-min-volts is Empty\n", __func__);
+			vdd_cx_min  = 128;
+		}
+		pr_info("%s: vdd-cx-max-volts :%d\n", __func__, vdd_cx_min);
+
+		ret = of_property_read_u32(np, "vdd-cx-max-volts", &vdd_cx_max);
+		if (ret) {
+			pr_err("%s: vdd-cx-max-volts is Empty\n", __func__);
+			vdd_cx_max  = 384;
+		}
+		pr_info("%s: vdd-cx-max-volts :%d\n", __func__, vdd_cx_max);
+
+		ret = regulator_set_voltage(vdd_cx_reg, vdd_cx_min, vdd_cx_max);
+		if (ret)
+			pr_err("regulator_set_voltage vdd_cx failed, rc=%d\n", ret);
+	}
 	return 0;
 }
 
@@ -1209,6 +1364,22 @@ static unsigned sec_debug_reset_ex_info_size;
 rst_exinfo_t *sec_debug_reset_ex_info;
 ex_info_fault_t ex_info_fault[NR_CPUS];
 
+extern unsigned int get_sec_log_idx(void);
+void sec_debug_store_extc_idx(bool prefix)
+{
+	_kern_ex_info_t *p_ex_info;
+
+	if (sec_debug_reset_ex_info) {
+		p_ex_info = &sec_debug_reset_ex_info->kern_ex_info.info;
+		if (p_ex_info->extc_idx == 0) {
+			p_ex_info->extc_idx = get_sec_log_idx();
+			if (prefix)
+				p_ex_info->extc_idx += 1023;
+		}
+	}
+}
+EXPORT_SYMBOL(sec_debug_store_extc_idx);
+
 void sec_debug_store_bug_string(const char *fmt, ...)
 {
 	va_list args;
@@ -1244,7 +1415,13 @@ void sec_debug_store_additional_dbg(enum extra_info_dbg_type type, unsigned int 
 						sizeof(p_ex_info->ufs_err), fmt, args);
 				va_end(args);
 				break;
-			case DBG_2_RESERVED ... DBG_5_RESERVED:
+			case DBG_2_DISPLAY_ERR:
+				va_start(args, fmt);
+				vsnprintf(p_ex_info->display_err,
+						sizeof(p_ex_info->display_err), fmt, args);
+				va_end(args);
+				break;
+			case DBG_3_RESERVED ... DBG_5_RESERVED:
 				break;
 			default:
 				break;
@@ -1436,20 +1613,27 @@ static ssize_t sec_reset_summary_info_proc_read(struct file *file, char __user *
 	loff_t pos = *offset;
 	ssize_t count;
 
-	if (sec_reset_summary_info_init() < 0)
+	mutex_lock(&summary_mutex);
+	if (sec_reset_summary_info_init() < 0) {
+		mutex_unlock(&summary_mutex);
 		return -ENOENT;
+	}
 
 	if ((pos >= summary_info->summary_size) || (pos >= SEC_DEBUG_RESET_SUMMARY_SIZE)) {
 		pr_info("%s : pos %lld, size %d\n", __func__, pos, summary_info->summary_size);
 		sec_reset_summary_completed();
+		mutex_unlock(&summary_mutex);
 		return 0;
 	}
 
 	count = min(len, (size_t)(summary_info->summary_size - pos));
-	if (copy_to_user(buf, summary_buf + pos, count))
+	if (copy_to_user(buf, summary_buf + pos, count)) {
+		mutex_unlock(&summary_mutex);
 		return -EFAULT;
+	}
 
 	*offset += count;
+	mutex_unlock(&summary_mutex);
 	return count;
 }
 
@@ -1535,20 +1719,27 @@ static ssize_t sec_reset_klog_proc_read(struct file *file, char __user *buf,
 	loff_t pos = *offset;
 	ssize_t count;
 
-	if (sec_reset_klog_init() < 0)
+	mutex_lock(&klog_mutex);
+	if (sec_reset_klog_init() < 0) {
+		mutex_unlock(&klog_mutex);
 		return -ENOENT;
+	}
 
 	if (pos >= klog_size) {
 		pr_info("%s : pos %lld, size %d\n", __func__, pos, klog_size);
 		sec_reset_klog_completed();
+		mutex_unlock(&klog_mutex);
 		return 0;
 	}
 
 	count = min(len, (size_t)(klog_size - pos));
-	if (copy_to_user(buf, klog_buf + pos, count))
+	if (copy_to_user(buf, klog_buf + pos, count)) {
+		mutex_unlock(&klog_mutex);
 		return -EFAULT;
+	}
 
 	*offset += count;
+	mutex_unlock(&klog_mutex);
 	return count;
 }
 
@@ -1620,20 +1811,27 @@ static ssize_t sec_reset_tzlog_proc_read(struct file *file, char __user *buf,
 	loff_t pos = *offset;
 	ssize_t count;
 
-	if (sec_reset_tzlog_init() < 0)
+	mutex_lock(&tzlog_mutex);
+	if (sec_reset_tzlog_init() < 0) {
+		mutex_unlock(&tzlog_mutex);
 		return -ENOENT;
+	}
 
 	if (pos >= SEC_DEBUG_RESET_TZLOG_SIZE) {
 		pr_info("%s : pos %lld, size %d\n", __func__, pos, SEC_DEBUG_RESET_TZLOG_SIZE);
 		sec_reset_tzlog_completed();
+		mutex_unlock(&tzlog_mutex);
 		return 0;
 	}
 
 	count = min(len, (size_t)(SEC_DEBUG_RESET_TZLOG_SIZE - pos));
-	if (copy_to_user(buf, tzlog_buf + pos, count))
+	if (copy_to_user(buf, tzlog_buf + pos, count)) {
+		mutex_unlock(&tzlog_mutex);
 		return -EFAULT;
+	}
 
 	*offset += count;
+	mutex_unlock(&tzlog_mutex);
 	return count;
 }
 
@@ -1678,6 +1876,45 @@ static const struct file_operations sec_store_lastkmsg_proc_fops = {
 	.release = single_release,
 };
 
+static void sec_restore_modem_reset_data(void)
+{
+	void *p_modem = sec_debug_summary_get_modem();
+	struct debug_reset_header *header = get_debug_reset_header();
+
+	if (!header) {
+		pr_info("%s : updated nothing.\n", __func__);
+		return;
+	}
+
+	if (sec_debug_get_reset_reason() != USER_UPLOAD_CAUSE_PANIC) {
+		pr_info("%s : it was not kernel panic.\n", __func__);
+		return;
+	}
+
+	if (p_modem) {
+		read_debug_partition(debug_index_modem_info, p_modem);
+		pr_info("%s : complete.\n", __func__);
+	} else {
+		pr_info("%s : skip.\n", __func__);
+	}
+}
+
+void sec_debug_summary_modem_print(void)
+{
+	if (sec_debug_get_reset_reason() != USER_UPLOAD_CAUSE_PANIC) {
+		pr_info("%s : it was not kernel panic.\n", __func__);
+		return;
+	}
+
+	pr_info("%s : 0x%016lx\n", __func__,
+		(unsigned long)sec_debug_summary_get_modem());
+
+	print_hex_dump(KERN_INFO, "", DUMP_PREFIX_OFFSET, 16, 1,
+		sec_debug_summary_get_modem(),
+		0x190, 1);
+}
+EXPORT_SYMBOL(sec_debug_summary_modem_print);
+
 static int sec_reset_reason_dbg_part_notifier_callback(
 		struct notifier_block *nfb, unsigned long action, void *data)
 {
@@ -1692,7 +1929,7 @@ static int sec_reset_reason_dbg_part_notifier_callback(
 
 			sec_debug_update_reset_reason(p_health->last_rst_reason);
 			rr_data = sec_debug_get_reset_reason();
-
+			sec_restore_modem_reset_data();
 			break;
 		default:
 			return NOTIFY_DONE;
@@ -1737,21 +1974,19 @@ static int __init sec_debug_reset_reason_init(void)
 			&sec_store_lastkmsg_proc_fops);
 
 	if (!entry)
-		return -ENOMEM;	
-	
+		return -ENOMEM;
+
 	dbg_partition_notifier_register(&sec_reset_reason_dbg_part_notifier);
 
 	return 0;
 }
-
-device_initcall(sec_debug_reset_reason_init);
 #endif // CONFIG_USER_RESET_DEBUG
 
 int __init sec_debug_init(void)
 {
 	int ret;
-	uint32_t scm_id = 0; 
-	struct scm_desc desc = {0}; 
+	uint32_t scm_id = 0;
+	struct scm_desc desc = {0};
 
 #ifdef CONFIG_USER_RESET_DEBUG
 	sec_debug_get_extra_info_region();
@@ -1779,6 +2014,7 @@ int __init sec_debug_init(void)
 		sec_do_bypass_sdi_execution_in_low();
 		return -EPERM;
 	}
+	long_press_pwrkey_timer_init();
 
 	scm_id = _TZ_DUMP_SECURITY_ALLOWS_MEM_DUMP_ID;
 	desc.arginfo = _TZ_DUMP_SECURITY_ALLOWS_MEM_DUMP_ID_PARAM_ID;
@@ -1819,7 +2055,7 @@ int sec_debug_is_enabled_for_ssr(void)
 #endif
 
 #ifdef CONFIG_SEC_FILE_LEAK_DEBUG
-int sec_debug_print_file_list(void)
+void sec_debug_print_file_list(void)
 {
 	int i=0;
 	unsigned int nCnt=0;
@@ -1827,14 +2063,13 @@ int sec_debug_print_file_list(void)
 	struct files_struct *files = current->files;
 	const char *pRootName=NULL;
 	const char *pFileName=NULL;
-	int ret=0;
 
 	nCnt=files->fdt->max_fds;
 
 	printk(KERN_ERR " [Opened file list of process %s(PID:%d, TGID:%d) :: %d]\n",
 		current->group_leader->comm, current->pid, current->tgid,nCnt);
 
-	for (i=0; i<nCnt; i++) {
+	for (i = 0; i < nCnt; i++) {
 
 		rcu_read_lock();
 		file = fcheck_files(files, i);
@@ -1853,18 +2088,23 @@ int sec_debug_print_file_list(void)
 
 			printk(KERN_ERR "[%04d]%s%s\n",i,pRootName==NULL?"null":pRootName,
 							pFileName==NULL?"null":pFileName);
-			ret++;
 		}
 		rcu_read_unlock();
 	}
-	if(ret == nCnt)
-		return 1;
-	else
-		return 0;
 }
 
-void sec_debug_EMFILE_error_proc(void)
+void sec_debug_EMFILE_error_proc(unsigned long files_addr)
 {
+	if (files_addr != (unsigned long)(current->files)) {
+		pr_err("Too many open files Error at %pS\n"
+						"%s(%d) thread of %s process tried fd allocation by proxy.\n"
+						"files_addr = 0x%lx, current->files=0x%p\n",
+					__builtin_return_address(0),
+					current->comm, current->tgid, current->group_leader->comm,
+					files_addr, current->files);
+		return;
+	}
+
 	printk(KERN_ERR "Too many open files(%d:%s)\n",
 		current->tgid, current->group_leader->comm);
 
@@ -1875,13 +2115,11 @@ void sec_debug_EMFILE_error_proc(void)
 	if (!strcmp(current->group_leader->comm, "system_server")
 		||!strcmp(current->group_leader->comm, "mediaserver")
 		||!strcmp(current->group_leader->comm, "surfaceflinger")){
-		if (sec_debug_print_file_list() == 1) {
-			panic("Too many open files");
-		}
+		sec_debug_print_file_list();
+		panic("Too many open files");
 	}
 }
 #endif
-
 
 /* klaatu - schedule log */
 #ifdef CONFIG_SEC_DEBUG_SCHED_LOG
@@ -2066,7 +2304,6 @@ static int __init sec_dbg_setup(char *str)
 
 __setup("sec_dbg=", sec_dbg_setup);
 
-
 static void sec_user_fault_dump(void)
 {
 	if (enable == 1 && enable_user == 1)
@@ -2104,7 +2341,6 @@ static int __init sec_debug_user_fault_init(void)
 		return -ENOMEM;
 	return 0;
 }
-device_initcall(sec_debug_user_fault_init);
 
 #ifdef CONFIG_SEC_DEBUG_DCVS_LOG
 void sec_debug_dcvs_log(int cpu_no, unsigned int prev_freq,
@@ -2140,3 +2376,76 @@ void sec_debug_fuelgauge_log(unsigned int voltage, unsigned short soc,
 	secdbg_log->fg_log[i].charging_status = charging_status;
 }
 #endif
+
+static int sec_debug_device_probe(struct platform_device *pdev)
+{
+	int ret = 0;
+
+#ifdef CONFIG_USER_RESET_DEBUG
+	ret = sec_debug_reset_reason_init();
+	if (ret < 0)
+		dev_err(&pdev->dev, "sec_debug_reset_reason_init failed : %d\n", ret);
+#endif
+
+	ret = sec_debug_user_fault_init();
+	if (ret < 0)
+		dev_err(&pdev->dev, "sec_debug_user_fault_init failed : %d\n", ret);
+
+	if (sec_debug_parse_dt(&pdev->dev))
+		dev_err(&pdev->dev, "%s: Failed to get sec_debug dt\n", __func__);
+
+	/* create sysfs for reboot_recovery_cause */
+	ret = sysfs_create_file(&(&pdev->dev)->kobj, &dev_attr_recovery_cause.attr);
+	if (ret)
+		pr_err("%s: Failed to create sysfs group for sec_debug\n", __func__);
+
+	return ret;
+}
+
+static int sec_debug_device_remove(struct platform_device *pdev)
+{
+	return 0;
+}
+
+static void sec_debug_device_shutdown(struct platform_device *pdev)
+{
+	return;
+}
+
+#ifdef CONFIG_OF
+static const struct of_device_id sec_debug_dt_ids[] = {
+	{ .compatible = "samsung,sec_debug" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, sec_debug_dt_ids);
+#endif /* CONFIG_OF */
+
+static struct platform_driver sec_debug_driver = {
+	.driver = {
+		   .name = "sec_debug",
+		   .owner = THIS_MODULE,
+#ifdef CONFIG_OF
+		.of_match_table = sec_debug_dt_ids,
+#endif
+	},
+	.probe = sec_debug_device_probe,
+	.remove = sec_debug_device_remove,
+	.shutdown = sec_debug_device_shutdown,
+};
+
+static int sec_debug_device_init(void)
+{
+	return platform_driver_register(&sec_debug_driver);
+}
+
+static void sec_debug_device_exit(void)
+{
+	platform_driver_unregister(&sec_debug_driver);
+}
+
+device_initcall(sec_debug_device_init);
+module_exit(sec_debug_device_exit);
+
+MODULE_DESCRIPTION("Samsung Debug Driver");
+MODULE_AUTHOR("Samsung Electronics");
+MODULE_LICENSE("GPL");

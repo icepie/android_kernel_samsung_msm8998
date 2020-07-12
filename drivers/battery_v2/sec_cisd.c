@@ -12,8 +12,12 @@
 #include "include/sec_battery.h"
 #include "include/sec_cisd.h"
 
-const char* cisd_data_str[] ={
-	"RESET_ALG", "ALG_INDEX", "FULL_CNT", "CAP_MAX", "CAP_MIN", "RECHARGING_CNT", "VALERT_CNT", 
+#if defined(CONFIG_SEC_ABC)
+#include <linux/sti/abc_common.h>
+#endif
+
+const char *cisd_data_str[] = {
+	"RESET_ALG", "ALG_INDEX", "FULL_CNT", "CAP_MAX", "CAP_MIN", "RECHARGING_CNT", "VALERT_CNT",
 	"BATT_CYCLE", "WIRE_CNT", "WIRELESS_CNT", "HIGH_SWELLING_CNT", "LOW_SWELLING_CNT",
 	"SWELLING_CHARGING", "SWELLING_FULL_CNT", "SWELLING_RECOVERY_CNT", "AICL_CNT", "BATT_THM_MAX",
 	"BATT_THM_MIN", "CHG_THM_MAX", "CHG_THM_MIN", "WPC_THM_MAX", "WPC_THM_MIN", "USB_THM_MAX", "USB_THM_MIN",
@@ -21,7 +25,7 @@ const char* cisd_data_str[] ={
 	"CHG_WPC_THM_MIN", "CHG_USB_THM_MAX", "CHG_USB_THM_MIN", "USB_OVERHEAT_CHARGING", "UNSAFETY_VOLT",
 	"UNSAFETY_TEMP", "SAFETY_TIMER", "VSYS_OVP", "VBAT_OVP", "AFC_FAIL", "BUCK_OFF", "WATER_DET", "DROP_SENSOR"
 };
-const char* cisd_data_str_d[] = {
+const char *cisd_data_str_d[] = {
 	"FULL_CNT_D", "CAP_MAX_D", "CAP_MIN_D", "RECHARGING_CNT_D", "VALERT_CNT_D", "WIRE_CNT_D", "WIRELESS_CNT_D",
 	"HIGH_SWELLING_CNT_D", "LOW_SWELLING_CNT_D", "SWELLING_CHARGING_D", "SWELLING_FULL_CNT_D",
 	"SWELLING_RECOVERY_CNT_D", "AICL_CNT_D", "BATT_THM_MAX_D", "BATT_THM_MIN_D", "CHG_THM_MAX_D",
@@ -32,7 +36,7 @@ const char* cisd_data_str_d[] = {
 	"VBAT_OVP_D", "AFC_FAIL_D", "BUCK_OFF_D", "WATER_DET_D", "DROP_SENSOR_D"
 };
 
-const char* cisd_wc_data_str[] = {"INDEX", "SNGL_NOBLE", "SNGL_VEHICLE", "SNGL_MINI", "SNGL_ZERO", "SNGL_DREAM", 
+const char *cisd_wc_data_str[] = {"INDEX", "SNGL_NOBLE", "SNGL_VEHICLE", "SNGL_MINI", "SNGL_ZERO", "SNGL_DREAM",
 	"STAND_HERO", "STAND_DREAM", "EXT_PACK", "EXT_PACK_TA"};
 
 bool sec_bat_cisd_check(struct sec_battery_info *battery)
@@ -63,10 +67,13 @@ bool sec_bat_cisd_check(struct sec_battery_info *battery)
 				__func__, battery->voltage_now);
 			vbat_val.intval = true;
 			psy_do_property("battery", set, POWER_SUPPLY_EXT_PROP_VBAT_OVP,
-					vbat_val);			
+					vbat_val);
 			pcisd->data[CISD_DATA_VBAT_OVP]++;
 			pcisd->data[CISD_DATA_VBAT_OVP_PER_DAY]++;
 			pcisd->state |= CISD_STATE_OVER_VOLTAGE;
+#if defined(CONFIG_SEC_ABC)
+			sec_abc_send_event("MODULE=battery@ERROR=over_voltage");
+#endif
 		}
 
 		/* get actual input current */
@@ -124,7 +131,7 @@ bool sec_bat_cisd_check(struct sec_battery_info *battery)
 		}
 
 		dev_info(battery->dev, "%s: [CISD] iavg: %d, incur: %d, chgcur: %d,\n"
-			"cc_T: %ld, lcd_off_T: %ld, passed_T: %ld, full_T: %ld, chg_end_T: %ld, cisd: 0x%x\n",__func__,
+			"cc_T: %ld, lcd_off_T: %ld, passed_T: %ld, full_T: %ld, chg_end_T: %ld, cisd: 0x%x\n", __func__,
 			battery->current_avg, incur_val.intval, chgcur_val.intval,
 			pcisd->cc_start_time, pcisd->lcd_off_start_time, battery->charging_passed_time,
 			battery->charging_fullcharged_time, pcisd->charging_end_time, pcisd->state);
@@ -140,6 +147,9 @@ bool sec_bat_cisd_check(struct sec_battery_info *battery)
 				pcisd->data[CISD_DATA_VBAT_OVP]++;
 				pcisd->data[CISD_DATA_VBAT_OVP_PER_DAY]++;
 				pcisd->state |= CISD_STATE_OVER_VOLTAGE;
+#if defined(CONFIG_SEC_ABC)
+				sec_abc_send_event("MODULE=battery@ERROR=over_voltage");
+#endif
 			}
 		}
 
@@ -147,7 +157,7 @@ bool sec_bat_cisd_check(struct sec_battery_info *battery)
 		psy_do_property(battery->pdata->fuelgauge_name, get,
 			POWER_SUPPLY_PROP_ENERGY_NOW, capcurr_val);
 		if (capcurr_val.intval == -1) {
-			dev_info(battery->dev, "%s: [CISD] FG I2C fail. skip cisd check \n", __func__);
+			dev_info(battery->dev, "%s: [CISD] FG I2C fail. skip cisd check\n", __func__);
 			return ret;
 		}
 

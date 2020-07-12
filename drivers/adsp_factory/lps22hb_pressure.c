@@ -21,40 +21,41 @@
 #define RAWDATA_TIMER_MS 200
 #define RAWDATA_TIMER_MARGIN_MS	20
 
-#define CALIBRATION_FILE_PATH		"/efs/FactoryApp/baro_delta"
+#define CALIBRATION_FILE_PATH "/efs/FactoryApp/baro_delta"
 
-#define	PR_MAX	8388607		/* 24 bit 2'compl */
-#define	PR_MIN	-8388608
+#define	PR_MAX 8388607 /* 24 bit 2'compl */
+#define	PR_MIN -8388608
 
-static int sea_level_pressure = 0;
+static int sea_level_pressure;
 
 static ssize_t pressure_vendor_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%s\n", VENDOR);
+	return snprintf(buf, PAGE_SIZE, "%s\n", VENDOR);
 }
 
 static ssize_t pressure_name_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%s\n", CHIP_ID);
+	return snprintf(buf, PAGE_SIZE, "%s\n", CHIP_ID);
 }
 
 static ssize_t sea_level_pressure_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n", sea_level_pressure);
+	return snprintf(buf, PAGE_SIZE, "%d\n", sea_level_pressure);
 }
 
 static ssize_t sea_level_pressure_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
-	sscanf(buf, "%d", &sea_level_pressure);
+	sscanf(buf, "%10d", &sea_level_pressure);
 
 	sea_level_pressure = sea_level_pressure / 100;
 
 	pr_info("[FACTORY] %s: sea_level_pressure = %d\n", __func__,
 		sea_level_pressure);
+
 	return size;
 }
 
@@ -136,7 +137,7 @@ static ssize_t pressure_cabratioin_show(struct device *dev,
 
 	pressure_open_calibration(data);
 
-	return sprintf(buf, "%d\n",
+	return snprintf(buf, PAGE_SIZE, "%d\n",
 		data->sensor_data[ADSP_FACTORY_PRESSURE].pressure_cal);
 }
 
@@ -145,24 +146,26 @@ static ssize_t temperature_show(struct device *dev,
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	struct msg_data message;
-	unsigned long timeout;
 	int temperature = 0;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_PRESSURE;
 
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_SELFTEST_SHOW_DATA, 0, 0);
-	timeout = jiffies + (10 * HZ);
+	data->selftest_ready_flag &= ~(1 << ADSP_FACTORY_PRESSURE);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_SELFTEST_SHOW_DATA, 0, 0);
 
-	while (!(data->selftest_ready_flag & 1 << ADSP_FACTORY_PRESSURE)) {
+	while (!(data->selftest_ready_flag & 1 << ADSP_FACTORY_PRESSURE) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
-		if (time_after(jiffies, timeout)) {
-			pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
-			return snprintf(buf, PAGE_SIZE, "%d\n", temperature);
-		}
-	}
 
-	data->selftest_ready_flag &= 0 << ADSP_FACTORY_PRESSURE;
+	data->selftest_ready_flag &= ~(1 << ADSP_FACTORY_PRESSURE);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d\n", temperature);
+	}
 
 	temperature =
 		data->sensor_selftest_result[ADSP_FACTORY_PRESSURE].result2;

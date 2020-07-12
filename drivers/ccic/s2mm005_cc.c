@@ -28,6 +28,9 @@
 #include <linux/ccic/ccic_alternate.h>
 #endif
 #include <linux/usb_notify.h>
+#if defined(CONFIG_COMBO_REDRIVER)
+#include <linux/combo_redriver/ptn36502.h>
+#endif
 
 #if defined(CONFIG_BATTERY_SAMSUNG)
 extern unsigned int lpcharge;
@@ -467,6 +470,9 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 	uint32_t R_len;
 	uint16_t REG_ADD;
 	struct otg_notify *o_notify = get_otg_notify();
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+	static int earphone_state = 0;
+#endif
 
 	pr_info("%s\n",__func__);
 
@@ -504,9 +510,9 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 
 		CC_DIR = Func_DATA.BYTES.RSP_BYTE1;
 #if defined(CONFIG_USB_HW_PARAM)
-		if(!usbpd_data->pd_state && Func_DATA.BYTES.PD_State && Func_DATA.BITS.VBUS_CC_Short) 
+		if (!usbpd_data->pd_state && Func_DATA.BYTES.PD_State && Func_DATA.BITS.VBUS_CC_Short)
 					inc_hw_param(o_notify, USB_CCIC_VBUS_CC_SHORT_COUNT);
-#endif	
+#endif
 		usbpd_data->pd_state = Func_DATA.BYTES.PD_State;
 		usbpd_data->func_state = Func_DATA.DATA;
 
@@ -522,6 +528,32 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 
 			set_enable_alternate_mode(ALTERNATE_MODE_START);
 		}
+
+		if (usbpd_data->pd_state == State_PE_SRC_Wait_New_Capabilities && Lp_DATA.BITS.Sleep_Cable_Detect) {
+			s2mm005_manual_LPM(usbpd_data, 0x0D);
+			return;
+		}
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+		dev_info(&i2c->dev, "%s : Lp_DATA.BITS.ACC_DETECION:%d\n", __func__, Lp_DATA.BITS.ACC_DETECION);
+		if (usbpd_data->pd_state == State_PE_SRC_Wait_New_Capabilities && Lp_DATA.BITS.ACC_DETECION) {
+			dev_info(&i2c->dev, "Type-C Earjack detected\n");
+			s2mm005_manual_ACC_LPM(usbpd_data);
+			return;
+		}
+
+		dev_info(&i2c->dev, "Func_DATA.BITS.ATTACH_DONE:0x%02X   Func_DATA.BITS.IS_SOURCE:0x%02X\n",
+			Func_DATA.BITS.ATTACH_DONE,
+			Func_DATA.BITS.IS_SOURCE);
+		if(Func_DATA.BITS.ATTACH_DONE == 1 && Func_DATA.BITS.IS_SOURCE == 1 && Func_DATA.BYTES.RSP_BYTE1 == 0x44){
+			dev_info(&i2c->dev, "Type-C Analog Headset detected\n");
+			/* muic */
+			ccic_event_work(usbpd_data, CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_EARJACK, 1/*attach*/, 0/*rprd*/, 0);
+			/* audio */
+			ccic_event_work(usbpd_data, CCIC_NOTIFY_DEV_AUDIO, CCIC_NOTIFY_ID_EARJACK, 1/*attach*/, 0/*rprd*/, 0);
+			earphone_state = 1;
+			return;
+		}
+#endif
 	}
 #ifdef CONFIG_USB_NOTIFY_PROC_LOG
 	store_usblog_notify(NOTIFY_FUNCSTATE, (void*)&usbpd_data->pd_state, NULL);
@@ -574,9 +606,13 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 					vbus_turn_on_ctrl(1);
 				else
 					s2mm005_set_upsm_mode();
-				
+
 				ccic_event_work(usbpd_data,
 					CCIC_NOTIFY_DEV_USB, CCIC_NOTIFY_ID_USB, 1/*attach*/, USB_STATUS_NOTIFY_ATTACH_DFP/*drp*/, 0);
+#if defined(CONFIG_COMBO_REDRIVER)
+				ptn36502_config(USB3_ONLY_MODE, DFP);
+#endif
+
 #if defined(CONFIG_CCIC_ALTERNATE_MODE)
 				// only start alternate mode at DFP state
 //				send_alternate_message(usbpd_data, VDM_DISCOVER_ID);
@@ -616,19 +652,18 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 				usbpd_data->is_host = HOST_OFF;
 				msleep(300);
 			}
-			/* muic */
-			if (Lp_DATA.BITS.PDSTATE29_SBU_DONE)
-			{
-				dev_info(&i2c->dev, "%s sbu check done(%d, %d)\n", __func__, Func_DATA.BITS.VBUS_CC_Short, Func_DATA.BITS.VBUS_SBU_Short);
+
+			if (Lp_DATA.BITS.PDSTATE29_SBU_DONE) {
+				dev_info(&i2c->dev, "%s SBU check done\n", __func__);
 				ccic_event_work(usbpd_data,
 					CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_ATTACH,
 					1/*attach*/, 0/*rprd*/,
-					(Func_DATA.BITS.VBUS_CC_Short || Func_DATA.BITS.VBUS_SBU_Short) ? Rp_Abnormal:Func_DATA.BITS.RP_CurrentLvl);					
+					(Func_DATA.BITS.VBUS_CC_Short || Func_DATA.BITS.VBUS_SBU_Short) ? Rp_Abnormal:Func_DATA.BITS.RP_CurrentLvl);
 			} else {
 				/* muic */
 				ccic_event_work(usbpd_data,
-						CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_ATTACH,
-						1/*attach*/, 0/*rprd*/, Rp_Sbu_check);
+					CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_ATTACH,
+					1/*attach*/, 0/*rprd*/, Rp_Sbu_check);
 			}
 
 			if (usbpd_data->is_client == CLIENT_OFF && usbpd_data->is_host == HOST_OFF) {
@@ -640,14 +675,18 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 #endif
 				ccic_event_work(usbpd_data,
 					CCIC_NOTIFY_DEV_USB, CCIC_NOTIFY_ID_USB, 1/*attach*/, USB_STATUS_NOTIFY_ATTACH_UFP/*drp*/, 0);
+#if defined(CONFIG_COMBO_REDRIVER)
+				ptn36502_config(USB3_ONLY_MODE, UFP);
+#endif
+
 			}
 			break;
-		case State_PE_PRS_SRC_SNK_Transition_to_off:			
-			dev_info(&i2c->dev, "%s State_PE_PRS_SRC_SNK_Transition_to_off! \n", __func__);			
+		case State_PE_PRS_SRC_SNK_Transition_to_off:
+			dev_info(&i2c->dev, "%s State_PE_PRS_SRC_SNK_Transition_to_off! \n", __func__);
 			vbus_turn_on_ctrl(0);
 			break;
 		case State_PE_PRS_SNK_SRC_Source_on:
-			dev_info(&i2c->dev, "%s State_PE_PRS_SNK_SRC_Source_on! \n", __func__);			
+			dev_info(&i2c->dev, "%s State_PE_PRS_SNK_SRC_Source_on! \n", __func__);
 			vbus_turn_on_ctrl(1);
 			break;
 		default :
@@ -659,6 +698,18 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 		usbpd_data->plug_rprd_sel = 0;
 		usbpd_data->is_dr_swap = 0;
 		usbpd_data->is_pr_swap = 0;
+		
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+		if(earphone_state == 1){
+			printk("%s : Type-C Analog Headset detached\n",__func__);
+			/* muic */
+			ccic_event_work(usbpd_data, CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_EARJACK, 0/*attach*/, 0/*rprd*/, 0);
+			/* audio */
+			ccic_event_work(usbpd_data, CCIC_NOTIFY_DEV_AUDIO, CCIC_NOTIFY_ID_EARJACK, 0/*attach*/, 0/*rprd*/, 0);
+			earphone_state = 0;
+			return;			
+		}
+#endif
 		if(prev_pd_state == State_PE_Initial_detach)	// if detach -> detach event is ignored
 		{
 			printk("%s : detach event is ignored\n",__func__);
@@ -668,6 +719,10 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 		/* muic */
 		ccic_event_work(usbpd_data,
 			CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_ATTACH, 0/*attach*/, 0/*rprd*/, 0);
+#if defined(CONFIG_COMBO_REDRIVER)
+		ptn36502_config(INIT_MODE, 0);
+#endif
+
 		if(usbpd_data->is_host > HOST_OFF || usbpd_data->is_client > CLIENT_OFF) {
 #if defined(CONFIG_CCIC_ALTERNATE_MODE)
 			if (usbpd_data->dp_is_connect == 1) {
@@ -778,6 +833,18 @@ void process_cc_get_int_status(void *data, uint32_t *pPRT_MSG, MSG_IRQ_STATUS_Ty
 	SSM_MSG_IRQ_State.DATA = pPRT_MSG[6];
 	AP_REQ_GET_State.DATA = pPRT_MSG[7];
 
+#if defined(CONFIG_SEC_FACTORY)
+	if((AP_REQ_GET_State.BYTES[0] >> 5) > 0) {
+		dev_info(&i2c->dev, "FAC: Repeat_State:%d, Repeat_RID:%d, RID0:%d\n",
+			AP_REQ_GET_State.BITS.FAC_Abnormal_Repeat_State,
+			AP_REQ_GET_State.BITS.FAC_Abnormal_Repeat_RID,
+			AP_REQ_GET_State.BITS.FAC_Abnormal_RID0);
+		ccic_event_work(usbpd_data,
+			CCIC_NOTIFY_DEV_CCIC, CCIC_NOTIFY_ID_FAC,
+			AP_REQ_GET_State.BYTES[0] >> 5, 0, 0); // b5~b7
+	}
+#endif
+
 	IrqPrint = 1;
 	for(cnt=0;cnt<32;cnt++)
 	{
@@ -828,7 +895,7 @@ void process_cc_get_int_status(void *data, uint32_t *pPRT_MSG, MSG_IRQ_STATUS_Ty
 		receive_unstructured_vdm_message(usbpd_data, &SSM_MSG_IRQ_State);
 	if(!AP_REQ_GET_State.BITS.Alt_Mode_By_I2C)
 		set_enable_alternate_mode(ALTERNATE_MODE_RESET);
-	if(!AP_REQ_GET_State.BITS.DPM_START_ON)
+	if (!AP_REQ_GET_State.BITS.DPM_START_ON)
 		set_enable_alternate_mode(ALTERNATE_MODE_RESET);
 #endif
 }

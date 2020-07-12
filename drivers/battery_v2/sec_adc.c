@@ -19,11 +19,11 @@ static struct qpnp_vadc_chip *adc_client;
 struct adc_list {
 	const char*	name;
 	struct iio_channel *channel;
+	struct qpnp_vadc_result prev_value;
 	//bool is_used;
 };
 
-/*
-static struct adc_list batt_adc_list[] = {
+static struct adc_list batt_adc_list[SEC_BAT_ADC_CHANNEL_NUM] = {
 	{.name = "adc-cable"},
 	{.name = "adc-bat"},
 	{.name = "adc-temp"},
@@ -36,8 +36,8 @@ static struct adc_list batt_adc_list[] = {
 	{.name = "adc-dischg-ntc"},
 	{.name = "adc-wpc-temp"},
 	{.name = "adc-slave-chg-temp"},
+	{.name = "adc-usb-temp"},
 };
-*/
 static void sec_bat_adc_ap_init(struct platform_device *pdev,
 		struct sec_battery_info *battery)
 {
@@ -51,77 +51,67 @@ static void sec_bat_adc_ap_init(struct platform_device *pdev,
 	}
 }
 
+static void sec_bat_read_adc(struct qpnp_vadc_chip *vadc, int channel,
+		struct qpnp_vadc_result *result, int adc_channel)
+{
+	int ret = 0;
+	int retry_cnt = RETRY_CNT;
+
+	do { 
+		ret = qpnp_vadc_read(vadc, channel, result);
+		retry_cnt--; 
+	} while ((retry_cnt > 0) && ret);
+
+	if (retry_cnt <= 0) { 
+		pr_err("%s: Error in ADC(%d) retry_cnt(%d)\n", __func__, adc_channel, retry_cnt); 
+		result->adc_code = batt_adc_list[adc_channel].prev_value.adc_code;
+		result->physical = batt_adc_list[adc_channel].prev_value.physical;
+	} else {
+		batt_adc_list[adc_channel].prev_value.adc_code = result->adc_code;
+		batt_adc_list[adc_channel].prev_value.physical = result->physical;
+	}
+}
+
 static int sec_bat_adc_ap_read(struct sec_battery_info *battery, int channel)
 {
 	struct qpnp_vadc_result results;
-	int rc = -1;
 	int data = -1;
 
 	switch (channel)
 	{
 	case SEC_BAT_ADC_CHANNEL_TEMP:
-		rc = qpnp_vadc_read(adc_client, VADC_AMUX3_GPIO_PU2, &results);
-		if (rc) {
-			pr_err("%s: Unable to read batt temperature rc=%d\n",
-					__func__, rc);
-			return 0;
-		}
+		sec_bat_read_adc(adc_client, VADC_AMUX3_GPIO_PU2, &results, channel);
 		data = results.adc_code;
 		break;
 	case SEC_BAT_ADC_CHANNEL_TEMP_AMBIENT:
 		data = 33000;
 		break;
 	case SEC_BAT_ADC_CHANNEL_BAT_CHECK:
-		rc = qpnp_vadc_read(NULL, LR_MUX2_BAT_ID, &results);
-		if (rc) {
-			pr_err("%s: Unable to read BATT_ID ADC rc=%d\n",
-					__func__, rc);
-			return 0;
-		}
+		sec_bat_read_adc(NULL, LR_MUX2_BAT_ID, &results, channel);
 		pr_debug("BAT_ID physical= %lld, raw = 0x%x\n", results.physical, results.adc_code);
 		data = results.physical;
 		break;
 	case SEC_BAT_ADC_CHANNEL_USB_TEMP:
-		rc = qpnp_vadc_read(adc_client, VADC_AMUX5_GPIO_PU2, &results);
-		if (rc) {
-			pr_err("%s: Unable to read chg temperature rc=%d\n",
-				__func__, rc);
-			return 33000;
-		}
+		sec_bat_read_adc(adc_client, VADC_AMUX5_GPIO_PU2, &results, channel);
 		data = results.adc_code;
 		break;	
 	case SEC_BAT_ADC_CHANNEL_CHG_TEMP:
-		rc = qpnp_vadc_read(adc_client, VADC_AMUX_THM4_PU2, &results);
-		if (rc) {
-			pr_err("%s: Unable to read chg temperature rc=%d\n",
-				__func__, rc);
-			return 33000;
-		}
+		sec_bat_read_adc(adc_client, VADC_AMUX_THM4_PU2, &results, channel);
 		data = results.adc_code;
 		break;
 	case SEC_BAT_ADC_CHANNEL_WPC_TEMP:
-		rc = qpnp_vadc_read(adc_client, VADC_AMUX3_GPIO_PU2, &results);
-		if (rc) {
-			pr_err("%s: Unable to read wpc temperature rc=%d\n",
-				__func__, rc);
-			return 33000;
-		}
+		sec_bat_read_adc(adc_client, VADC_AMUX3_GPIO_PU2, &results, channel);
 		data = results.adc_code;
 		break;
 	case SEC_BAT_ADC_CHANNEL_INBAT_VOLTAGE:
-		rc = qpnp_vadc_read(adc_client, VBAT_SNS, &results);
-		if (rc) {
-			pr_err("%s: Unable to read VBAT_SNS ADC rc=%d\n",
-					__func__, rc);
-			return 0;
-		}
+		sec_bat_read_adc(adc_client, VBAT_SNS, &results, channel);
 		data = ((int)results.physical)/1000;
-		break;		
+		break;
 	default :
 		break;
 	}
 
-	return data;	
+	return data;
 }
 
 static void sec_bat_adc_ap_exit(void)
@@ -365,7 +355,7 @@ bool sec_bat_get_value_by_adc(
 		temp_adc_table_size =
 			battery->pdata->usb_temp_adc_table_size;
 		battery->usb_temp_adc = temp_adc;
-		break;		
+		break;
 	case SEC_BAT_ADC_CHANNEL_CHG_TEMP:
 		temp_adc_table = battery->pdata->chg_temp_adc_table;
 		temp_adc_table_size =

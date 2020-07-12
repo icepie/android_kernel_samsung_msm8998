@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,6 +26,8 @@
 #include <linux/err.h>
 #include <linux/delay.h>
 #include <linux/sysfs.h>
+#include <linux/workqueue.h>
+
 #include <soc/qcom/subsystem_restart.h>
 #include <soc/qcom/socinfo.h>
 
@@ -65,17 +67,21 @@ static struct attribute *attrs[] = {
 };
 
 static struct platform_device *slpi_private;
+static struct work_struct slpi_ldr_work;
 
-static void slpi_loader_do(struct platform_device *pdev)
+static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 {
-
+	struct platform_device *pdev = slpi_private;
 	struct slpi_loader_private *priv = NULL;
 	int ret;
 	const char *firmware_name = NULL;
 #if defined(CONFIG_SEC_DREAMQLTE_PROJECT) || \
 	defined(CONFIG_SEC_DREAM2QLTE_PROJECT) || \
 	defined(CONFIG_SEC_BAIKALQLTE_PROJECT) || \
-	defined(CONFIG_SEC_CRUISERLTE_PROJECT)
+	defined(CONFIG_SEC_GREATQLTE_PROJECT) || \
+	defined(CONFIG_SEC_CRUISERLTE_PROJECT) ||\
+	defined(CONFIG_SEC_GTS4LLTE_PROJECT) || \
+	defined(CONFIG_SEC_KELLYLTE_PROJECT)
 	uint32_t msm_version;
 #endif
 
@@ -107,7 +113,10 @@ static void slpi_loader_do(struct platform_device *pdev)
 #if defined(CONFIG_SEC_DREAMQLTE_PROJECT) || \
 	defined(CONFIG_SEC_DREAM2QLTE_PROJECT) || \
 	defined(CONFIG_SEC_BAIKALQLTE_PROJECT) || \
-	defined(CONFIG_SEC_CRUISERLTE_PROJECT)
+	defined(CONFIG_SEC_GREATQLTE_PROJECT) || \
+	defined(CONFIG_SEC_CRUISERLTE_PROJECT) || \
+	defined(CONFIG_SEC_GTS4LLTE_PROJECT) || \
+	defined(CONFIG_SEC_KELLYLTE_PROJECT)
 	msm_version = socinfo_get_version();
 	pr_info("%s: msm version(0x%x) for SLPI image\n",
 		__func__, msm_version);
@@ -133,6 +142,12 @@ static void slpi_loader_do(struct platform_device *pdev)
 
 fail:
 	dev_err(&pdev->dev, "%s: SLPI image loading failed\n", __func__);
+}
+
+static void slpi_loader_do(struct platform_device *pdev)
+{
+	dev_info(&pdev->dev, "%s: scheduling work to load SLPI fw\n", __func__);
+	schedule_work(&slpi_ldr_work);
 }
 
 static void slpi_loader_unload(struct platform_device *pdev)
@@ -373,6 +388,8 @@ static int sensors_ssc_probe(struct platform_device *pdev)
 		pr_err("%s: cdev_add fail.\n", __func__);
 		goto cdev_add_err;
 	}
+
+	INIT_WORK(&slpi_ldr_work, slpi_load_fw);
 
 	return 0;
 

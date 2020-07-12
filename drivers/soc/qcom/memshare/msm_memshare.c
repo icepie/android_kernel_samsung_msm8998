@@ -475,6 +475,7 @@ void initialize_client(void)
 #ifndef CONFIG_SEC_BSP
 	dma_set_attr(DMA_ATTR_NO_KERNEL_MAPPING, &attrs);
 #endif
+	dma_set_attr(DMA_ATTR_SKIP_ZEROING, &attrs);
 }
 
 /*
@@ -740,6 +741,7 @@ static int handle_alloc_generic_req(void *req_h, void *req, void *conn_h)
 	struct mem_alloc_generic_resp_msg_v01 *alloc_resp;
 	int rc, resp = 0;
 	int client_id;
+	uint32_t size = 0;
 
 	alloc_req = (struct mem_alloc_generic_req_msg_v01 *)req;
 	pr_debug("memshare: alloc request client id: %d proc _id: %d\n",
@@ -760,31 +762,45 @@ static int handle_alloc_generic_req(void *req_h, void *req, void *conn_h)
 		pr_err("memshare: %s client not found, requested client: %d, proc_id: %d\n",
 				__func__, alloc_req->client_id,
 				alloc_req->proc_id);
+		kfree(alloc_resp);
+		alloc_resp = NULL;
 		return -EINVAL;
 	}
 
-	memblock[client_id].free_memory += 1;
-	pr_debug("memshare: In %s, free memory count for client id: %d = %d",
-		__func__, memblock[client_id].client_id,
-			memblock[client_id].free_memory);
 	if (!memblock[client_id].alloted) {
-		rc = memshare_alloc(memsh_drv->dev, alloc_req->num_bytes,
+		if (alloc_req->client_id == 1 && alloc_req->num_bytes > 0)
+			size = alloc_req->num_bytes + MEMSHARE_GUARD_BYTES;
+		else
+			size = alloc_req->num_bytes;
+		rc = memshare_alloc(memsh_drv->dev, size,
 					&memblock[client_id]);
 		if (rc) {
 			pr_err("In %s,Unable to allocate memory for requested client\n",
 							__func__);
 			resp = 1;
 		}
-		if (!resp) {
-			memblock[client_id].alloted = 1;
-			memblock[client_id].size = alloc_req->num_bytes;
-			memblock[client_id].peripheral = alloc_req->proc_id;
-#ifdef CONFIG_SEC_BSP
-			memshare_rd_set(memsh_drv->memshare_rd_dev, memblock[client_id].phy_addr,
-					alloc_req->num_bytes, memblock[client_id].virtual_addr);
-#endif
+	}	else {
+		if (memblock[client_id].size < alloc_req->num_bytes)	{
+			pr_err("In %s,guarantee memory size is smaller than alloc request\n",
+			__func__);
+			resp = 1;
 		}
 	}
+
+	if (!resp) {
+		memblock[client_id].free_memory += 1;
+		memblock[client_id].alloted = 1;
+		memblock[client_id].size = alloc_req->num_bytes;
+		memblock[client_id].peripheral = alloc_req->proc_id;
+#ifdef CONFIG_SEC_BSP
+		memshare_rd_set(memsh_drv->memshare_rd_dev, memblock[client_id].phy_addr,
+				alloc_req->num_bytes, memblock[client_id].virtual_addr);
+#endif
+	}
+	pr_debug("memshare: In %s, free memory count for client id: %d = %d",
+		__func__, memblock[client_id].client_id,
+		memblock[client_id].free_memory);
+
 	memblock[client_id].sequence_id = alloc_req->sequence_id;
 
 	fill_alloc_response(alloc_resp, client_id, &resp);
@@ -792,7 +808,7 @@ static int handle_alloc_generic_req(void *req_h, void *req, void *conn_h)
 	 * Perform the Hypervisor mapping in order to avoid XPU viloation
 	 * to the allocated region for Modem Clients
 	 */
-	if (!memblock[client_id].hyp_mapping &&
+	if (!memblock[client_id].hyp_mapping && !resp &&
 		memblock[client_id].alloted)
 		shared_hyp_mapping(client_id);
 	mutex_unlock(&memsh_drv->mem_share);
@@ -808,6 +824,9 @@ static int handle_alloc_generic_req(void *req_h, void *req, void *conn_h)
 	if (rc < 0)
 		pr_err("In %s, Error sending the alloc request: %d\n",
 							__func__, rc);
+
+	kfree(alloc_resp);
+	alloc_resp = NULL;
 	return rc;
 }
 
@@ -937,6 +956,8 @@ static int handle_query_size_req(void *req_h, void *req, void *conn_h)
 		pr_err("memshare: %s client not found, requested client: %d, proc_id: %d\n",
 				__func__, query_req->client_id,
 				query_req->proc_id);
+		kfree(query_resp);
+		query_resp = NULL;
 		return -EINVAL;
 	}
 
@@ -962,6 +983,8 @@ static int handle_query_size_req(void *req_h, void *req, void *conn_h)
 		pr_err("In %s, Error sending the query request: %d\n",
 							__func__, rc);
 
+	kfree(query_resp);
+	query_resp = NULL;
 	return rc;
 }
 
@@ -1211,9 +1234,11 @@ static int memshare_child_probe(struct platform_device *pdev)
   /*
    *	Memshare allocation for guaranteed clients
    */
-	if (memblock[num_clients].guarantee) {
+	if (memblock[num_clients].guarantee && size > 0) {
+		if (client_id == 1)
+			size += MEMSHARE_GUARD_BYTES;
 		rc = memshare_alloc(memsh_child->dev,
-				memblock[num_clients].size,
+				size,
 				&memblock[num_clients]);
 		if (rc) {
 			pr_err("In %s, Unable to allocate memory for guaranteed clients, rc: %d\n",
@@ -1221,6 +1246,7 @@ static int memshare_child_probe(struct platform_device *pdev)
 			return rc;
 		}
 		memblock[num_clients].alloted = 1;
+		shared_hyp_mapping(num_clients);
 	}
 
 	/*

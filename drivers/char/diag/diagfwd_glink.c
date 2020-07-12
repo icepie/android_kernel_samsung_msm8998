@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -64,6 +64,13 @@ struct diag_glink_info glink_data[NUM_PERIPHERALS] = {
 		.edge = "wdsp",
 		.name = "DIAG_DATA",
 		.hdl = NULL
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DATA,
+		.edge = "cdsp",
+		.name = "DIAG_DATA",
+		.hdl = NULL
 	}
 };
 
@@ -100,6 +107,13 @@ struct diag_glink_info glink_cntl[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_WDSP,
 		.type = TYPE_CNTL,
 		.edge = "wdsp",
+		.name = "DIAG_CTRL",
+		.hdl = NULL
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_CNTL,
+		.edge = "cdsp",
 		.name = "DIAG_CTRL",
 		.hdl = NULL
 	}
@@ -140,6 +154,13 @@ struct diag_glink_info glink_dci[NUM_PERIPHERALS] = {
 		.edge = "wdsp",
 		.name = "DIAG_DCI_DATA",
 		.hdl = NULL
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DCI,
+		.edge = "cdsp",
+		.name = "DIAG_DCI_DATA",
+		.hdl = NULL
 	}
 };
 
@@ -178,6 +199,13 @@ struct diag_glink_info glink_cmd[NUM_PERIPHERALS] = {
 		.edge = "wdsp",
 		.name = "DIAG_CMD",
 		.hdl = NULL
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_CMD,
+		.edge = "cdsp",
+		.name = "DIAG_CMD",
+		.hdl = NULL
 	}
 };
 
@@ -214,6 +242,13 @@ struct diag_glink_info glink_dci_cmd[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_WDSP,
 		.type = TYPE_DCI_CMD,
 		.edge = "wdsp",
+		.name = "DIAG_DCI_CMD",
+		.hdl = NULL
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DCI_CMD,
+		.edge = "cdsp",
 		.name = "DIAG_DCI_CMD",
 		.hdl = NULL
 	}
@@ -326,13 +361,44 @@ static void diag_glink_read_work_fn(struct work_struct *work)
 
 	diagfwd_channel_read(glink_info->fwd_ctxt);
 }
+struct diag_glink_read_work {
+	struct diag_glink_info *glink_info;
+	const void *ptr_read_done;
+	const void *ptr_rx_done;
+	size_t ptr_read_size;
+	struct work_struct work;
+};
+
+static void diag_glink_notify_rx_work_fn(struct work_struct *work)
+{
+	struct diag_glink_read_work *read_work = container_of(work,
+			struct diag_glink_read_work, work);
+	struct diag_glink_info *glink_info = read_work->glink_info;
+
+	if (!glink_info || !glink_info->hdl) {
+		kfree(read_work);
+		return;
+	}
+
+	diagfwd_channel_read_done(glink_info->fwd_ctxt,
+			(unsigned char *)(read_work->ptr_read_done),
+			read_work->ptr_read_size);
+
+	glink_rx_done(glink_info->hdl, read_work->ptr_rx_done, false);
+
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+		"diag: Rx done for packet %pK of len: %d periph: %d ch: %d\n",
+		read_work->ptr_rx_done, (int)read_work->ptr_read_size,
+		glink_info->peripheral, glink_info->type);
+	kfree(read_work);
+}
 
 static void diag_glink_notify_rx(void *hdl, const void *priv,
 				const void *pkt_priv, const void *ptr,
 				size_t size)
 {
 	struct diag_glink_info *glink_info = (struct diag_glink_info *)priv;
-	int err = 0;
+	struct diag_glink_read_work *read_work;
 
 	if (!glink_info || !glink_info->hdl || !ptr || !pkt_priv || !hdl)
 		return;
@@ -344,12 +410,25 @@ static void diag_glink_notify_rx(void *hdl, const void *priv,
 		"diag: received a packet %pK of len:%d from periph:%d ch:%d\n",
 		ptr, (int)size, glink_info->peripheral, glink_info->type);
 
+	read_work = kmalloc(sizeof(*read_work), GFP_ATOMIC);
+	if (!read_work) {
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+			"diag: Could not allocate read_work\n");
+		glink_rx_done(glink_info->hdl, ptr, true);
+		return;
+	}
+
 	memcpy((void *)pkt_priv, ptr, size);
-	err = diagfwd_channel_read_done(glink_info->fwd_ctxt,
-					(unsigned char *)pkt_priv, size);
-	glink_rx_done(glink_info->hdl, ptr, false);
+
+	read_work->glink_info = glink_info;
+	read_work->ptr_read_done = pkt_priv;
+	read_work->ptr_rx_done = ptr;
+	read_work->ptr_read_size = size;
+	INIT_WORK(&read_work->work, diag_glink_notify_rx_work_fn);
+	queue_work(glink_info->wq, &read_work->work);
+
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-		"diag: Rx done for packet %pK of len:%d periph:%d ch:%d\n",
+		"diag: Rx queued for packet %pK of len: %d periph: %d ch: %d\n",
 		ptr, (int)size, glink_info->peripheral, glink_info->type);
 }
 
@@ -433,11 +512,13 @@ static void diag_glink_connect_work_fn(struct work_struct *work)
 	struct diag_glink_info *glink_info = container_of(work,
 							struct diag_glink_info,
 							connect_work);
-	if (!glink_info || glink_info->hdl)
+	if (!glink_info || !glink_info->hdl)
 		return;
 	atomic_set(&glink_info->opened, 1);
 	diagfwd_channel_open(glink_info->fwd_ctxt);
 	diagfwd_late_open(glink_info->fwd_ctxt);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "glink channel open: p: %d t: %d\n",
+			glink_info->peripheral, glink_info->type);
 }
 
 static void diag_glink_remote_disconnect_work_fn(struct work_struct *work)
@@ -445,11 +526,23 @@ static void diag_glink_remote_disconnect_work_fn(struct work_struct *work)
 	struct diag_glink_info *glink_info = container_of(work,
 							struct diag_glink_info,
 							remote_disconnect_work);
-	if (!glink_info || glink_info->hdl)
+	if (!glink_info || !glink_info->hdl)
 		return;
 	atomic_set(&glink_info->opened, 0);
 	diagfwd_channel_close(glink_info->fwd_ctxt);
 	atomic_set(&glink_info->tx_intent_ready, 0);
+}
+
+static void diag_glink_late_init_work_fn(struct work_struct *work)
+{
+	struct diag_glink_info *glink_info = container_of(work,
+							struct diag_glink_info,
+							late_init_work);
+	if (!glink_info || !glink_info->hdl)
+		return;
+	diagfwd_channel_open(glink_info->fwd_ctxt);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "glink late init p: %d t: %d\n",
+			glink_info->peripheral, glink_info->type);
 }
 
 static void diag_glink_transport_notify_state(void *handle, const void *priv,
@@ -582,7 +675,7 @@ static void glink_late_init(struct diag_glink_info *glink_info)
 	glink_info->inited = 1;
 
 	if (atomic_read(&glink_info->opened))
-		diagfwd_channel_open(glink_info->fwd_ctxt);
+		queue_work(glink_info->wq, &(glink_info->late_init_work));
 
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s exiting\n",
 		 glink_info->name);
@@ -630,6 +723,7 @@ static void __diag_glink_init(struct diag_glink_info *glink_info)
 	INIT_WORK(&(glink_info->connect_work), diag_glink_connect_work_fn);
 	INIT_WORK(&(glink_info->remote_disconnect_work),
 		diag_glink_remote_disconnect_work_fn);
+	INIT_WORK(&(glink_info->late_init_work), diag_glink_late_init_work_fn);
 	link_info.glink_link_state_notif_cb = diag_glink_notify_cb;
 	link_info.transport = NULL;
 	link_info.edge = glink_info->edge;

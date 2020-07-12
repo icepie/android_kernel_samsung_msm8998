@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -391,6 +391,24 @@ void add_popp(u32 dev_idx, u32 port_id, u32 popp_id)
 		rtac_adm_data.device[dev_idx].num_of_popp - 1].app_type);
 done:
 	return;
+}
+
+void rtac_update_afe_topology(u32 port_id)
+{
+	u32 i = 0;
+
+	mutex_lock(&rtac_adm_mutex);
+	for (i = 0; i < rtac_adm_data.num_of_dev; i++) {
+		if (rtac_adm_data.device[i].afe_port == port_id) {
+			rtac_adm_data.device[i].afe_topology =
+						afe_get_topology(port_id);
+			pr_debug("%s: port_id = 0x%x topology_id = 0x%x copp_id = %d\n",
+				 __func__, port_id,
+				 rtac_adm_data.device[i].afe_topology,
+				 rtac_adm_data.device[i].copp);
+		}
+	}
+	mutex_unlock(&rtac_adm_mutex);
 }
 
 void rtac_add_adm_device(u32 port_id, u32 copp_id, u32 path_id, u32 popp_id,
@@ -883,6 +901,14 @@ int send_adm_apr(void *buf, u32 opcode)
 		bytes_returned = ((u32 *)rtac_cal[ADM_RTAC_CAL].cal_data.
 			kvaddr)[2] + 3 * sizeof(u32);
 
+		if (bytes_returned > rtac_cal[ADM_RTAC_CAL].
+			map_data.map_size) {
+			pr_err("%s: Invalid data size = %d\n",
+				__func__, bytes_returned);
+			result = -EINVAL;
+			goto err;
+		}
+				
 		if (bytes_returned > user_buf_size) {
 			pr_err("%s: User buf not big enough, size = 0x%x, returned size = 0x%x\n",
 				__func__, user_buf_size, bytes_returned);
@@ -1105,6 +1131,14 @@ int send_rtac_asm_apr(void *buf, u32 opcode)
 		bytes_returned = ((u32 *)rtac_cal[ASM_RTAC_CAL].cal_data.
 			kvaddr)[2] + 3 * sizeof(u32);
 
+		if (bytes_returned > rtac_cal[ASM_RTAC_CAL].
+			map_data.map_size) {
+			pr_err("%s: Invalid data size = %d\n",
+				__func__, bytes_returned);
+			result = -EINVAL;
+			goto err;
+		}
+				
 		if (bytes_returned > user_buf_size) {
 			pr_err("%s: User buf not big enough, size = 0x%x, returned size = 0x%x\n",
 				__func__, user_buf_size, bytes_returned);
@@ -1364,6 +1398,14 @@ static int send_rtac_afe_apr(void *buf, uint32_t opcode)
 		bytes_returned = get_resp->param_size +
 				sizeof(struct afe_port_param_data_v2);
 
+		if (bytes_returned > rtac_cal[AFE_RTAC_CAL].
+			map_data.map_size) {
+			pr_err("%s: Invalid data size = %d\n",
+				__func__, bytes_returned);
+			result = -EINVAL;
+			goto err;
+		}
+					
 		if (bytes_returned > user_afe_buf.buf_size) {
 			pr_err("%s: user size = 0x%x, returned size = 0x%x\n",
 				__func__, user_afe_buf.buf_size,
@@ -1484,7 +1526,7 @@ int send_voice_apr(u32 mode, void *buf, u32 opcode)
 		goto err;
 	}
 
-	if (opcode == VOICE_CMD_SET_PARAM) {
+	if (opcode == VSS_ICOMMON_CMD_SET_PARAM_V2) {
 		/* set payload size to in-band payload */
 		/* set data size to actual out of band payload size */
 		data_size = payload_size - 4 * sizeof(u32);
@@ -1537,7 +1579,9 @@ int send_voice_apr(u32 mode, void *buf, u32 opcode)
 	voice_params.dest_svc = 0;
 	voice_params.dest_domain = APR_DOMAIN_MODEM;
 	voice_params.dest_port = (u16)dest_port;
-	voice_params.token = 0;
+	voice_params.token = (opcode == VSS_ICOMMON_CMD_SET_PARAM_V2) ?
+				     VOC_RTAC_SET_PARAM_TOKEN :
+				     0;
 	voice_params.opcode = opcode;
 
 	/* fill for out-of-band */
@@ -1582,10 +1626,18 @@ int send_voice_apr(u32 mode, void *buf, u32 opcode)
 		goto err;
 	}
 
-	if (opcode == VOICE_CMD_GET_PARAM) {
+	if (opcode == VSS_ICOMMON_CMD_GET_PARAM_V2) {
 		bytes_returned = ((u32 *)rtac_cal[VOICE_RTAC_CAL].cal_data.
 			kvaddr)[2] + 3 * sizeof(u32);
 
+		if (bytes_returned > rtac_cal[VOICE_RTAC_CAL].
+			map_data.map_size) {
+			pr_err("%s: Invalid data size = %d\n",
+				__func__, bytes_returned);
+			result = -EINVAL;
+			goto err;
+		}
+				
 		if (bytes_returned > user_buf_size) {
 			pr_err("%s: User buf not big enough, size = 0x%x, returned size = 0x%x\n",
 				__func__, user_buf_size, bytes_returned);
@@ -1675,20 +1727,20 @@ static long rtac_ioctl_shared(struct file *f,
 			ASM_STREAM_CMD_SET_PP_PARAMS_V2);
 		break;
 	case AUDIO_GET_RTAC_CVS_CAL:
-		result = send_voice_apr(RTAC_CVS, (void *)arg,
-			VOICE_CMD_GET_PARAM);
+		result = send_voice_apr(RTAC_CVS, (void *) arg,
+					VSS_ICOMMON_CMD_GET_PARAM_V2);
 		break;
 	case AUDIO_SET_RTAC_CVS_CAL:
-		result = send_voice_apr(RTAC_CVS, (void *)arg,
-			VOICE_CMD_SET_PARAM);
+		result = send_voice_apr(RTAC_CVS, (void *) arg,
+					VSS_ICOMMON_CMD_SET_PARAM_V2);
 		break;
 	case AUDIO_GET_RTAC_CVP_CAL:
-		result = send_voice_apr(RTAC_CVP, (void *)arg,
-			VOICE_CMD_GET_PARAM);
+		result = send_voice_apr(RTAC_CVP, (void *) arg,
+					VSS_ICOMMON_CMD_GET_PARAM_V2);
 		break;
 	case AUDIO_SET_RTAC_CVP_CAL:
-		result = send_voice_apr(RTAC_CVP, (void *)arg,
-			VOICE_CMD_SET_PARAM);
+		result = send_voice_apr(RTAC_CVP, (void *) arg,
+					VSS_ICOMMON_CMD_SET_PARAM_V2);
 		break;
 	case AUDIO_GET_RTAC_AFE_CAL:
 		result = send_rtac_afe_apr((void *)arg,

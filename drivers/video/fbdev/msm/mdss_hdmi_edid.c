@@ -17,16 +17,8 @@
 #include <linux/device.h>
 #include "mdss_fb.h"
 #include "mdss_hdmi_edid.h"
-
 #ifdef CONFIG_SEC_DISPLAYPORT
-#ifdef DEV_DBG
-#undef DEV_DBG
-#define DEV_DBG(fmt, args...)   pr_info(fmt, ##args)
-#endif
-#ifdef pr_debug
-#undef pr_debug
-#define pr_debug pr_info
-#endif
+#include <linux/dp_logger.h>
 #endif
 
 #define DBC_START_OFFSET 4
@@ -153,6 +145,7 @@ struct hdmi_edid_ctrl {
 	u16 video_latency;
 	u32 present_3d;
 	u32 page_id;
+	bool basic_audio_supp;
 	u8 audio_data_block[MAX_NUMBER_ADB * MAX_AUDIO_DATA_BLOCK_SIZE];
 	int adb_size;
 	u8 spkr_alloc_data_block[MAX_SPKR_ALLOC_DATA_BLOCK_SIZE];
@@ -175,45 +168,77 @@ struct hdmi_edid_ctrl {
 
 #if defined(CONFIG_SEC_DISPLAYPORT)
 struct secdp_display_timing {
+	uint32_t index; /* Resolution priority */
 	uint32_t active_h;
 	uint32_t active_v;
 	uint32_t refresh_rate;
 	uint32_t interlaced;
+	bool dex_support; /* true if it's dex supported resolution */
 };
+
+/* Index of max resolution which supported by sink */
+static uint32_t g_max_res_index;
+
+/* Index of max resolution which supported by dex station */
+static uint32_t g_dex_max_res_index;
 
 static struct secdp_display_timing secdp_supported_resolution[] = {
-	{640, 480, 60, 0},
-	{720, 480, 60, 0},
-	{720, 576, 50, 0},
+	{0, 640, 480, 60, 0, true},
+	{1, 720, 480, 60, 0, true},
+	{2, 720, 576, 50, 0, true},
 
-	{1280, 720, 50, 0},
-	{1280, 720, 60, 0},
+	{3, 1280, 720, 50, 0, true},
+	{4, 1280, 720, 60, 0, true},
 
-	{1280, 800, 60, 0}, /* CTS 18bpp */
-	{1280, 1024, 60, 0}, /* CTS 18bpp */
-	{1920, 1440, 60, 0}, /* CTS 400.3.3.1 */
-	{2048, 1536, 60, 0}, /* CTS 18bpp */
+	{5, 1280, 800, 60, 0, true}, /* CTS 18bpp */
+	{6, 1280, 1024, 60, 0, true}, /* CTS 18bpp */
 
-	{1920, 1080, 24, 0},
-	{1920, 1080, 25, 0},
-	{1920, 1080, 30, 0},
-	{1920, 1080, 50, 0},
-	{1920, 1080, 60, 0},
+	{7, 1600, 900, 60, 0, true},
 
-	{2560, 1440, 60, 0},
+	{8, 1920, 1080, 24, 0, true},
+	{9, 1920, 1080, 25, 0, true},
+	{10, 1920, 1080, 30, 0, true},
+	{11, 1920, 1080, 50, 0, true},
+	{12, 1920, 1080, 60, 0, true},
 
-	{3840, 2160, 24, 0},
-	{3840, 2160, 25, 0},
-	{3840, 2160, 30, 0},
-	{3840, 2160, 50, 0},
-	{3840, 2160, 60, 0},
+	{13, 1920, 1440, 60, 0, true}, /* CTS 400.3.3.1 */
+	{14, 2048, 1536, 60, 0, true}, /* CTS 18bpp */
+	{15, 2560, 1440, 60, 0, true},
 
-	{4096, 2160, 24, 0},
-	{4096, 2160, 25, 0},
-	{4096, 2160, 30, 0},
-	{4096, 2160, 50, 0},
-	{4096, 2160, 60, 0},
+	{16, 3840, 2160, 24, 0},
+	{17, 3840, 2160, 25, 0},
+	{18, 3840, 2160, 30, 0},
+	{19, 3840, 2160, 50, 0},
+	{20, 3840, 2160, 60, 0},
+
+	{21, 4096, 2160, 24, 0},
+	{22, 4096, 2160, 25, 0},
+	{23, 4096, 2160, 30, 0},
+	{24, 4096, 2160, 50, 0},
+	{25, 4096, 2160, 60, 0},
 };
+
+bool secdp_check_dex_reconnect(void)
+{
+	pr_info("%s, %d %d\n", __func__, g_max_res_index, g_dex_max_res_index);
+	if (g_max_res_index == g_dex_max_res_index)
+		return false;
+
+	return true;
+}
+
+static void secdp_set_max_resolution(struct secdp_display_timing *timing)
+{
+	/* find max resolution which supported by sink */
+	if (g_max_res_index < timing->index)
+		g_max_res_index = timing->index;
+
+	/* find max resolution which supported by dex station*/
+	if (timing->dex_support && (g_dex_max_res_index < timing->index))
+		g_dex_max_res_index = timing->index;
+}
+
+extern bool secdp_check_dex_mode(void);
 
 static int secdp_check_supported_resolution(struct msm_hdmi_mode_timing_info *info)
 {
@@ -230,6 +255,15 @@ static int secdp_check_supported_resolution(struct msm_hdmi_mode_timing_info *in
 			diff *= diff;
 			if (diff < 2) {
 				pr_info("diff is less than 2\n");
+				secdp_set_max_resolution(&support[i]);
+
+				if (secdp_check_dex_mode()) {
+					if (support[i].dex_support)
+						return 1;
+					else
+						return 0;
+				}
+
 				return 1;
 			}
 		}
@@ -239,10 +273,17 @@ static int secdp_check_supported_resolution(struct msm_hdmi_mode_timing_info *in
 #endif
 
 static bool hdmi_edid_is_mode_supported(struct hdmi_edid_ctrl *edid_ctrl,
-			struct msm_hdmi_mode_timing_info *timing)
+		struct msm_hdmi_mode_timing_info *timing, u32 out_format)
 {
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	u32 pclk = timing->pixel_freq;
+#else
+	u32 pclk = hdmi_tx_setup_tmds_clk_rate(timing->pixel_freq,
+		out_format, false);
+#endif
+
 	if (!timing->supported ||
-		timing->pixel_freq > edid_ctrl->init_data.max_pclk_khz)
+		pclk > edid_ctrl->init_data.max_pclk_khz)
 		return false;
 
 #if defined(CONFIG_SEC_DISPLAYPORT)
@@ -288,6 +329,9 @@ static int hdmi_edid_reset_parser(struct hdmi_edid_ctrl *edid_ctrl)
 		sizeof(edid_ctrl->spkr_alloc_data_block));
 	edid_ctrl->adb_size = 0;
 	edid_ctrl->sadb_size = 0;
+#ifdef CONFIG_SEC_DISPLAYPORT
+	edid_ctrl->basic_audio_supp = false;
+#endif
 
 	hdmi_edid_set_video_resolution(edid_ctrl, edid_ctrl->default_vic, true);
 
@@ -1038,7 +1082,8 @@ static void hdmi_edid_add_sink_y420_format(struct hdmi_edid_ctrl *edid_ctrl,
 	u32 ret = hdmi_get_supported_mode(&timing,
 				&edid_ctrl->init_data.ds_data,
 				video_format);
-	u32 supported = hdmi_edid_is_mode_supported(edid_ctrl, &timing);
+	u32 supported = hdmi_edid_is_mode_supported(edid_ctrl,
+				&timing, MDP_Y_CBCR_H2V2);
 	struct hdmi_edid_sink_data *sink = &edid_ctrl->sink_data;
 
 	if (video_format >= HDMI_VFRMT_MAX) {
@@ -1252,7 +1297,7 @@ static void hdmi_edid_extract_extended_data_blocks(
 				(etag[2] & (BIT(3) | BIT(2))) >> 2;
 			edid_ctrl->ce_scan_info =
 				etag[2] & (BIT(1) | BIT(0));
-			DEV_DBG("%s: Scan Info (pt|it|ce): (%d|%d|%d)",
+			DEV_DBG("%s: Scan Info (pt|it|ce): (%d|%d|%d)\n",
 				__func__,
 				edid_ctrl->pt_scan_info,
 				edid_ctrl->it_scan_info,
@@ -1264,17 +1309,17 @@ static void hdmi_edid_extract_extended_data_blocks(
 			hdmi_edid_parse_hvdb(edid_ctrl, etag);
 			break;
 		case Y420_CAPABILITY_MAP_DATA_BLOCK:
-			DEV_DBG("%s found Y420CMDB byte 3 = 0x%x",
+			DEV_DBG("%s found Y420CMDB byte 3 = 0x%x\n",
 				__func__, etag[2]);
 			hdmi_edid_parse_Y420CMDB(edid_ctrl, etag);
 			break;
 		case Y420_VIDEO_DATA_BLOCK:
-			DEV_DBG("%s found Y420VDB byte 3 = 0x%x",
+			DEV_DBG("%s found Y420VDB byte 3 = 0x%x\n",
 				__func__, etag[2]);
 			hdmi_edid_parse_Y420VDB(edid_ctrl, etag);
 			break;
 		case HDR_STATIC_METADATA_DATA_BLOCK:
-			DEV_DBG("%s found HDR Static Metadata. Byte 3 = 0x%x",
+			DEV_DBG("%s found HDR Static Metadata. Byte 3 = 0x%x\n",
 				__func__, etag[2]);
 			hdmi_edid_parse_hdrdb(edid_ctrl, etag);
 			edid_ctrl->hdr_supported = true;
@@ -1416,12 +1461,6 @@ u32 secdp_get_max_pclk(void *input)
 	struct hdmi_edid_ctrl *edid_ctrl = (struct hdmi_edid_ctrl *)input;
 	return edid_ctrl->init_data.max_pclk_khz;
 }
-
-void secdp_set_max_pclk(void *input, u32 pclk)
-{
-	struct hdmi_edid_ctrl *edid_ctrl = (struct hdmi_edid_ctrl *)input;
-	edid_ctrl->init_data.max_pclk_khz = pclk;
-}
 #endif
 
 static void hdmi_edid_extract_speaker_allocation_data(
@@ -1469,6 +1508,7 @@ static void hdmi_edid_extract_speaker_allocation_data(
 static void hdmi_edid_extract_sink_caps(struct hdmi_edid_ctrl *edid_ctrl,
 	const u8 *in_buf)
 {
+	u8 len;
 	const u8 *vsd = NULL;
 
 	if (!edid_ctrl) {
@@ -1476,12 +1516,36 @@ static void hdmi_edid_extract_sink_caps(struct hdmi_edid_ctrl *edid_ctrl,
 		return;
 	}
 
+	/* Check if sink supports basic audio */
+	if (in_buf[3] & BIT(6))
+		edid_ctrl->basic_audio_supp = true;
+	else
+		edid_ctrl->basic_audio_supp = false;
+	pr_debug("%s: basic audio supported: %s\n", __func__,
+		edid_ctrl->basic_audio_supp ? "true" : "false");
+	vsd = hdmi_edid_find_block(in_buf, DBC_START_OFFSET,
+		VENDOR_SPECIFIC_DATA_BLOCK, &len);
+
+	if (vsd == NULL || len == 0 || len > MAX_DATA_BLOCK_SIZE)
+		return;
+
+	/* Max TMDS clock is in  multiples of 5Mhz. */
+	edid_ctrl->sink_caps.max_pclk_in_hz = vsd[7] * 5000000;
+
 	vsd = hdmi_edid_find_hfvsdb(in_buf);
 
 	if (vsd) {
-		/* Max pixel clock is in  multiples of 5Mhz. */
-		edid_ctrl->sink_caps.max_pclk_in_hz =
-				vsd[5]*5000000;
+		/*
+		 * HF-VSDB define larger TMDS clock than VSDB. If sink
+		 * supports TMDS Character Rates > 340M, the sink shall
+		 * set Max_TMDS_Character_Rates appropriately and non-zero.
+		 * Or, if sink dose not support TMDS Character Rates > 340M,
+		 * the sink shall set this filed to 0. The max TMDS support
+		 * clock Rate = Max_TMDS_Character_Rates * 5Mhz.
+		 */
+		if (vsd[5] != 0)
+			edid_ctrl->sink_caps.max_pclk_in_hz =
+					vsd[5] * 5000000;
 		edid_ctrl->sink_caps.scdc_present =
 				(vsd[6] & 0x80) ? true : false;
 		edid_ctrl->sink_caps.scramble_support =
@@ -1688,6 +1752,17 @@ static void hdmi_edid_detail_desc(struct hdmi_edid_ctrl *edid_ctrl,
 	 */
 	active_h = ((((u32)data_buf[0x4] >> 0x4) & 0xF) << 8)
 		| data_buf[0x2];
+	/*
+	 * It is possible that a sink might try to fit in the resolution
+	 * which has an active_h of 4096 into a DTD. However, DTD has only
+	 * 12 bit to represent active_h which would limit the maximum value
+	 * to 4095. If such a case is detected, set the active_h explicitly
+	 * to 4096.
+	 */
+	if (active_h == 0xFFF) {
+		pr_debug("overriding h_active to 4096\n");
+		active_h++;
+	}
 
 	/*
 	 * EDID_TIMING_DESC_H_BLANK[0x3]: Relative Offset to the EDID detailed
@@ -1836,7 +1911,8 @@ static void hdmi_edid_add_sink_video_format(struct hdmi_edid_ctrl *edid_ctrl,
 	u32 ret = hdmi_get_supported_mode(&timing,
 				&edid_ctrl->init_data.ds_data,
 				video_format);
-	u32 supported = hdmi_edid_is_mode_supported(edid_ctrl, &timing);
+	u32 supported = hdmi_edid_is_mode_supported(edid_ctrl,
+				&timing, MDP_RGBA_8888);
 	struct hdmi_edid_sink_data *sink_data = &edid_ctrl->sink_data;
 	struct disp_mode_info *disp_mode_list = sink_data->disp_mode_list;
 	u32 i = 0;
@@ -1847,7 +1923,7 @@ static void hdmi_edid_add_sink_video_format(struct hdmi_edid_ctrl *edid_ctrl,
 		return;
 	}
 
-	DEV_DBG("%s: EDID: format: %d [%s], %s\n", __func__,
+	DEV_INFO("%s: EDID: format: %d [%s], %s\n", __func__,
 		video_format, msm_hdmi_mode_2string(video_format),
 		supported ? "Supported" : "Not-Supported");
 
@@ -2450,6 +2526,13 @@ int hdmi_edid_parser(void *input)
 		goto bail;
 	}
 
+	/* Find out if CEA extension blocks exceeding max limit */
+	if (num_of_cea_blocks >= MAX_EDID_BLOCKS) {
+		DEV_WARN("%s: HDMI EDID exceeded max CEA blocks limit\n",
+				__func__);
+		num_of_cea_blocks = MAX_EDID_BLOCKS - 1;
+	}
+
 	/* check for valid CEA block */
 	if (edid_buf[EDID_BLOCK_SIZE] != 2) {
 		DEV_ERR("%s: Invalid CEA block\n", __func__);
@@ -2469,6 +2552,8 @@ int hdmi_edid_parser(void *input)
 
 #ifdef CONFIG_SEC_DISPLAYPORT
 	edid_ctrl->audio_channel_info = 1<<26;
+	g_max_res_index = 0;
+	g_dex_max_res_index = 0;
 #endif
 	hdmi_edid_extract_sink_caps(edid_ctrl, edid_buf);
 	hdmi_edid_extract_latency_fields(edid_ctrl, edid_buf);
@@ -2600,6 +2685,25 @@ bool hdmi_edid_is_dvi_mode(void *input)
 }
 
 /**
+ * hdmi_edid_get_sink_caps_max_tmds_clk() - get max tmds clock supported.
+ * Sink side's limitation should be concerned as well.
+ * @input: edid parser data
+ *
+ * Return: max tmds clock
+ */
+u32 hdmi_edid_get_sink_caps_max_tmds_clk(void *input)
+{
+	struct hdmi_edid_ctrl *edid_ctrl = (struct hdmi_edid_ctrl *)input;
+
+	if (!edid_ctrl) {
+		DEV_ERR("%s: invalid input\n", __func__);
+		return 0;
+	}
+
+	return edid_ctrl->sink_caps.max_pclk_in_hz;
+}
+
+/**
  * hdmi_edid_get_deep_color() - get deep color info supported by sink
  * @input: edid parser data
  *
@@ -2672,6 +2776,11 @@ bool hdmi_edid_is_s3d_mode_supported(void *input, u32 video_mode, u32 s3d_mode)
 	bool ret = false;
 	struct hdmi_edid_ctrl *edid_ctrl = (struct hdmi_edid_ctrl *)input;
 	struct hdmi_edid_sink_data *sink_data;
+
+	if (!edid_ctrl) {
+		DEV_ERR("%s: invalid input\n", __func__);
+		return false;
+	}
 
 	sink_data = &edid_ctrl->sink_data;
 	for (i = 0; i < sink_data->num_of_elements; ++i) {
@@ -2774,6 +2883,11 @@ void hdmi_edid_set_video_resolution(void *input, u32 resolution, bool reset)
 		return;
 	}
 
+	if (resolution == HDMI_VFRMT_UNKNOWN) {
+		pr_debug("%s: Default video resolution not set\n", __func__);
+		return;
+	}
+
 	edid_ctrl->video_resolution = resolution;
 
 	if (reset) {
@@ -2808,6 +2922,24 @@ void hdmi_edid_config_override(void *input, bool enable,
 			__func__, ov_data->scramble, ov_data->sink_mode,
 			ov_data->format, ov_data->vic);
 	}
+}
+
+void hdmi_edid_set_max_pclk_rate(void *input, u32 max_pclk_khz)
+{
+	struct hdmi_edid_ctrl *edid_ctrl = (struct hdmi_edid_ctrl *)input;
+
+	edid_ctrl->init_data.max_pclk_khz = max_pclk_khz;
+}
+
+bool hdmi_edid_is_audio_supported(void *input)
+{
+	struct hdmi_edid_ctrl *edid_ctrl = (struct hdmi_edid_ctrl *)input;
+
+	/*
+	 * return true if basic audio is supported or if an audio
+	 * data block was successfully parsed.
+	 */
+	return (edid_ctrl->basic_audio_supp || edid_ctrl->adb_size);
 }
 
 void hdmi_edid_deinit(void *input)

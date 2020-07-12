@@ -13,7 +13,8 @@
 
 #include <linux/qcom/sec_debug.h>
 
-#define SEC_TSP_LOG_BUF_SIZE	(100 * 1024)	/* 100 KB */
+#define SEC_TSP_LOG_BUF_SIZE		(256 * 1024)	/* 256 KB */
+#define SEC_TSP_RAW_DATA_BUF_SIZE	(50 * 1024)	/* 50 KB */
 
 /**
  * sec_debug_tsp_log : Leave tsp log in tsp_msg file.
@@ -25,6 +26,9 @@
 extern void sec_debug_tsp_log(char *fmt, ...);
 extern void sec_debug_tsp_log_msg(char *msg, char *fmt, ...);
 extern void sec_tsp_log_fix(void);
+extern void sec_debug_tsp_raw_data(char *fmt, ...);
+extern void sec_debug_tsp_raw_data_msg(char *msg, char *fmt, ...);
+extern void sec_tsp_raw_data_clear(void);
 
 #endif /* _SEC_TSP_LOG_H_ */
 

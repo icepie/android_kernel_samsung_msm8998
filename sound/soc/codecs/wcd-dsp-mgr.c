@@ -14,6 +14,7 @@
 #include <linux/slab.h>
 #include <linux/stringify.h>
 #include <linux/of.h>
+#include <linux/debugfs.h>
 #include <linux/component.h>
 #include <linux/dma-mapping.h>
 #include <soc/qcom/ramdump.h>
@@ -181,6 +182,10 @@ struct wdsp_mgr_priv {
 	struct work_struct ssr_work;
 	u16 ready_status;
 	struct completion ready_compl;
+
+	/* Debugfs related */
+	struct dentry *entry;
+	bool panic_on_error;
 };
 
 static char *wdsp_get_ssr_type_string(enum wdsp_ssr_type type)
@@ -611,6 +616,42 @@ static struct device *wdsp_get_dev_for_cmpnt(struct device *wdsp_dev,
 	return cmpnt->cdev;
 }
 
+static void __wdsp_collect_ramdumps_and_panic(struct wdsp_mgr_priv *wdsp)
+{
+	struct wdsp_img_section img_section;
+	int ret = 0;
+
+	pr_err("%s: enter\n", __func__);
+
+	/* Allocate memory for dumps */
+	wdsp->dump_data.rd_v_addr = dma_alloc_coherent(wdsp->mdev,
+						       (1024 * 1024) - 128,
+						       &wdsp->dump_data.rd_addr,
+						       GFP_KERNEL);
+	if (!wdsp->dump_data.rd_v_addr) {
+		WDSP_ERR(wdsp, "dma alloc for ramdumps failed");
+		return;
+	}
+
+	img_section.addr = 0x20100000 - wdsp->base_addr;
+	img_section.size = (1024 * 1024) - 128;
+	img_section.data = wdsp->dump_data.rd_v_addr;
+
+	ret = wdsp_unicast_event(wdsp, WDSP_CMPNT_TRANSPORT,
+				 WDSP_EVENT_READ_SECTION,
+				 &img_section);
+	if (IS_ERR_VALUE(ret)) {
+		WDSP_ERR(wdsp, "Failed to read dumps, size 0x%zx at addr 0x%x",
+			 img_section.size, img_section.addr);
+		return;
+	}
+
+	pr_err("%s: WDSP ram dumped at phys_addr %p", __func__,
+		&wdsp->dump_data.rd_addr);
+
+	BUG_ON(1);
+}
+
 static void wdsp_collect_ramdumps(struct wdsp_mgr_priv *wdsp)
 {
 	struct wdsp_img_section img_section;
@@ -661,6 +702,12 @@ static void wdsp_collect_ramdumps(struct wdsp_mgr_priv *wdsp)
 			 img_section.size, img_section.addr);
 		goto err_read_dumps;
 	}
+
+	/*
+	 * If panic_on_error flag is explicitly set through the debugfs,
+	 * then cause a BUG here to aid debugging.
+	 */
+	BUG_ON(wdsp->panic_on_error);
 
 	rd_seg.address = (unsigned long) wdsp->dump_data.rd_v_addr;
 	rd_seg.size = img_section.size;
@@ -817,9 +864,12 @@ static int wdsp_signal_handler(struct device *wdsp_dev,
 		return -EINVAL;
 
 	wdsp = dev_get_drvdata(wdsp_dev);
-	WDSP_MGR_MUTEX_LOCK(wdsp, wdsp->api_mutex);
+	if (signal == WDSP_DBG_RAMDUMP_SIGNAL) {
+		__wdsp_collect_ramdumps_and_panic(wdsp);
+		return 0;
+	}
 
-	WDSP_DBG(wdsp, "Raised signal %d", signal);
+	WDSP_MGR_MUTEX_LOCK(wdsp, wdsp->api_mutex);
 
 	switch (signal) {
 	case WDSP_IPC1_INTR:
@@ -955,6 +1005,22 @@ static int wdsp_mgr_compare_of(struct device *dev, void *data)
 		 !strcmp(dev_name(dev), cmpnt->cdev_name)));
 }
 
+static void wdsp_mgr_debugfs_init(struct wdsp_mgr_priv *wdsp)
+{
+	wdsp->entry = debugfs_create_dir("wdsp_mgr", NULL);
+	if (IS_ERR_OR_NULL(wdsp->entry))
+		return;
+
+	debugfs_create_bool("panic_on_error", S_IRUGO | S_IWUSR,
+			    wdsp->entry, &wdsp->panic_on_error);
+}
+
+static void wdsp_mgr_debugfs_remove(struct wdsp_mgr_priv *wdsp)
+{
+	debugfs_remove_recursive(wdsp->entry);
+	wdsp->entry = NULL;
+}
+
 static int wdsp_mgr_bind(struct device *dev)
 {
 	struct wdsp_mgr_priv *wdsp = dev_get_drvdata(dev);
@@ -984,6 +1050,8 @@ static int wdsp_mgr_bind(struct device *dev)
 		}
 	}
 
+	wdsp_mgr_debugfs_init(wdsp);
+
 	/* Schedule the work to download image if binding was successful. */
 	if (!ret)
 		schedule_work(&wdsp->load_fw_work);
@@ -998,6 +1066,8 @@ static void wdsp_mgr_unbind(struct device *dev)
 	int idx;
 
 	component_unbind_all(dev, wdsp->ops);
+
+	wdsp_mgr_debugfs_remove(wdsp);
 
 	if (wdsp->dump_data.rd_dev) {
 		destroy_ramdump_device(wdsp->dump_data.rd_dev);

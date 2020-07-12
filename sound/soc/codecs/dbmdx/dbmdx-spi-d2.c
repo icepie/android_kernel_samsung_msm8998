@@ -30,7 +30,6 @@
 #include "dbmdx-spi.h"
 
 #define DBMD2_MAX_SPI_BOOT_SPEED 8000000
-#define DBMD2_VERIFY_BOOT_CHECKSUM 1
 
 static const u8 clr_crc[] = {0x5A, 0x03, 0x52, 0x0a, 0x00,
 			     0x00, 0x00, 0x00, 0x00, 0x00};
@@ -56,12 +55,19 @@ static int dbmd2_spi_boot(const void *fw_data, size_t fw_size,
 
 	dev_dbg(spi_p->dev, "%s\n", __func__);
 
-	while (retry--) {
+	do {
 
 		if (p->active_fw == DBMDX_FW_PRE_BOOT) {
-
-			/* reset DBMD2 chip */
-			p->reset_sequence(p);
+			if (!(p->boot_mode & DBMDX_BOOT_MODE_RESET_DISABLED)) {
+				/* reset DBMD2 chip */
+				p->reset_sequence(p);
+			} else {
+				/* If failed and reset is disabled, break */
+				if (retry != RETRY_COUNT) {
+					retry = -1;
+					break;
+				}
+			}
 
 			/* delay before sending commands */
 			if (p->clk_get_rate(p, DBMDX_CLK_MASTER) <= 32768)
@@ -77,7 +83,9 @@ static int dbmd2_spi_boot(const void *fw_data, size_t fw_size,
 				continue;
 			}
 
-			if (spi->max_speed_hz > DBMD2_MAX_SPI_BOOT_SPEED) {
+			if ((spi->max_speed_hz > DBMD2_MAX_SPI_BOOT_SPEED) &&
+				!(p->cur_boot_options &
+					DBMDX_BOOT_OPT_DONT_SET_PLL)) {
 
 				ret = spi_set_speed(p, DBMDX_VA_SPEED_NORMAL);
 				if (ret < 0) {
@@ -105,24 +113,43 @@ static int dbmd2_spi_boot(const void *fw_data, size_t fw_size,
 				}
 			}
 
-			/* send SBL */
-			send_bytes = send_spi_data(p, sbl_spi, sizeof(sbl_spi));
-			if (send_bytes != sizeof(sbl_spi)) {
-				dev_err(p->dev,
+			if (!(p->cur_boot_options &
+					DBMDX_BOOT_OPT_DONT_SENT_SBL)) {
+				/* send SBL */
+				send_bytes = send_spi_data(p, sbl_spi,
+						sizeof(sbl_spi));
+				if (send_bytes != sizeof(sbl_spi)) {
+					dev_err(p->dev,
 					"%s: -----------> load SBL error\n",
-					__func__);
-				continue;
+						__func__);
+					continue;
+				}
+				usleep_range(DBMDX_USLEEP_SPI_D2_AFTER_SBL,
+					DBMDX_USLEEP_SPI_D2_AFTER_SBL + 1000);
+			}
+			/* verify chip id */
+			if (p->cur_boot_options &
+				DBMDX_BOOT_OPT_VERIFY_CHIP_ID) {
+				ret = spi_verify_chip_id(p);
+				if (ret < 0) {
+					dev_err(spi_p->dev,
+						"%s: couldn't verify chip id\n",
+						__func__);
+					continue;
+				}
 			}
 
-			usleep_range(DBMDX_USLEEP_SPI_D2_AFTER_SBL,
-				DBMDX_USLEEP_SPI_D2_AFTER_SBL + 1000);
-
-			/* send CRC clear command */
-			ret = send_spi_data(p, clr_crc, sizeof(clr_crc));
-			if (ret != sizeof(clr_crc)) {
-				dev_err(p->dev, "%s: failed to clear CRC\n",
-					 __func__);
-				continue;
+			if (!(p->cur_boot_options &
+				DBMDX_BOOT_OPT_DONT_CLR_CRC)) {
+				/* send CRC clear command */
+				ret = send_spi_data(p, clr_crc,
+					sizeof(clr_crc));
+				if (ret != sizeof(clr_crc)) {
+					dev_err(p->dev,
+						"%s: failed to clear CRC\n",
+						__func__);
+					continue;
+				}
 			}
 		} else {
 			/* delay before sending commands */
@@ -144,10 +171,6 @@ static int dbmd2_spi_boot(const void *fw_data, size_t fw_size,
 
 		if (!load_fw)
 			break;
-#if 0
-		/* Sleep is needed here to ensure that chip is ready */
-		msleep(DBMDX_MSLEEP_SPI_D2_AFTER_SBL);
-#endif
 
 		/* send firmware */
 		send_bytes = send_spi_data(p, fw_data, fw_size - 4);
@@ -157,13 +180,10 @@ static int dbmd2_spi_boot(const void *fw_data, size_t fw_size,
 				__func__);
 			continue;
 		}
-#if 0
-		msleep(DBMDX_MSLEEP_SPI_D2_BEFORE_FW_CHECKSUM);
-#endif
 
-#if DBMD2_VERIFY_BOOT_CHECKSUM
 		/* verify checksum */
-		if (checksum) {
+		if (checksum && !(p->cur_boot_options &
+					DBMDX_BOOT_OPT_DONT_VERIFY_CRC)) {
 			ret = spi_verify_boot_checksum(p, checksum, chksum_len);
 			if (ret < 0) {
 				dev_err(spi_p->dev,
@@ -172,23 +192,25 @@ static int dbmd2_spi_boot(const void *fw_data, size_t fw_size,
 				continue;
 			}
 		}
-#endif
 		dev_dbg(p->dev, "%s: ---------> firmware loaded\n",
 			__func__);
 		break;
-	}
+	} while (--retry);
 
 	/* no retries left, failed to boot */
-	if (retry < 0) {
+	if (retry <= 0) {
 		dev_err(p->dev, "%s: failed to load firmware\n", __func__);
-		return -1;
+		return -EIO;
 	}
 
-	/* send boot command */
-	ret = send_spi_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
-	if (ret < 0) {
-		dev_err(p->dev, "%s: booting the firmware failed\n", __func__);
-		return -1;
+	if (!(p->cur_boot_options & DBMDX_BOOT_OPT_DONT_SEND_START_BOOT)) {
+		/* send boot command */
+		ret = send_spi_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
+		if (ret < 0) {
+			dev_err(p->dev,
+				"%s: booting the firmware failed\n", __func__);
+			return -EIO;
+		}
 	}
 
 	ret = spi_set_speed(p, DBMDX_VA_SPEED_NORMAL);
@@ -306,7 +328,9 @@ static struct spi_driver dbmd2_spi_driver = {
 		.name = "dbmd2-spi",
 		.bus	= &spi_bus_type,
 		.owner = THIS_MODULE,
+#ifdef CONFIG_OF
 		.of_match_table = dbmd2_spi_of_match,
+#endif
 		.pm = &dbmdx_spi_pm,
 	},
 	.probe =    dbmd2_spi_probe,

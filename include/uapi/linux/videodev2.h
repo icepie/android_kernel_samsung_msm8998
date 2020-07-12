@@ -640,6 +640,9 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_JPGL	v4l2_fourcc('J', 'P', 'G', 'L') /* JPEG-Lite */
 #define V4L2_PIX_FMT_SE401      v4l2_fourcc('S', '4', '0', '1') /* se401 janggu compressed rgb */
 #define V4L2_PIX_FMT_S5C_UYVY_JPG v4l2_fourcc('S', '5', 'C', 'I') /* S5C73M3 interleaved UYVY/JPEG */
+#define V4L2_PIX_FMT_Y8I      v4l2_fourcc('Y', '8', 'I', ' ') /* Greyscale 8-bit L/R interleaved */
+#define V4L2_PIX_FMT_Y12I     v4l2_fourcc('Y', '1', '2', 'I') /* Greyscale 12-bit L/R interleaved */
+#define V4L2_PIX_FMT_Z16      v4l2_fourcc('Z', '1', '6', ' ') /* Depth data 16-bit */
 
 #define V4L2_PIX_FMT_SDE_ABGR_8888 \
 	v4l2_fourcc('R', 'A', '2', '4') /* 32-bit ABGR 8:8:8:8 */
@@ -1671,6 +1674,7 @@ struct v4l2_querymenu {
 #define V4L2_CTRL_FLAG_VOLATILE		0x0080
 #define V4L2_CTRL_FLAG_HAS_PAYLOAD	0x0100
 #define V4L2_CTRL_FLAG_EXECUTE_ON_WRITE	0x0200
+#define V4L2_CTRL_FLAG_MODIFY_LAYOUT	0X0400
 
 /*  Query flags, to be ORed with the control ID */
 #define V4L2_CTRL_FLAG_NEXT_CTRL	0x80000000
@@ -2184,6 +2188,31 @@ struct v4l2_streamparm {
 #define V4L2_EVENT_MSM_VIDC_MAX_CLIENTS (V4L2_EVENT_MSM_VIDC_START + 9)
 #define V4L2_EVENT_MSM_VIDC_HW_UNSUPPORTED (V4L2_EVENT_MSM_VIDC_START + 10)
 
+#define V4L2_EVENT_MSM_BA_PRIVATE_EVENT_BASE	\
+		(V4L2_EVENT_PRIVATE_START + 0x00005000)
+#define V4L2_EVENT_MSM_BA_START	V4L2_EVENT_MSM_BA_PRIVATE_EVENT_BASE
+#define V4L2_EVENT_MSM_BA_DEVICE_AVAILABLE	(V4L2_EVENT_MSM_BA_START + 1)
+#define V4L2_EVENT_MSM_BA_DEVICE_UNAVAILABLE	\
+		(V4L2_EVENT_MSM_BA_START + 2)
+#define V4L2_EVENT_MSM_BA_PORT_SETTINGS_CHANGED	\
+		(V4L2_EVENT_MSM_BA_START + 3)
+#define V4L2_EVENT_MSM_BA_SIGNAL_IN_LOCK	\
+		(V4L2_EVENT_MSM_BA_START + 4)
+#define V4L2_EVENT_MSM_BA_SIGNAL_LOST_LOCK	\
+		(V4L2_EVENT_MSM_BA_START + 5)
+#define V4L2_EVENT_MSM_BA_SOURCE_CHANGE	\
+		(V4L2_EVENT_MSM_BA_START + 6)
+#define V4L2_EVENT_MSM_BA_HDMI_HPD	\
+		(V4L2_EVENT_MSM_BA_START + 7)
+#define V4L2_EVENT_MSM_BA_HDMI_CEC_MESSAGE	\
+		(V4L2_EVENT_MSM_BA_START + 8)
+#define V4L2_EVENT_MSM_BA_CP	\
+		(V4L2_EVENT_MSM_BA_START + 9)
+#define V4L2_EVENT_MSM_BA_CABLE_DETECT	\
+		(V4L2_EVENT_MSM_BA_START + 10)
+#define V4L2_EVENT_MSM_BA_ERROR	\
+		(V4L2_EVENT_MSM_BA_START + 11)
+
 /* Payload for V4L2_EVENT_VSYNC */
 struct v4l2_event_vsync {
 	/* Can be V4L2_FIELD_ANY, _NONE, _TOP or _BOTTOM */
@@ -2438,5 +2467,12 @@ struct v4l2_create_buffers {
    drivers/media/v4l2-core/v4l2-compat-ioctl32.c as well! */
 
 #define BASE_VIDIOC_PRIVATE	192		/* 192-255 are private */
+
+/* HDMI rx provide ioctls */
+#define VIDIOC_HDMI_RX_CEC_S_LOGICAL _IOW('V', BASE_VIDIOC_PRIVATE + 0, int)
+#define VIDIOC_HDMI_RX_CEC_CLEAR_LOGICAL _IO('V', BASE_VIDIOC_PRIVATE + 1)
+#define VIDIOC_HDMI_RX_CEC_G_PHYSICAL _IOR('V', BASE_VIDIOC_PRIVATE + 2, int)
+#define VIDIOC_HDMI_RX_CEC_G_CONNECTED _IOR('V', BASE_VIDIOC_PRIVATE + 3, int)
+#define VIDIOC_HDMI_RX_CEC_S_ENABLE _IOR('V', BASE_VIDIOC_PRIVATE + 4, int)
 
 #endif /* _UAPI__LINUX_VIDEODEV2_H */

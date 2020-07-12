@@ -22,6 +22,7 @@
 #include <linux/i2c.h>
 
 #define BUFF_SIZE_128 128
+extern unsigned int system_rev;
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -31,7 +32,7 @@ extern bool sensor_retention_mode;
 #endif
 extern bool retention_mode_pwr;
 
-#if defined (CONFIG_SEC_DREAMQLTE_PROJECT) ||defined (CONFIG_SEC_DREAM2QLTE_PROJECT) || defined (CONFIG_SEC_CRUISERLTE_PROJECT)
+#if defined (CONFIG_SEC_DREAMQLTE_PROJECT) || defined (CONFIG_SEC_DREAM2QLTE_PROJECT) || defined (CONFIG_SEC_CRUISERLTE_PROJECT)
 #define I2C_ADAPTER_LOCK //add i2c lock for avoided i2c conflict with nfc
 #endif
 
@@ -189,35 +190,45 @@ int32_t msm_camera_io_poll_value_wmask(void __iomem *addr, u32 wait_data,
 
 void msm_camera_io_dump(void __iomem *addr, int size, int enable)
 {
-	char line_str[128], *p_str;
+	char line_str[128];
 	int i;
-	u32 *p = (u32 *) addr;
+	ptrdiff_t p = 0;
+	size_t offset = 0, used = 0;
 	u32 data;
 
 	CDBG("%s: addr=%pK size=%d\n", __func__, addr, size);
 
-	if (!p || (size <= 0) || !enable)
+	if (!addr || (size <= 0) || !enable)
 		return;
 
 	line_str[0] = '\0';
-	p_str = line_str;
 	for (i = 0; i < size/4; i++) {
 		if (i % 4 == 0) {
-#ifdef CONFIG_COMPAT
-			snprintf(p_str, 20, "%016lx: ", (unsigned long) p);
-			p_str += 18;
-#else
-			snprintf(p_str, 12, "%08lx: ", (unsigned long) p);
-			p_str += 10;
-#endif
+			used = snprintf(line_str + offset,
+				sizeof(line_str) - offset, "0x%04tX: ", p);
+			if (offset + used >= sizeof(line_str)) {
+				pr_err("%s\n", line_str);
+				offset = 0;
+				line_str[0] = '\0';
+			} else {
+				offset += used;
+			}
 		}
-		data = readl_relaxed(p++);
-		snprintf(p_str, 12, "%08x ", data);
-		p_str += 9;
+		data = readl_relaxed(addr + p);
+		p = p + 4;
+		used = snprintf(line_str + offset,
+			sizeof(line_str) - offset, "%08x ", data);
+		if (offset + used >= sizeof(line_str)) {
+			pr_err("%s\n", line_str);
+			offset = 0;
+			line_str[0] = '\0';
+		} else {
+			offset += used;
+		}
 		if ((i + 1) % 4 == 0) {
 			pr_err("%s\n", line_str);
 			line_str[0] = '\0';
-			p_str = line_str;
+			offset = 0;
 		}
 	}
 	if (line_str[0] != '\0')
@@ -721,6 +732,17 @@ int msm_camera_config_single_vreg(struct device *dev,
 						__func__, vreg_name);
 						goto vreg_set_opt_mode_fail;
 					}
+				}
+			}
+#endif
+#if defined (CONFIG_SEC_GREATQLTE_PROJECT)
+			if ( (!strcmp(vreg_name, "s2mpb02-ldo4")) && 
+				(system_rev >= 7 ) ) {
+				pr_err("[syscamera::%s::%d][HW_REV(%d)>=07][ldo4][regulator_set_voltage]\n", __FUNCTION__, __LINE__, system_rev);
+				rc = regulator_set_voltage(
+					*reg_ptr, cam_vreg->max_voltage, cam_vreg->max_voltage);				
+				if (rc < 0) {
+					pr_err("%s: %s set voltage failed\n", __func__, vreg_name);
 				}
 			}
 #endif

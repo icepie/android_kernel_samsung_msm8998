@@ -112,12 +112,12 @@ void encode_seemp_params(struct seemp_logk_blk *blk)
 		}
 
 		msg_section_start = blk->payload.msg + (section_start -
-						tmp.payload.msg);
+				tmp.payload.msg);
 		msg_section_eq = blk->payload.msg + (section_eq -
-						tmp.payload.msg);
+				tmp.payload.msg);
 		msg_s = blk->payload.msg + (s - tmp.payload.msg);
 		encode_seemp_section(msg_section_start, msg_section_eq,
-						msg_s, param, numeric, id, numeric_value);
+				msg_s, param, numeric, id, numeric_value);
 
 		if (*s == 0)
 			break;

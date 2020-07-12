@@ -36,6 +36,7 @@
 #include "muic_sm5720_afc.h"
 #include "muic_apis.h"
 #include "../../battery_v2/include/sec_charging_common.h"
+
 /* Bit 0 : VBUS_VAILD, Bit 1~7 : Reserved */
 #define REG_RSVDID1     0x15
 #define	REG_RSVDID2	0x16
@@ -118,7 +119,7 @@ int sm5720_afc_ta_attach(struct regmap_desc *pdesc)
 
 	sm5720_afc_delay_check_state(0);
 
-	pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC;
+	pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC;
 	muic_notifier_attach_attached_dev(pmuic->attached_dev);
 
 	cancel_delayed_work(&pmuic->afc_retry_work);
@@ -137,12 +138,12 @@ int sm5720_afc_ta_attach(struct regmap_desc *pdesc)
 #endif
 	psy_do_property("battery", get,
 			POWER_SUPPLY_EXT_PROP_SUB_PBA_TEMP_REC, val);
-		
+
 	pr_info("%s: TUSB(%d)\n", __func__, val.intval); // val.intval == 1 ? Recovered : Not recovered
 
-	if(!val.intval) {
+	if (!val.intval) {
 		pr_info("%s:%s Working Tusb W/A\n", MUIC_DEV_NAME, __func__);
-		
+
 		pmuic->pdata->afc_limit_voltage = true;
 		pmuic->attached_dev = ATTACHED_DEV_NONE_MUIC;
 		muic_notifier_detach_attached_dev(pmuic->attached_dev);
@@ -150,7 +151,7 @@ int sm5720_afc_ta_attach(struct regmap_desc *pdesc)
 		msleep(500);
 		pmuic->attached_dev = ATTACHED_DEV_TA_MUIC;
 		muic_notifier_attach_attached_dev(pmuic->attached_dev);
-		
+
 		return 0;
 	} else
 		ret = muic_i2c_write_byte(i2c, REG_AFCTXD, value);
@@ -190,12 +191,12 @@ int sm5720_afc_ta_accept(struct regmap_desc *pdesc)
 		sm5720_set_afc_ctrl_reg(pdesc, AFCCTRL_VBUS_READ, 1);
 		pr_info("%s:%s VBUS READ start(AFC)\n",MUIC_DEV_NAME, __func__);
 		if (pmuic->attached_dev != ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC) {
-			pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC;
+			pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC;
 			muic_notifier_attach_attached_dev(pmuic->attached_dev);
 		}
 		pmuic->afc_vbus_retry_count++;
 	} else {
-		pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
+		pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
 		muic_notifier_attach_attached_dev(pmuic->attached_dev);
 		pr_info("%s:%s  attached_dev(%d) \n",MUIC_DEV_NAME, __func__, pmuic->attached_dev);
 	}
@@ -231,8 +232,7 @@ int sm5720_afc_vbus_update(struct regmap_desc *pdesc)
 	device_type3 = muic_i2c_read_byte(i2c, REG_DEVT3);
 	pr_info("%s:%s DEVICE_TYPE3 [0x%02x]\n",MUIC_DEV_NAME, __func__, device_type3);
 
-	if ((device_type3 & DEV_TYPE3_QC20_TA) && (device_type3 & DEV_TYPE3_AFC_TA))
-	{
+	if ((device_type3 & DEV_TYPE3_QC20_TA) && (device_type3 & DEV_TYPE3_AFC_TA)) {
 		sm5720_afc_dpreset();
 		return 0;
 	}
@@ -257,7 +257,7 @@ int sm5720_afc_vbus_update(struct regmap_desc *pdesc)
 			   pr_info("%s:%s QC20 12V (%d)\n",MUIC_DEV_NAME, __func__,pmuic->attached_dev);
 			   } else */
 			if(pmuic->qc20_vbus == ENQC20_9V){
-				pmuic->attached_dev = ATTACHED_DEV_QC_CHARGER_9V_MUIC;
+				pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_QC_CHARGER_9V_MUIC;
 				muic_notifier_attach_attached_dev(pmuic->attached_dev);
 				pr_info("%s:%s QC20 9V (%d)\n",MUIC_DEV_NAME, __func__,pmuic->attached_dev);
 			}
@@ -301,7 +301,7 @@ int sm5720_afc_vbus_update(struct regmap_desc *pdesc)
 					pr_info("%s:%s read REG_AFCCNTL=0x%x ,  write REG_AFCCNTL=0x%x , qc20_vbus=%d \n",
 							MUIC_DEV_NAME, __func__, ret, reg_val, pmuic->qc20_vbus );
 
-					pmuic->attached_dev = ATTACHED_DEV_QC_CHARGER_5V_MUIC;
+					pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_QC_CHARGER_5V_MUIC;
 					muic_notifier_attach_attached_dev(pmuic->attached_dev);
 				}
 			}
@@ -323,15 +323,15 @@ int sm5720_afc_vbus_update(struct regmap_desc *pdesc)
 
 			pr_info("%s:%s AFC done \n",MUIC_DEV_NAME, __func__);
 			if (vbus_txd_voltage == 12000) { // 12V
-				pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_12V_MUIC;
+				pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_12V_MUIC;
 				muic_notifier_attach_attached_dev(pmuic->attached_dev);
 				pr_info("%s:%s AFC 12V (%d)\n",MUIC_DEV_NAME, __func__,pmuic->attached_dev);
 			} else if (vbus_txd_voltage == 9000){ // 9V
-				pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_9V_MUIC;
+				pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_9V_MUIC;
 				muic_notifier_attach_attached_dev(pmuic->attached_dev);
 				pr_info("%s:%s AFC 9V (%d)\n",MUIC_DEV_NAME, __func__,pmuic->attached_dev);
 			} else {  // 5V
-				pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
+				pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
 				muic_notifier_attach_attached_dev(pmuic->attached_dev);
 				pr_info("%s:%s AFC 5V (%d)\n",MUIC_DEV_NAME, __func__,pmuic->attached_dev);
 			}
@@ -345,7 +345,7 @@ int sm5720_afc_vbus_update(struct regmap_desc *pdesc)
 				pr_info("%s:%s VBUS READ retry = %d \n",MUIC_DEV_NAME, __func__,
 						pmuic->afc_vbus_retry_count);
 			} else {
-				pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
+				pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
 				muic_notifier_attach_attached_dev(pmuic->attached_dev);
 				pmuic->afc_vbus_retry_count = 0;
 			}
@@ -463,7 +463,7 @@ int sm5720_afc_error(struct regmap_desc *pdesc)
 		}
 	} else {
 		pr_info("%s:%s  ENAFC end = %d \n",MUIC_DEV_NAME, __func__, pmuic->afc_retry_count);
-		pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
+		pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_ERR_V_MUIC;
 		muic_notifier_attach_attached_dev(pmuic->attached_dev);
 	}
 	return 0;
@@ -489,7 +489,7 @@ int sm5720_afc_init_check(struct regmap_desc *pdesc)
 	afc_ta_attached = muic_i2c_read_byte(pmuic->i2c, REG_AFCTASTATUS);
 	pr_info("%s:%s REG_AFCTASTATUS:[0x%02x]\n", MUIC_DEV_NAME, __func__, afc_ta_attached);
 
-	if (afc_ta_attached & 0x01) { // AFC_TA_ATTACHED 
+	if (afc_ta_attached & 0x01) { // AFC_TA_ATTACHED
 #if !defined(CONFIG_SEC_FACTORY)
 		/* To prevent damage by RP0 Cable, AFC should be progress after ccic_attach */
 		if (pmuic->is_ccic_attach) {
@@ -549,7 +549,7 @@ int sm5720_afc_dpreset(void)
 		afcops->afc_ctrl_reg(gpmuic->regmapdesc, AFCCTRL_DP_RESET, 1);
 
 		if (gpmuic->attached_dev != ATTACHED_DEV_NONE_MUIC) {
-			gpmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
+			gpmuic->legacy_dev = gpmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
 			muic_notifier_attach_attached_dev(ATTACHED_DEV_AFC_CHARGER_5V_MUIC);
 		} else {
 			pr_info("%s:Seems TA is removed.\n", __func__);
@@ -580,7 +580,7 @@ int sm5720_afc_restart(void)
 		return 0;
 	}
 
-	gpmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC;
+	gpmuic->legacy_dev = gpmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC;
 	muic_notifier_attach_attached_dev(gpmuic->attached_dev);
 	cancel_delayed_work(&gpmuic->afc_retry_work);
 	schedule_delayed_work(&gpmuic->afc_retry_work, msecs_to_jiffies(5000)); // 5sec
@@ -626,7 +626,7 @@ static void sm5720_afc_retry_work(struct work_struct *work)
 		vbus = muic_i2c_read_byte(i2c, REG_RSVDID1);
 		if (!(vbus & 0x01)) {
 			pr_info("%s:%s VBUS is nothing\n",MUIC_DEV_NAME, __func__);
-			gpmuic->attached_dev = ATTACHED_DEV_NONE_MUIC;
+			gpmuic->legacy_dev = gpmuic->attached_dev = ATTACHED_DEV_NONE_MUIC;
 			muic_notifier_attach_attached_dev(gpmuic->attached_dev);
 			return;
 		}

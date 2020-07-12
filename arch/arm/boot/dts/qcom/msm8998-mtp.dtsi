@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,7 +21,6 @@
 		qca,bt-vdd-core-supply = <&pm8998_l7>;
 		qca,bt-vdd-pa-supply = <&pm8998_l17>;
 		qca,bt-vdd-ldo-supply = <&pm8998_l25>;
-		qca,bt-chip-pwd-supply = <&pmi8998_bob_pin1>;
 		clocks = <&clock_gcc clk_rf_clk2_pin>;
 		clock-names = "rf_clk2";
 
@@ -30,7 +29,6 @@
 		qca,bt-vdd-core-voltage-level = <1800000 1800000>;
 		qca,bt-vdd-pa-voltage-level = <1304000 1304000>;
 		qca,bt-vdd-ldo-voltage-level = <3312000 3312000>;
-		qca,bt-chip-pwd-voltage-level = <3600000 3600000>;
 
 		qca,bt-vdd-io-current-level = <1>; /* LPM/PFM */
 		qca,bt-vdd-xtal-current-level = <1>; /* LPM/PFM */
@@ -155,6 +153,16 @@
 		status = "okay";
 	};
 
+	gpio@d200 { /* GPIO 19 - wil6210 refclk3_en */
+		qcom,mode = <0>;		/* Input */
+		qcom,pull = <5>;		/* No Pull */
+		qcom,vin-sel = <1>;		/* VIN1 GPIO_MV */
+		qcom,src-sel = <0>;		/* GPIO */
+		qcom,invert = <0>;		/* Invert */
+		qcom,master-en = <1>;		/* Enable GPIO */
+		status = "okay";
+	};
+
 	/* GPIO 21 (NFC_CLK_REQ) */
 	gpio@d400 {
 		qcom,mode = <0>;
@@ -219,96 +227,6 @@
 		pinctrl-1 = <&nfc_int_suspend &nfc_enable_suspend>;
 		clocks = <&clock_gcc clk_ln_bb_clk3_pin>;
 		clock-names = "ref_clk";
-	};
-};
-
-&i2c_7 {
-	status = "okay";
-	qcom,smb138x@8 {
-		compatible = "qcom,i2c-pmic";
-		reg = <0x8>;
-		#address-cells = <2>;
-		#size-cells = <0>;
-		interrupt-parent = <&spmi_bus>;
-		interrupts = <0x0 0xd1 0x0 IRQ_TYPE_LEVEL_LOW>;
-		interrupt_names = "smb138x";
-		interrupt-controller;
-		#interrupt-cells = <3>;
-		qcom,periph-map = <0x10 0x11 0x12 0x13 0x14 0x16 0x36>;
-
-		smb138x_revid: qcom,revid@100 {
-			compatible = "qcom,qpnp-revid";
-			reg = <0x100 0x100>;
-		};
-
-		smb138x_tadc: qcom,tadc@3600 {
-			compatible = "qcom,tadc";
-			reg = <0x3600 0x100>;
-			#address-cells = <1>;
-			#size-cells = <0>;
-			#io-channel-cells = <1>;
-			interrupts = <0x36 0x0 IRQ_TYPE_EDGE_BOTH>;
-			interrupt-names = "eoc";
-
-			batt_temp@0 {
-				reg = <0>;
-				qcom,rbias = <68100>;
-				qcom,rtherm-at-25degc = <68000>;
-				qcom,beta-coefficient = <3450>;
-			};
-
-			skin_temp@1 {
-				reg = <1>;
-				qcom,rbias = <33000>;
-				qcom,rtherm-at-25degc = <68000>;
-				qcom,beta-coefficient = <3450>;
-			};
-
-			die_temp@2 {
-				reg = <2>;
-				qcom,scale = <(-1032)>;
-				qcom,offset = <344125>;
-			};
-
-			batt_i@3 {
-				reg = <3>;
-				qcom,channel = <3>;
-				qcom,scale = <(-20000000)>;
-			};
-
-			batt_v@4 {
-				reg = <4>;
-				qcom,scale = <5000000>;
-			};
-
-			input_i@5 {
-				reg = <5>;
-				qcom,scale = <14285714>;
-			};
-
-			input_v@6 {
-				reg = <6>;
-				qcom,scale = <25000000>;
-			};
-
-			otg_i@7 {
-				reg = <7>;
-				qcom,scale = <5714286>;
-			};
-		};
-
-		smb138x_parallel_slave: qcom,smb138x-parallel-slave@1000 {
-			compatible = "qcom,smb138x-parallel-slave";
-			qcom,pmic-revid = <&smb138x_revid>;
-			reg = <0x1000 0x700>;
-
-			io-channels = <&smb138x_tadc 2>,
-				      <&smb138x_tadc 12>,
-				      <&smb138x_tadc 3>;
-			io-channel-names = "charger_temp",
-					   "charger_temp_max",
-					   "batt_i";
-		};
 	};
 };
 
@@ -378,6 +296,8 @@
 	qcom,mdss-dsi-bl-max-level = <4095>;
 	qcom,mdss-dsi-mode-sel-gpio-state = "dual_port";
 	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
+	qcom,partial-update-enabled = "single_roi";
+	qcom,panel-roi-alignment = <720 256 720 256 1440 256>;
 };
 
 &dsi_dual_nt35597_truly_video {
@@ -449,7 +369,7 @@
 	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
 };
 
-&dsi_jdi_1080_vid {
+&dsi_jdi_1080p_video {
 	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
 	qcom,mdss-dsi-bl-min-level = <1>;
 	qcom,mdss-dsi-bl-max-level = <4095>;
@@ -598,6 +518,10 @@
 	};
 };
 
+&snd_9335 {
+	qcom,mbhc-audio-jack-type = "6-pole-jack";
+};
+
 &soc {
 	gpio_keys {
 		compatible = "gpio-keys";
@@ -641,3 +565,4 @@
 		#include "fg-gen3-batterydata-demo-6000mah.dtsi"
 	};
 };
+

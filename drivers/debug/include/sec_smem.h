@@ -62,9 +62,17 @@ typedef struct {
 } ddr_wr_dqdqs_t;
 
 typedef struct {
+	uint8_t height[NUM_CH][NUM_CS][NUM_DQ_PCH];
+	uint8_t width[NUM_CH][NUM_CS][NUM_DQ_PCH];
+	uint8_t vref[NUM_CH][NUM_CS][NUM_DQ_PCH];
+	uint16_t rectangle[NUM_CH][NUM_CS][NUM_DQ_PCH];
+} ddr_wr_dqdqs_eye_t;
+
+typedef struct {
 	uint32_t version;
 	ddr_rcw_t rcw;
 	ddr_wr_dqdqs_t wr_dqdqs;
+	ddr_wr_dqdqs_eye_t wr_dqdqs_eye;
 } ddr_train_t;
 
 typedef struct {

@@ -16,10 +16,7 @@
 #include "mdss_dp.h"
 
 #ifdef CONFIG_SEC_DISPLAYPORT
-#ifdef pr_debug
-#undef pr_debug
-#define pr_debug	pr_info
-#endif
+#include <linux/dp_logger.h>
 #endif
 
 /* DP_TX Registers */
@@ -216,13 +213,6 @@
 #define HDCP_SEC_DP_TZ_HV_HLOS_HDCP_RCVPORT_DATA11     (0x01C)
 #define HDCP_SEC_DP_TZ_HV_HLOS_HDCP_RCVPORT_DATA12     (0x020)
 
-struct lane_mapping {
-	char lane0;
-	char lane1;
-	char lane2;
-	char lane3;
-};
-
 struct edp_cmd {
 	char read;	/* 1 == read, 0 == write */
 	char i2c;	/* 1 == i2c cmd, 0 == native cmd */
@@ -288,6 +278,19 @@ static const struct dp_vc_tu_mapping_table tu_table[] = {
 			0x21, 0x000c, false, 0x00, 0x00, 0x00, 0x27},
 };
 
+static inline struct mdss_dp_phy_cfg *mdss_dp_phy_aux_get_config(
+	struct mdss_dp_drv_pdata *dp, enum dp_phy_aux_config_type cfg_type)
+{
+	return &dp->aux_cfg[cfg_type];
+}
+
+static inline u32 mdss_dp_phy_aux_get_config_cnt(
+	struct mdss_dp_drv_pdata *dp, enum dp_phy_aux_config_type cfg_type)
+{
+	return dp->aux_cfg[cfg_type].cfg_cnt;
+}
+
+void mdss_dp_aux_set_limits(struct dss_io_data *ctrl_io);
 int dp_aux_read(void *ep, struct edp_cmd *cmds);
 int dp_aux_write(void *ep, struct edp_cmd *cmd);
 void mdss_dp_state_ctrl(struct dss_io_data *ctrl_io, u32 data);
@@ -302,13 +305,14 @@ void mdss_dp_assert_phy_reset(struct dss_io_data *ctrl_io, bool assert);
 void mdss_dp_setup_tr_unit(struct dss_io_data *ctrl_io, u8 link_rate,
 			u8 ln_cnt, u32 res, struct mdss_panel_info *pinfo);
 void mdss_dp_config_misc(struct mdss_dp_drv_pdata *dp, u32 bd, u32 cc);
-void mdss_dp_phy_aux_setup(struct dss_io_data *phy_io);
+void mdss_dp_phy_aux_setup(struct mdss_dp_drv_pdata *dp);
+void mdss_dp_phy_aux_update_config(struct mdss_dp_drv_pdata *dp,
+		enum dp_phy_aux_config_type config_type);
 void mdss_dp_hpd_configure(struct dss_io_data *ctrl_io, bool enable);
 void mdss_dp_aux_ctrl(struct dss_io_data *ctrl_io, bool enable);
 void mdss_dp_mainlink_ctrl(struct dss_io_data *ctrl_io, bool enable);
-void mdss_dp_ctrl_lane_mapping(struct dss_io_data *ctrl_io,
-					struct lane_mapping l_map);
-int mdss_dp_mainlink_ready(struct mdss_dp_drv_pdata *dp, u32 which);
+void mdss_dp_ctrl_lane_mapping(struct dss_io_data *ctrl_io, char *l_map);
+bool mdss_dp_mainlink_ready(struct mdss_dp_drv_pdata *dp);
 void mdss_dp_timing_cfg(struct dss_io_data *ctrl_io,
 				struct mdss_panel_info *pinfo);
 void mdss_dp_configuration_ctrl(struct dss_io_data *ctrl_io, u32 data);
@@ -316,17 +320,19 @@ void mdss_dp_state_ctrl(struct dss_io_data *ctrl_io, u32 data);
 int mdss_dp_irq_setup(struct mdss_dp_drv_pdata *dp_drv);
 void mdss_dp_irq_enable(struct mdss_dp_drv_pdata *dp_drv);
 void mdss_dp_irq_disable(struct mdss_dp_drv_pdata *dp_drv);
+#ifdef SECDP_BLOCK_DFP_VGA
 void mdss_dp_sw_config_msa(struct dss_io_data *ctrl_io,
 				char lrate, struct dss_io_data *dp_cc_io);
+#else
+void mdss_dp_sw_config_msa(struct mdss_dp_drv_pdata *dp);
+#endif
 #ifndef CONFIG_SEC_DISPLAYPORT
 void mdss_dp_usbpd_ext_capabilities(struct usbpd_dp_capabilities *dp_cap);
 void mdss_dp_usbpd_ext_dp_status(struct usbpd_dp_status *dp_status);
 u32 mdss_dp_usbpd_gen_config_pkt(struct mdss_dp_drv_pdata *dp);
 #endif
-void mdss_dp_ctrl_lane_mapping(struct dss_io_data *ctrl_io,
-					struct lane_mapping l_map);
 void mdss_dp_phy_share_lane_config(struct dss_io_data *phy_io,
-					u8 orientation, u8 ln_cnt);
+		u8 orientation, u8 ln_cnt, u32 phy_reg_offset);
 void mdss_dp_config_audio_acr_ctrl(struct dss_io_data *ctrl_io,
 						char link_rate);
 void mdss_dp_audio_setup_sdps(struct dss_io_data *ctrl_io, u32 num_of_channels);

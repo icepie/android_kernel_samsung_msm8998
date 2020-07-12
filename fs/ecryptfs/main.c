@@ -177,14 +177,13 @@ void ecryptfs_put_lower_file(struct inode *inode)
 				get_events()->is_hw_crypt_cb())
 			clear_cache_needed = true;
 
+		filemap_write_and_wait(inode->i_mapping);
 		if (clear_cache_needed) {
 			ret = vfs_fsync(inode_info->lower_file, false);
 
 			if (ret)
 				pr_err("failed to sync file ret = %d.\n", ret);
 		}
-
-		filemap_write_and_wait(inode->i_mapping);
 #ifdef CONFIG_SDP
 		if (inode_info->crypt_stat.flags & ECRYPTFS_DEK_IS_SENSITIVE) {
 			ecryptfs_mm_do_sdp_cleanup(inode);
@@ -867,10 +866,12 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 	atomic_inc(&lower_sb->s_active);
 	ecryptfs_set_superblock_lower(s, path.dentry->d_sb);
 
-
-	if (get_events() && get_events()->is_hw_crypt_cb &&
-			get_events()->is_hw_crypt_cb())
-		drop_pagecache_sb(ecryptfs_superblock_to_lower(s), 0);
+#ifdef CONFIG_SDP
+	if (!(mount_crypt_stat->flags & ECRYPTFS_MOUNT_SDP_ENABLED))
+#endif
+	    if (get_events() && get_events()->is_hw_crypt_cb &&
+	            get_events()->is_hw_crypt_cb())
+	        drop_pagecache_sb(ecryptfs_superblock_to_lower(s), 0);
 
 	/**
 	 * Set the POSIX ACL flag based on whether they're enabled in the lower

@@ -12,7 +12,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-#define DEBUG
+/* #define DEBUG */
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
@@ -46,6 +46,7 @@ int spi_set_speed(struct dbmdx_private *p, int index)
 	int ret = 0;
 	u32 bits_per_word = 0;
 	u32 spi_rate = 0;
+	u16 spi_mode = SPI_MODE_0;
 
 	if (index >= DBMDX_VA_NR_OF_SPEEDS) {
 		dev_err(spi_p->dev, "%s: Invalid speed index %x\n",
@@ -54,25 +55,44 @@ int spi_set_speed(struct dbmdx_private *p, int index)
 	}
 
 	spi_rate = p->pdata->va_speed_cfg[index].spi_rate -
-		(p->pdata->va_speed_cfg[index].spi_rate % 100);
+		(p->pdata->va_speed_cfg[index].spi_rate % 1000);
+
 	bits_per_word = p->pdata->va_speed_cfg[index].spi_rate % 100;
+
+	spi_mode = (u16)(((p->pdata->va_speed_cfg[index].spi_rate % 1000) -
+				bits_per_word) / 100);
+
 
 	if (bits_per_word != 8 && bits_per_word != 16 && bits_per_word != 32)
 		bits_per_word = 8;
 
-	if (spi->max_speed_hz != spi_rate) {
+	if (spi_mode == 0)
+		spi_mode = SPI_MODE_0;
+	else if (spi_mode == 1)
+		spi_mode = SPI_MODE_1;
+	else if (spi_mode == 2)
+		spi_mode = SPI_MODE_2;
+	else if (spi_mode == 3)
+		spi_mode = SPI_MODE_3;
+	else
+		spi_mode = SPI_MODE_0;
+
+	if (spi->max_speed_hz != spi_rate || spi->mode != spi_mode) {
 
 		spi->max_speed_hz = spi_rate;
-		spi->mode = SPI_MODE_0; /* clk active low */
+		spi->mode = spi_mode;
 
 		spi->bits_per_word = bits_per_word;
 
 		spi_p->pdata->bits_per_word = spi->bits_per_word;
 		spi_p->pdata->bytes_per_word = spi->bits_per_word / 8;
 
-		dev_dbg(spi_p->dev,
-			"%s Update SPI Max Speed to %d Hz, bits_per_word: %d\n",
-			__func__, spi->max_speed_hz, spi->bits_per_word);
+		dev_info(spi_p->dev,
+			"%s Update SPI Max Speed to %d Hz, bpw: %d, mode: %d\n",
+			__func__,
+			spi->max_speed_hz,
+			spi->bits_per_word,
+			spi->mode);
 
 		ret = spi_setup(spi);
 		if (ret < 0)
@@ -122,10 +142,6 @@ ssize_t send_spi_cmd_vqe(struct dbmdx_private *p,
 	do {
 		ret = spi_read(spi_p->client, recv, 4);
 		if (ret < 0) {
-#if 0
-			dev_dbg(spi_p->dev, "%s: read failed; retries:%d\n",
-				__func__, retries);
-#endif
 			/* Wait before polling again */
 			usleep_range(10000, 11000);
 
@@ -190,8 +206,9 @@ ssize_t send_spi_cmd_va(struct dbmdx_private *p, u32 command,
 
 		ret = 0;
 
-		/* the sleep command cannot be acked before the device
-		 * goes to sleep */
+		/* The sleep command cannot be acked before the device
+		 * goes to sleep
+		 */
 		ret = read_spi_data(p, recv, 5);
 		if (ret < 0) {
 			dev_err(spi_p->dev, "%s:spi_read failed =%d\n",
@@ -282,7 +299,8 @@ ssize_t send_spi_cmd_va_padded(struct dbmdx_private *p,
 		ret = 0;
 
 		/* the sleep command cannot be acked before the device
-		 * goes to sleep */
+		 * goes to sleep
+		 */
 		ret = read_spi_data(p, recv, padded_cmd_r_size);
 		if (ret < 0) {
 			dev_err(spi_p->dev, "%s:spi_read failed =%d\n",
@@ -435,8 +453,7 @@ ssize_t send_spi_data(struct dbmdx_private *p, const void *buf,
 
 		ret = write_spi_data(p, send, cur_send_size);
 		if (ret < 0) {
-			dev_err(spi_p->dev,
-				"%s: send_spi_data failed ret=%d\n",
+			dev_err(spi_p->dev, "%s: Failed ret=%d\n",
 				__func__, ret);
 			break;
 		}
@@ -455,7 +472,7 @@ int send_spi_cmd_boot(struct dbmdx_private *p, u32 command)
 	int ret = 0;
 
 
-	dev_dbg(spi_p->dev, "%s: send_spi_cmd_boot = %x\n", __func__, command);
+	dev_dbg(spi_p->dev, "%s: command = %x\n", __func__, command);
 	send[0] = 0;
 	send[1] = 0;
 	send[2] = (command >> 16) & 0xff;
@@ -463,13 +480,13 @@ int send_spi_cmd_boot(struct dbmdx_private *p, u32 command)
 
 	ret = send_spi_data(p, send, 4);
 	if (ret < 0) {
-		dev_err(spi_p->dev, "%s: send_spi_cmd_boot ret = %d\n",
-			__func__, ret);
+		dev_err(spi_p->dev, "%s: ret = %d\n", __func__, ret);
 		return ret;
 	}
 
 	/* A host command received will blocked until the current audio frame
-	   processing is finished, which can take up to 10 ms */
+	 *  processing is finished, which can take up to 10 ms
+	 */
 	usleep_range(DBMDX_USLEEP_SPI_VA_CMD_AFTER_BOOT,
 		DBMDX_USLEEP_SPI_VA_CMD_AFTER_BOOT + 1000);
 
@@ -517,6 +534,102 @@ int spi_verify_boot_checksum(struct dbmdx_private *p,
 	return 0;
 }
 
+int spi_verify_chip_id(struct dbmdx_private *p)
+{
+	struct dbmdx_spi_private *spi_p =
+				(struct dbmdx_spi_private *)p->chip->pdata;
+
+	int ret;
+	u8 idr_read_cmd[] = {0x5A, 0x07, 0x68, 0x00, 0x00, 0x03};
+	u8 idr_read_result[7] = {0};
+	u8 chip_rev_id_low_a = 0;
+	u8 chip_rev_id_low_b = 0;
+	u8 chip_rev_id_high = 0;
+
+	u8 recv_chip_rev_id_high = 0;
+	u8 recv_chip_rev_id_low = 0;
+
+	if (p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD2) {
+		idr_read_cmd[2] = 0x68;
+		chip_rev_id_high = 0x0d;
+		chip_rev_id_low_a = 0xb0;
+		chip_rev_id_low_b = 0xb1;
+	} else if (p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD4) {
+		idr_read_cmd[2] = 0x74;
+		chip_rev_id_high = 0xdb;
+		chip_rev_id_low_a = 0x40;
+		chip_rev_id_low_b = 0x40;
+	} else if (p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD6) {
+		idr_read_cmd[2] = 0x74;
+		chip_rev_id_high = 0xdb;
+		chip_rev_id_low_a = 0x60;
+		chip_rev_id_low_b = 0x60;
+	} else {
+		idr_read_cmd[2] = 0x74;
+		chip_rev_id_high = 0xdb;
+		chip_rev_id_low_a = 0x80;
+		chip_rev_id_low_b = 0x80;
+	}
+
+	ret = send_spi_data(p, idr_read_cmd, 6);
+	if (ret < 0) {
+		dev_err(spi_p->dev, "%s: idr_read_cmd ret = %d\n",
+			__func__, ret);
+		return ret;
+	}
+
+	usleep_range(DBMDX_USLEEP_SPI_VA_CMD_AFTER_BOOT,
+		DBMDX_USLEEP_SPI_VA_CMD_AFTER_BOOT + 1000);
+
+	ret = read_spi_data(p, (void *)idr_read_result, 7);
+
+	if (ret < 0) {
+		dev_err(spi_p->dev, "%s: could not idr register data\n",
+			__func__);
+		return -EIO;
+	}
+	/* Verify answer */
+	if ((idr_read_result[1] != idr_read_cmd[0]) ||
+		(idr_read_result[2] != idr_read_cmd[1]) ||
+		(idr_read_result[5] != 0x00) ||
+		(idr_read_result[6] != 0x00)) {
+		dev_err(spi_p->dev, "%s: Wrong IDR resp: %x:%x:%x:%x:%x:%x\n",
+				__func__,
+				idr_read_result[1],
+				idr_read_result[2],
+				idr_read_result[3],
+				idr_read_result[4],
+				idr_read_result[5],
+				idr_read_result[6]);
+		return -EIO;
+	}
+	recv_chip_rev_id_high = idr_read_result[4];
+	recv_chip_rev_id_low = idr_read_result[3];
+
+	if ((recv_chip_rev_id_high != chip_rev_id_high) ||
+		((recv_chip_rev_id_low != chip_rev_id_low_a) &&
+		(recv_chip_rev_id_low != chip_rev_id_low_b))) {
+
+		dev_err(spi_p->dev,
+			"%s: Wrong chip ID: Received 0x%2x%2x Expected: 0x%2x%2x | 0x%2x%2x\n",
+				__func__,
+				recv_chip_rev_id_high,
+				recv_chip_rev_id_low,
+				chip_rev_id_high,
+				chip_rev_id_low_a,
+				chip_rev_id_high,
+				chip_rev_id_low_b);
+		return -EILSEQ;
+	}
+
+	dev_info(spi_p->dev,
+			"%s: Chip ID was successfully verified: 0x%2x%2x\n",
+				__func__,
+				recv_chip_rev_id_high,
+				recv_chip_rev_id_low);
+	return 0;
+}
+
 static int spi_can_boot(struct dbmdx_private *p)
 {
 	struct dbmdx_spi_private *spi_p =
@@ -554,10 +667,10 @@ static int spi_finish_boot(struct dbmdx_private *p)
 	return ret;
 }
 
-static int spi_dump_state(struct dbmdx_private *p, char *buf)
+static int spi_dump_state(struct chip_interface *chip, char *buf)
 {
 	struct dbmdx_spi_private *spi_p =
-				(struct dbmdx_spi_private *)p->chip->pdata;
+				(struct dbmdx_spi_private *)chip->pdata;
 	int off = 0;
 
 	dev_dbg(spi_p->dev, "%s\n", __func__);
@@ -769,7 +882,8 @@ static int spi_read_audio_data(struct dbmdx_private *p,
 	ret = samples;
 
 	/* FW performes SPI reset after each chunk transaction
-	  Thus delay is required */
+	 * Thus delay is required
+	 */
 	usleep_range(DBMDX_USLEEP_SPI_AFTER_CHUNK_READ,
 		DBMDX_USLEEP_SPI_AFTER_CHUNK_READ + 100);
 out:
@@ -1003,20 +1117,12 @@ int spi_common_probe(struct spi_device *client)
 	p->pdata = pdata;
 
 	pdata->send = kmalloc(MAX_SPI_WRITE_CHUNK_SIZE, GFP_KERNEL | GFP_DMA);
-	if (!pdata->send) {
-		dev_err(p->dev,
-			"%s: Cannot allocate memory spi send buffer\n",
-			__func__);
+	if (!pdata->send)
 		goto out_err_mem_free;
-	}
 
 	pdata->recv = kmalloc(MAX_SPI_READ_CHUNK_SIZE, GFP_KERNEL | GFP_DMA);
-	if (!pdata->recv) {
-		dev_err(p->dev,
-			"%s: Cannot allocate memory spi recv buffer\n",
-			__func__);
+	if (!pdata->recv)
 		goto out_err_mem_free1;
-	}
 
 #ifdef CONFIG_PM_WAKELOCKS
 	wake_lock_init(&p->ps_nosuspend_wl, WAKE_LOCK_SUSPEND,

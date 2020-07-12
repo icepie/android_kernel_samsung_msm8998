@@ -421,7 +421,7 @@ static inline int xfrm_replay_verify_len(struct xfrm_replay_state_esn *replay_es
 
 	if (up->replay_window > up->bmp_len * sizeof(__u32) * 8)
 			return -EINVAL;
-	
+
 	return 0;
 }
 

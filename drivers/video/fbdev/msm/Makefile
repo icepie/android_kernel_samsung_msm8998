@@ -2,6 +2,7 @@ ccflags-y += -I$(src) -Idrivers/staging/android
 
 obj-$(CONFIG_FB_MSM_MDSS_MHL3) += mhl3/
 obj-$(CONFIG_MSM_DBA) += msm_dba/
+obj-y += dp_logger/
 
 mdss-mdp3-objs = mdp3.o mdp3_dma.o mdp3_ctrl.o dsi_status_v2.o
 mdss-mdp3-objs += mdp3_ppp.o mdp3_ppp_hwio.o mdp3_ppp_data.o
@@ -47,9 +48,9 @@ obj-$(CONFIG_FB_MSM_MDSS) += mdss_hdcp_1x.o
 obj-$(CONFIG_FB_MSM_MDSS_DP_PANEL) += mdss_dp.o mdss_dp_util.o
 obj-$(CONFIG_FB_MSM_MDSS_DP_PANEL) += mdss_dp_aux.o
 obj-$(CONFIG_FB_MSM_MDSS_DP_PANEL) += mdss_dp_hdcp2p2.o
+obj-$(CONFIG_SEC_DISPLAYPORT) += secdp_aux_control.o
 
 obj-$(CONFIG_FB_MSM_MDSS) += mdss_io_util.o
-obj-$(CONFIG_FB_MSM_MDSS) += msm_ext_display.o
 obj-$(CONFIG_FB_MSM_MDSS_HDMI_PANEL) += mdss_hdmi_tx.o
 obj-$(CONFIG_FB_MSM_MDSS_HDMI_PANEL) += mdss_hdmi_panel.o
 obj-$(CONFIG_FB_MSM_MDSS_HDMI_PANEL) += mdss_hdmi_hdcp2p2.o

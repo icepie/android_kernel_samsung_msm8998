@@ -172,7 +172,7 @@ static int ss_poc_read(struct samsung_display_driver_data *vdd, u8 *buf, u32 rea
 	}
 
 	mutex_lock(&vdd->vdd_poc_operation_lock);
-	
+
 	vdd->poc_operation = true;
 
 	get_online_cpus();
@@ -800,7 +800,7 @@ static int __init ss_dsi_poc_init(void)
 	}
 
 	if (!vdd->poc_driver.is_support) {
-		LCD_ERR("Not Support POC Function \n");
+		LCD_ERR("Not Support POC Driver!\n");
 		return -ENODEV;
 	}
 

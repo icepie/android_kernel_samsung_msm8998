@@ -129,14 +129,11 @@ static int mmc_cmdq_thread(void *d)
 
 		ret = mq->cmdq_issue_fn(mq, mq->cmdq_req_peeked);
 		/*
-		 * Don't requeue if issue_fn fails, just bug on.
-		 * We don't expect failure here and there is no recovery other
-		 * than fixing the actual issue if there is any.
+		 * Don't requeue if issue_fn fails.
+		 * Recovery will be come by completion softirq
 		 * Also we end the request if there is a partition switch error,
 		 * so we should not requeue the request here.
 		 */
-		if (ret)
-			BUG_ON(1);
 	} /* loop */
 
 	return 0;
@@ -165,7 +162,8 @@ static int mmc_queue_thread(void *d)
 		spin_lock_irq(q->queue_lock);
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (mq->mqrq_prev->req &&
-				(card && (card->type == MMC_TYPE_SD)))
+				(card && (card->type == MMC_TYPE_SD) &&
+				 card->host->pm_progress))
 			req = NULL;
 		else
 			req = blk_fetch_request(q);
@@ -494,8 +492,8 @@ success:
 #ifdef CONFIG_LARGE_DIRTY_BUFFER
 	if (mmc_card_sd(card)) {
 		/* apply more throttle on external sdcard */
-		mq->queue->backing_dev_info.max_ratio = 10;
-               mq->queue->backing_dev_info.min_ratio = 10;
+		mq->queue->backing_dev_info.max_ratio = 20;
+		mq->queue->backing_dev_info.min_ratio = 20;
 		mq->queue->backing_dev_info.capabilities |= BDI_CAP_STRICTLIMIT;
 	}
 #endif
@@ -786,9 +784,28 @@ int mmc_queue_suspend(struct mmc_queue *mq, int wait)
 			blk_start_queue(q);
 			spin_unlock_irqrestore(q->queue_lock, flags);
 			rc = -EBUSY;
-		} else if (rc && wait) {
-			down(&mq->thread_sem);
-			rc = 0;
+		} else if (wait) {
+			struct request *req;
+			printk("%s: mq->flags: %ld, q->queue_flags: 0x%lx, \
+					q->in_flight (%d, %d) \n",
+					mmc_hostname(mq->card->host), mq->flags,
+					q->queue_flags, q->in_flight[0], q->in_flight[1]);
+			mutex_lock(&q->sysfs_lock);
+			queue_flag_set_unlocked(QUEUE_FLAG_DYING, q);
+			spin_lock_irqsave(q->queue_lock, flags);
+			queue_flag_set(QUEUE_FLAG_DYING, q);
+
+			while ((req = blk_fetch_request(q)) != NULL) {
+				req->cmd_flags |= REQ_QUIET;
+				__blk_end_request_all(req, -EIO);
+			}
+
+			spin_unlock_irqrestore(q->queue_lock, flags);
+			mutex_unlock(&q->sysfs_lock);
+			if (rc) {
+				down(&mq->thread_sem);
+				rc = 0;
+			}
 		}
 	}
 out:

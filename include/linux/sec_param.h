@@ -21,11 +21,9 @@ struct sec_param_data {
 	unsigned int reserved0;
 #endif
 #ifdef CONFIG_RTC_AUTO_PWRON_PARAM
-	unsigned int boot_alarm_set;
-	unsigned int boot_alarm_value_l;
-	unsigned int boot_alarm_value_h;
+	unsigned int sapa[3];
 #else
-	unsigned int reserved1[3];
+	unsigned int reserved1[3]; /* CONFIG_RTC_AUTO_PWRON */
 #endif
 #ifdef CONFIG_SEC_MONITOR_BATTERY_REMOVAL
 	unsigned int normal_poweroff;
@@ -56,6 +54,10 @@ struct sec_param_data {
 	char param_carrierid[4]; //only use 3digits, 1 for null
 	char param_sales[4]; //only use 3digits, 1 for null
 	char param_lcd_resolution[8]; // Variable LCD resolution
+	char prototype_serial[16];
+	unsigned int api_gpio_test;
+	char api_gpio_test_result[256];
+	char reboot_recovery_cause[256];
 };
 
 struct sec_param_data_s {
@@ -78,9 +80,7 @@ enum sec_param_index {
 	param_update_cp_bin,
 #endif
 #ifdef CONFIG_RTC_AUTO_PWRON_PARAM
-	param_index_boot_alarm_set,
-	param_index_boot_alarm_value_l,
-	param_index_boot_alarm_value_h,
+	param_index_sapa,
 #endif
 #ifdef CONFIG_SEC_MONITOR_BATTERY_REMOVAL
 	param_index_normal_poweroff,
@@ -97,11 +97,15 @@ enum sec_param_index {
 #endif
 #if defined(CONFIG_MUIC_HV) || defined(CONFIG_SUPPORT_QC30)
 	param_index_afc_disable,
-#endif	
+#endif
 	param_index_cp_reserved_mem,
 	param_index_carrierid,
 	param_index_sales,
 	param_index_lcd_resolution,
+	param_index_prototype_serial,
+	param_index_api_gpio_test,
+	param_index_api_gpio_test_result,
+	param_index_reboot_recovery_cause,
 #ifdef CONFIG_SEC_NAD
 	param_index_qnad,
 	param_index_qnad_ddr_result,

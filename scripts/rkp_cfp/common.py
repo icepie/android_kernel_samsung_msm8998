@@ -97,3 +97,33 @@ skip_blr=set([
     'el0_svc_naked',
     '__sys_trace',
     ])
+
+skip_magic=set([
+    'rkp_call',
+
+    # do_execve
+    'try_to_run_init_process',
+    'run_init_process',
+
+    #cred related
+    'copy_creds',
+    'commit_creds',
+    'exit_creds',
+    'get_new_cred',
+    'get_task_cred',
+    'prepare_creds',
+    'prepare_kernel_cred',
+    'put_cred',
+    'put_ro_cred',
+    'rkp_free_security',
+    'rkp_get_init_cred',
+    'rkp_get_usecount',
+    'rkp_override_creds',
+    'revert_creds',
+    'set_security_override',
+    'set_security_override_from_ctx',
+
+    # ropp related func
+    'ropp_change_key',
+    'ropp_enable_backtrace',
+    ])

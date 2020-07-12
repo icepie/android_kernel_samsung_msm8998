@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,6 +17,27 @@
 #define ICNSS_MAX_IRQ_REGISTRATIONS    12
 #define ICNSS_MAX_TIMESTAMP_LEN        32
 
+enum icnss_uevent {
+	ICNSS_UEVENT_FW_READY,
+	ICNSS_UEVENT_FW_CRASHED,
+	ICNSS_UEVENT_FW_DOWN,
+};
+
+enum cnss_cc_src {
+	CNSS_SOURCE_CORE,
+	CNSS_SOURCE_11D,
+	CNSS_SOURCE_USER
+};
+
+struct icnss_uevent_fw_down_data {
+	bool crashed;
+};
+
+struct icnss_uevent_data {
+	enum icnss_uevent uevent;
+	void *data;
+};
+
 struct icnss_driver_ops {
 	char *name;
 	int (*probe)(struct device *dev);
@@ -28,6 +49,7 @@ struct icnss_driver_ops {
 	int (*pm_resume)(struct device *dev);
 	int (*suspend_noirq)(struct device *dev);
 	int (*resume_noirq)(struct device *dev);
+	int (*uevent)(struct device *dev, struct icnss_uevent_data *uevent);
 };
 
 
@@ -59,13 +81,6 @@ struct icnss_wlan_enable_cfg {
 	struct ce_svc_pipe_cfg *ce_svc_cfg;
 	u32 num_shadow_reg_cfg;
 	struct icnss_shadow_reg_cfg *shadow_reg_cfg;
-};
-
-/* MSA Memory Regions Information */
-struct icnss_mem_region_info {
-	uint64_t reg_addr;
-	uint32_t size;
-	uint8_t secure_flag;
 };
 
 /* driver modes */
@@ -104,7 +119,7 @@ extern int icnss_ce_request_irq(unsigned int ce_id,
 	irqreturn_t (*handler)(int, void *),
 	unsigned long flags, const char *name, void *ctx);
 extern int icnss_get_ce_id(int irq);
-extern int icnss_set_fw_debug_mode(bool enable_fw_log);
+extern int icnss_set_fw_log_mode(uint8_t fw_log_mode);
 extern int icnss_athdiag_read(struct device *dev, uint32_t offset,
 			      uint32_t mem_type, uint32_t data_len,
 			      uint8_t *output);
@@ -124,5 +139,14 @@ extern int icnss_get_wlan_unsafe_channel(u16 *unsafe_ch_list, u16 *ch_count,
 extern int icnss_wlan_set_dfs_nol(const void *info, u16 info_len);
 extern int icnss_wlan_get_dfs_nol(void *info, u16 info_len);
 extern bool icnss_is_qmi_disable(void);
-
+extern bool icnss_is_fw_ready(void);
+extern int icnss_set_wlan_mac_address(const u8 *in, const uint32_t len);
+extern u8 *icnss_get_wlan_mac_address(struct device *dev, uint32_t *num);
+extern int icnss_trigger_recovery(struct device *dev);
+extern void cnss_set_cc_source(enum cnss_cc_src cc_source);
+extern enum cnss_cc_src cnss_get_cc_source(void);
+extern int icnss_get_driver_load_cnt(void);
+extern void icnss_increment_driver_load_cnt(void);
+extern void icnss_set_cc_source(enum cnss_cc_src cc_source);
+extern enum cnss_cc_src icnss_get_cc_source(void);
 #endif /* _ICNSS_WLAN_H_ */

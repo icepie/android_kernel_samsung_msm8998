@@ -273,6 +273,27 @@ static int __init boot_recovery(char *str)
 early_param("androidboot.boot_recovery", boot_recovery);
 #endif
 
+#ifdef CONFIG_RTC_AUTO_PWRON_PARAM
+unsigned int sapa_param_time;
+EXPORT_SYMBOL(sapa_param_time);
+
+static int __init read_sapa_param(char *str)
+{
+	int temp = 0;
+
+	if (get_option(&str, &temp)) {
+		sapa_param_time = (unsigned int)temp;
+		pr_info("sapa: %s param_time:%u\n",
+			__func__, sapa_param_time);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+early_param("sapa", read_sapa_param);
+#endif
+
 /* Change NUL term back to "=", to make "param" the whole string. */
 static int __init repair_env_string(char *param, char *val,
 				    const char *unused, void *arg)

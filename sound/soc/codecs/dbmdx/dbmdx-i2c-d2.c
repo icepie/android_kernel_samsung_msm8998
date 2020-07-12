@@ -50,12 +50,20 @@ static int dbmd2_i2c_boot(const void *fw_data, size_t fw_size,
 	/* change to boot I2C address */
 	i2c_p->client->addr = (unsigned short)(i2c_p->pdata->boot_addr);
 
-	while (retry--) {
+	do {
 
 		if (p->active_fw == DBMDX_FW_PRE_BOOT) {
 
-			/* reset DBMD2 chip */
-			p->reset_sequence(p);
+			if (!(p->boot_mode & DBMDX_BOOT_MODE_RESET_DISABLED)) {
+				/* reset DBMD2 chip */
+				p->reset_sequence(p);
+			} else {
+				/* If failed and reset is disabled, break */
+				if (retry != RETRY_COUNT) {
+					retry = -1;
+					break;
+				}
+			}
 
 			/* delay before sending commands */
 			if (p->clk_get_rate(p, DBMDX_CLK_MASTER) <= 32768)
@@ -63,26 +71,37 @@ static int dbmd2_i2c_boot(const void *fw_data, size_t fw_size,
 			else
 				usleep_range(DBMDX_USLEEP_I2C_D2_AFTER_RESET,
 					DBMDX_USLEEP_I2C_D2_AFTER_RESET + 5000);
-			if (p->set_i2c_freq_callback) {
+
+			if (!(p->cur_boot_options &
+				DBMDX_BOOT_OPT_NO_I2C_FREQ_CALLBACK) &&
+				p->set_i2c_freq_callback) {
 				dev_dbg(p->dev,
 					"%s: setting master bus to slow freq\n",
 					__func__);
 				p->set_i2c_freq_callback(
 					i2c_p->client->adapter, I2C_FREQ_SLOW);
 			}
-			/* send SBL */
-			send_bytes = write_i2c_data(p, sbl, sizeof(sbl));
-			if (send_bytes != sizeof(sbl)) {
-				dev_err(p->dev,
-					"%s: -----------> load SBL error\n",
-					 __func__);
-				continue;
+			if (!(p->cur_boot_options &
+				DBMDX_BOOT_OPT_DONT_SENT_SBL)) {
+
+				/* send SBL */
+				send_bytes = write_i2c_data(p, sbl,
+					sizeof(sbl));
+				if (send_bytes != sizeof(sbl)) {
+					dev_err(p->dev,
+						"%s: -------> load SBL error\n",
+						__func__);
+					continue;
+				}
+
+				usleep_range(DBMDX_USLEEP_I2C_D2_AFTER_SBL,
+					DBMDX_USLEEP_I2C_D2_AFTER_SBL + 1000);
 			}
 
-			usleep_range(DBMDX_USLEEP_I2C_D2_AFTER_SBL,
-				DBMDX_USLEEP_I2C_D2_AFTER_SBL + 1000);
+			if (!(p->cur_boot_options &
+				DBMDX_BOOT_OPT_NO_I2C_FREQ_CALLBACK) &&
+				p->set_i2c_freq_callback) {
 
-			if (p->set_i2c_freq_callback) {
 				msleep(DBMDX_MSLEEP_I2C_D2_CALLBACK);
 				dev_dbg(p->dev,
 					"%s: setting master bus to fast freq\n",
@@ -91,12 +110,30 @@ static int dbmd2_i2c_boot(const void *fw_data, size_t fw_size,
 					i2c_p->client->adapter, I2C_FREQ_FAST);
 			}
 
-			/* send CRC clear command */
-			ret = write_i2c_data(p, clr_crc, sizeof(clr_crc));
-			if (ret != sizeof(clr_crc)) {
-				dev_err(p->dev, "%s: failed to clear CRC\n",
-					 __func__);
-				continue;
+			/* verify chip id */
+			if (p->cur_boot_options &
+				DBMDX_BOOT_OPT_VERIFY_CHIP_ID) {
+				ret = i2c_verify_chip_id(p);
+				if (ret < 0) {
+					dev_err(i2c_p->dev,
+						"%s: couldn't verify chip id\n",
+						__func__);
+					continue;
+				}
+			}
+
+			if (!(p->cur_boot_options &
+				DBMDX_BOOT_OPT_DONT_CLR_CRC)) {
+
+				/* send CRC clear command */
+				ret = write_i2c_data(p, clr_crc,
+					sizeof(clr_crc));
+				if (ret != sizeof(clr_crc)) {
+					dev_err(p->dev,
+						"%s: failed to clear CRC\n",
+						__func__);
+					continue;
+				}
 			}
 		} else {
 			/* delay before sending commands */
@@ -132,8 +169,8 @@ static int dbmd2_i2c_boot(const void *fw_data, size_t fw_size,
 
 		msleep(DBMDX_MSLEEP_I2C_D2_BEFORE_FW_CHECKSUM);
 
-		/* verify checksum */
-		if (checksum) {
+		if (checksum && !(p->cur_boot_options &
+					DBMDX_BOOT_OPT_DONT_VERIFY_CRC)) {
 			ret = i2c_verify_boot_checksum(p, checksum, chksum_len);
 			if (ret < 0) {
 				dev_err(i2c_p->dev,
@@ -146,19 +183,22 @@ static int dbmd2_i2c_boot(const void *fw_data, size_t fw_size,
 		dev_info(p->dev, "%s: ---------> firmware loaded\n",
 			__func__);
 		break;
-	}
+	} while (--retry);
 
 	/* no retries left, failed to boot */
-	if (retry < 0) {
+	if (retry <= 0) {
 		dev_err(p->dev, "%s: failed to load firmware\n", __func__);
-		return -1;
+		return -EIO;
 	}
 
-	/* send boot command */
-	ret = send_i2c_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
-	if (ret < 0) {
-		dev_err(p->dev, "%s: booting the firmware failed\n", __func__);
-		return -1;
+	if (!(p->cur_boot_options & DBMDX_BOOT_OPT_DONT_SEND_START_BOOT)) {
+		/* send boot command */
+		ret = send_i2c_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
+		if (ret < 0) {
+			dev_err(p->dev,
+				"%s: booting the firmware failed\n", __func__);
+			return -EIO;
+		}
 	}
 
 	/* wait some time */
@@ -278,7 +318,9 @@ static struct i2c_driver dbmd2_i2c_driver = {
 	.driver = {
 		.name = "dbmd2-i2c",
 		.owner = THIS_MODULE,
+#ifdef CONFIG_OF
 		.of_match_table = dbmd2_i2c_of_match,
+#endif
 		.pm = &dbmdx_i2c_pm,
 	},
 	.probe =    dbmd2_i2c_probe,

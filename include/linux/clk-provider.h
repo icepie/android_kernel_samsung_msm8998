@@ -33,6 +33,10 @@
 #define CLK_GET_ACCURACY_NOCACHE BIT(8) /* do not use the cached clk accuracy */
 #define CLK_RECALC_NEW_RATES	BIT(9) /* recalc rates after notifications */
 #define CLK_IS_CRITICAL		BIT(11) /* do not gate, ever */
+#define CLK_ENABLE_HAND_OFF	BIT(12) /* enable clock when registered.
+					   hand-off enable_count & prepare_count
+					   to first consumer that enables clk */
+#define CLK_IS_MEASURE          BIT(14) /* measure clock */
 
 struct clk;
 struct clk_hw;
@@ -269,6 +273,8 @@ struct regulator;
 		regulator
  * @level_votes: array of votes for each level
  * @num_levels: specifies the size of level_votes array
+ * @skip_handoff: do not vote for the max possible voltage during init
+ * @use_max_uV: use INT_MAX for max_uV when calling regulator_set_voltage
  * @cur_level: the currently set voltage level
  * @lock: lock to protect this struct
  */
@@ -280,6 +286,8 @@ struct clk_vdd_class {
 	int *vdd_uv;
 	int *level_votes;
 	int num_levels;
+	bool skip_handoff;
+	bool use_max_uV;
 	unsigned long cur_level;
 	struct mutex lock;
 };

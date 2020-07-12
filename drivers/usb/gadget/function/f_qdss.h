@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -53,6 +53,10 @@ struct f_qdss {
 	struct usb_qdss_ch ch;
 	struct list_head ctrl_read_pool;
 	struct list_head ctrl_write_pool;
+
+	/* for mdm channel SW path */
+	struct list_head data_write_pool;
+
 	struct work_struct connect_w;
 	struct work_struct disconnect_w;
 	spinlock_t lock;
@@ -69,6 +73,5 @@ struct usb_qdss_opts {
 };
 
 int uninit_data(struct usb_ep *ep);
-int set_qdss_data_connection(struct usb_gadget *gadget,
-	struct usb_ep *data_ep, u8 data_addr, int enable);
+int set_qdss_data_connection(struct f_qdss *qdss, int enable);
 #endif

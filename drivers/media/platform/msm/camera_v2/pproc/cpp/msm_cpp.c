@@ -401,12 +401,16 @@ static unsigned long msm_cpp_get_phy_addr(struct cpp_device *cpp_dev,
 
 	list_for_each_entry_safe(buff, save, buff_head, entry) {
 		if (buff->map_info.buff_info.index == buff_index) {
-			phy_add = buff->map_info.phy_addr;
-			*fd = buff->map_info.buff_info.fd;
-			break;
+			if (!native_buff) {
+				phy_add = buff->map_info.phy_addr;
+				*fd = buff->map_info.buff_info.fd;
+				break;
+			} else if (*fd == buff->map_info.buff_info.fd) {
+				phy_add = buff->map_info.phy_addr;
+				break;
+			}
 		}
 	}
-
 	return phy_add;
 }
 
@@ -424,7 +428,8 @@ static unsigned long msm_cpp_queue_buffer_info(struct cpp_device *cpp_dev,
 		buff_head = &buff_queue->vb2_buff_head;
 
 	list_for_each_entry_safe(buff, save, buff_head, entry) {
-		if (buff->map_info.buff_info.index == buffer_info->index) {
+		if ((buff->map_info.buff_info.index == buffer_info->index) &&
+		(!(buffer_info->native_buff))) {
 			pr_err("error buffer index already queued\n");
 			goto error;
 		}
@@ -2500,7 +2505,7 @@ static int msm_cpp_cfg_frame(struct cpp_device *cpp_dev,
 	unsigned long tnr_scratch_buffer0, tnr_scratch_buffer1;
 	uint16_t num_stripes = 0;
 	struct msm_buf_mngr_info buff_mgr_info, dup_buff_mgr_info;
-	int32_t in_fd;
+	int32_t in_fd = 0;
 	int32_t num_output_bufs = 1;
 	uint32_t stripe_base = 0;
 	uint32_t stripe_size;
@@ -2578,6 +2583,8 @@ static int msm_cpp_cfg_frame(struct cpp_device *cpp_dev,
 		return -EAGAIN;
 	}
 
+	if (new_frame->input_buffer_info.fd)
+		in_fd = new_frame->input_buffer_info.fd;
 	in_phyaddr = msm_cpp_fetch_buffer_info(cpp_dev,
 		&new_frame->input_buffer_info,
 		((new_frame->input_buffer_info.identity >> 16) & 0xFFFF),
@@ -3484,14 +3491,21 @@ STREAM_BUFF_END:
 	case VIDIOC_MSM_CPP_IOMMU_ATTACH: {
 		if (cpp_dev->iommu_state == CPP_IOMMU_STATE_DETACHED) {
 			struct msm_camera_smmu_attach_type cpp_attach_info;
-
 			memset(&cpp_attach_info, 0, sizeof(cpp_attach_info));
+
+			if (ioctl_ptr->len != sizeof(struct msm_camera_smmu_attach_type)) {
+				pr_err("Not valid ioctl_ptr->len\n");
+				rc = -EINVAL;
+				break;
+			}
+
 			rc = msm_cpp_copy_from_ioctl_ptr(&cpp_attach_info,
 				ioctl_ptr);
 			if (rc < 0) {
 				pr_err("CPP_IOMMU_DETTACH copy from user fail");
 				ERR_COPY_FROM_USER();
-				return -EINVAL;
+				rc = -EINVAL;
+				break;
 			}
 
 			cpp_dev->security_mode = cpp_attach_info.attach;
@@ -3520,16 +3534,22 @@ STREAM_BUFF_END:
 	case VIDIOC_MSM_CPP_IOMMU_DETACH: {
 		if ((cpp_dev->iommu_state == CPP_IOMMU_STATE_ATTACHED) &&
 			(cpp_dev->stream_cnt == 0)) {
-
 			struct msm_camera_smmu_attach_type cpp_attach_info;
-
 			memset(&cpp_attach_info, 0, sizeof(cpp_attach_info));
+
+			if (ioctl_ptr->len != sizeof(struct msm_camera_smmu_attach_type)) {
+				pr_err("Not valid ioctl_ptr->len\n");
+				rc = -EINVAL;
+				break;
+			}
+
 			rc = msm_cpp_copy_from_ioctl_ptr(&cpp_attach_info,
 				ioctl_ptr);
 			if (rc < 0) {
 				pr_err("CPP_IOMMU_ATTACH copy from user fail");
 				ERR_COPY_FROM_USER();
-				return -EINVAL;
+				rc = -EINVAL;
+				break;
 			}
 
 			cpp_dev->security_mode = cpp_attach_info.attach;

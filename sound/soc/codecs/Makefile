@@ -148,7 +148,11 @@ ifeq ($(CONFIG_COMMON_CLK_QCOM), y)
 endif
 snd-soc-wcd-cpe-objs := wcd_cpe_services.o wcd_cpe_core.o
 snd-soc-wsa881x-objs := wsa881x.o wsa881x-tables.o wsa881x-regmap.o wsa881x-temp-sensor.o
-snd-soc-wcd-mbhc-objs := wcd-mbhc-v2.o
+ifeq ($(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET), y) 
+	snd-soc-wcd-mbhc-objs := wcd-mbhc-v2-usbc.o
+else 
+	snd-soc-wcd-mbhc-objs := wcd-mbhc-v2.o
+endif 
 snd-soc-wsa881x-analog-objs := wsa881x-analog.o wsa881x-tables-analog.o
 snd-soc-wsa881x-analog-objs += wsa881x-regmap-analog.o wsa881x-irq.o
 snd-soc-wcd-dsp-utils-objs := wcd-dsp-utils.o
@@ -434,4 +438,6 @@ obj-$(CONFIG_SND_SOC_DBMDX)	+= dbmdx/
 # Amp
 obj-$(CONFIG_SND_SOC_MAX9877)	+= snd-soc-max9877.o
 obj-$(CONFIG_SND_SOC_TPA6130A2)	+= snd-soc-tpa6130a2.o
-obj-y += msm8x16/
+obj-$(CONFIG_SND_SOC_TFA9896)	+= tfa9896/
+obj-y += sdm660_cdc/
+obj-y += msm_sdw/

@@ -498,6 +498,7 @@ int security_path_chown(struct path *path, kuid_t uid, kgid_t gid)
 		return 0;
 	return call_int_hook(path_chown, 0, path, uid, gid);
 }
+EXPORT_SYMBOL(security_path_chown);
 
 int security_path_chroot(struct path *path)
 {
@@ -850,11 +851,6 @@ int security_file_open(struct file *file, const struct cred *cred)
 		return ret;
 
 	return fsnotify_perm(file, MAY_OPEN);
-}
-
-int security_file_close(struct file *file)
-{
-	return call_int_hook(file_close, 0, file);
 }
 
 int security_task_create(unsigned long clone_flags)

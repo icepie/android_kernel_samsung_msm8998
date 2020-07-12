@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,8 +14,16 @@
 #define __MDSS_PLL_H
 
 #include <linux/mdss_io_util.h>
-#include <linux/clk/msm-clock-generic.h>
+#include <linux/clk-provider.h>
 #include <linux/io.h>
+#include <linux/clk.h>
+#include <linux/clkdev.h>
+#include <linux/regmap.h>
+
+#include "../clk-regmap.h"
+#include "../clk-regmap-divider.h"
+#include "../clk-regmap-mux.h"
+#include <dt-bindings/clock/mdss-pll-clk.h>
 
 #define MDSS_PLL_REG_W(base, offset, data)	\
 				writel_relaxed((data), (base) + (offset))
@@ -33,6 +41,8 @@ enum {
 	MDSS_DSI_PLL_8996,
 	MDSS_DSI_PLL_8998,
 	MDSS_DP_PLL_8998,
+	MDSS_DP_PLL_SDM660,
+	MDSS_DP_PLL_SDM630,
 	MDSS_HDMI_PLL_8996,
 	MDSS_HDMI_PLL_8996_V2,
 	MDSS_HDMI_PLL_8996_V3,
@@ -43,6 +53,8 @@ enum {
 
 enum {
 	MDSS_PLL_TARGET_8996,
+	MDSS_PLL_TARGET_SDM660,
+	MDSS_PLL_TARGET_SDM630,
 };
 
 #define DFPS_MAX_NUM_OF_FRAME_RATES 20
@@ -200,21 +212,12 @@ static inline bool is_gdsc_disabled(struct mdss_pll_resources *pll_res)
 		(!(readl_relaxed(pll_res->gdsc_base) & BIT(0)))) ? false : true;
 }
 
-static inline int mdss_pll_div_prepare(struct clk *c)
+static inline int mdss_pll_div_prepare(struct clk_hw *hw)
 {
-	struct div_clk *div = to_div_clk(c);
+	struct clk_hw *parent_hw = clk_hw_get_parent(hw);
 	/* Restore the divider's value */
-	return div->ops->set_div(div, div->data.div);
-}
-
-static inline int mdss_set_mux_sel(struct mux_clk *clk, int sel)
-{
-	return 0;
-}
-
-static inline int mdss_get_mux_sel(struct mux_clk *clk)
-{
-	return 0;
+	return hw->init->ops->set_rate(hw, clk_hw_get_rate(hw),
+					clk_hw_get_rate(parent_hw));
 }
 
 int mdss_pll_resource_enable(struct mdss_pll_resources *pll_res, bool enable);

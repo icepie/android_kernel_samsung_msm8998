@@ -4,7 +4,7 @@
  * Provides type definitions and function prototypes used to link the
  * DHD OS, bus, and protocol modules.
  *
- * Copyright (C) 1999-2017, Broadcom Corporation
+ * Copyright (C) 1999-2018, Broadcom Corporation
  * 
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -27,7 +27,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd.h 712557 2017-07-25 08:09:02Z $
+ * $Id: dhd.h 763050 2018-05-17 04:42:47Z $
  */
 
 /****************
@@ -74,6 +74,10 @@ int get_scheduler_policy(struct task_struct *p);
 #include <wdf.h>
 #include <WdfMiniport.h>
 #endif /* (BCMWDF)  */
+
+#ifdef WL_CFGVENDOR_SEND_HANG_EVENT
+#include <rte_ioctl.h>
+#endif /* WL_CFGVENDOR_SEND_HANG_EVENT */
 
 #ifdef DEBUG_DPC_THREAD_WATCHDOG
 #define MAX_RESCHED_CNT 600
@@ -218,24 +222,15 @@ enum dhd_bus_state {
 #define DHD_BUS_CHECK_DOWN_OR_DOWN_IN_PROGRESS(dhdp) \
 		((dhdp)->busstate == DHD_BUS_DOWN || (dhdp)->busstate == DHD_BUS_DOWN_IN_PROGRESS)
 
-/* Macro to print Ethernet Address as String
- * expects both arguements as (char *)
- */
-#define DHD_MAC_TO_STR(mac, str) (snprintf(str, ETHER_ADDR_STR_LEN, \
-					"%02x:%02x:%02x:%02x:%02x:%02x\n", \
-					(uchar)mac[0]&0xff, \
-					(uchar)mac[1]&0xff, \
-					(uchar)mac[2]&0xff, \
-					(uchar)mac[3]&0xff, \
-					(uchar)mac[4]&0xff, \
-					(uchar)mac[5]&0xff))
-
-
 /* Download Types */
 typedef enum download_type {
 	FW,
 	NVRAM,
-	CLM_BLOB
+	CLM_BLOB,
+#if defined(DHD_USE_CLMINFO_PARSER)
+	CLMINFO,
+#endif /* DHD_USE_CLMINFO_PARSER */
+	DOWNLOAD_TYPE_LAST
 } download_type_t;
 
 
@@ -267,6 +262,9 @@ enum dhd_op_flags {
 
 #define DHD_OPMODE_SUPPORTED(dhd, opmode_flag) \
 	(dhd ? ((((dhd_pub_t *)dhd)->op_mode)  &  opmode_flag) : -1)
+#define DHD_OPMODE_STA_SOFTAP_CONCURR(dhd) \
+	(dhd ? (((((dhd_pub_t *)dhd)->op_mode) & DHD_FLAG_CONCURR_STA_HOSTAP_MODE) == \
+	DHD_FLAG_CONCURR_STA_HOSTAP_MODE) : 0)
 
 /* Max sequential TX/RX Control timeouts to set HANG event */
 #ifndef MAX_CNTL_TX_TIMEOUT
@@ -295,6 +293,7 @@ enum dhd_op_flags {
  */
 #define MAX_NVRAMBUF_SIZE	(16 * 1024) /* max nvram buf size */
 #define MAX_CLM_BUF_SIZE	(48 * 1024) /* max clm blob size */
+#define MAX_CLMINFO_BUF_SIZE    (4 * 1024) /* max clminfo buf size */
 #ifdef DHD_DEBUG
 #define DHD_JOIN_MAX_TIME_DEFAULT 10000 /* ms: Max time out for joining AP */
 #define DHD_SCAN_DEF_TIMEOUT 10000 /* ms: Max time out for scan in progress */
@@ -400,6 +399,9 @@ enum dhd_dongledump_type {
 	DUMP_TYPE_RESUMED_UNKNOWN,
 	DUMP_TYPE_TRANS_ID_MISMATCH,
 	DUMP_TYPE_HANG_ON_IFACE_OP_FAIL,
+#ifdef DEBUG_DNGL_INIT_FAIL
+	DUMP_TYPE_DONGLE_INIT_FAILURE,
+#endif /* DEBUG_DNGL_INIT_FAIL */
 #ifdef SUPPORT_LINKDOWN_RECOVERY
 	DUMP_TYPE_READ_SHM_FAIL
 #endif /* SUPPORT_LINKDOWN_RECOVERY */
@@ -412,15 +414,18 @@ enum dhd_hang_reason {
 	HANG_REASON_D3_ACK_TIMEOUT = 0x8003,
 	HANG_REASON_BUS_DOWN = 0x8004,
 	HANG_REASON_MSGBUF_LIVELOCK = 0x8006,
-	HANG_REASON_IFACE_OP_FAILURE = 0x8007,
+	HANG_REASON_IFACE_DEL_FAILURE = 0x8007,
 	HANG_REASON_HT_AVAIL_ERROR = 0x8008,
 	HANG_REASON_PCIE_RC_LINK_UP_FAIL = 0x8009,
 	HANG_REASON_PCIE_PKTID_ERROR = 0x800A,
+	HANG_REASON_IFACE_ADD_FAILURE = 0x800B,
 	HANG_REASON_PCIE_LINK_DOWN = 0x8805,
 	HANG_REASON_INVALID_EVENT_OR_DATA = 0x8806,
 	HANG_REASON_UNKNOWN = 0x8807,
 	HANG_REASON_MAX = 0x8808
 };
+
+#define WLC_E_DEAUTH_MAX_REASON 0x0FFF
 
 enum dhd_rsdb_scan_features {
 	/* Downgraded scan feature for AP active */
@@ -432,6 +437,36 @@ enum dhd_rsdb_scan_features {
 	/* Enable channel pruning for any SCAN */
 	RSDB_SCAN_DOWNGRADED_CH_PRUNE_ALL  = 0x20
 };
+
+enum dhd_eapol_message_type {
+	EAPOL_4WAY_M1 = 1,
+	EAPOL_4WAY_M2,
+	EAPOL_4WAY_M3,
+	EAPOL_4WAY_M4
+};
+
+#define DEBUG_DUMP_TIME_BUF_LEN (16 + 1)
+
+#ifdef WL_CFGVENDOR_SEND_HANG_EVENT
+#define VENDOR_SEND_HANG_EXT_INFO_LEN (800 + 1)
+#define VENDOR_SEND_HANG_EXT_INFO_VER 20170905
+#define HANG_INFO_TRAP_T_NAME_MAX 6
+#define HANG_INFO_TRAP_T_REASON_IDX 0
+#define HANG_INFO_TRAP_T_SUBTYPE_IDX 2
+#define HANG_INFO_TRAP_T_OFFSET_IDX 3
+#define HANG_INFO_TRAP_T_EPC_IDX 4
+#define HANG_FIELD_STR_MAX_LEN 9
+#define HANG_FIELD_CNT_MAX 69
+#define HANG_FIELD_IF_FAILURE_CNT 10
+#define HANG_FIELD_IOCTL_RESP_TIMEOUT_CNT 8
+#define HANG_FIELD_TRAP_T_STACK_CNT_MAX 16
+#define HANG_FIELD_MISMATCH_CNT 10
+#define HANG_INFO_BIGDATA_KEY_STACK_CNT 4
+
+/* delimiter between values */
+#define HANG_KEY_DEL	' '
+#define HANG_RAW_DEL	'_'
+#endif /* WL_CFGVENDOR_SEND_HANG_EVENT */
 
 /* Packet alignment for most efficient SDIO (can change based on platform) */
 #ifndef DHD_SDALIGN
@@ -494,8 +529,6 @@ enum {
 #ifdef BCMSDIO
 #define TCPACK_SUP_DEFAULT	TCPACK_SUP_DELAYTX
 #elif defined(BCMPCIE)
-#define TCPACK_SUP_DEFAULT	TCPACK_SUP_HOLD
-#else
 #define TCPACK_SUP_DEFAULT	TCPACK_SUP_OFF
 #endif /* BCMSDIO */
 #endif /* ARGOS_CPU_SCHEDULER */
@@ -604,9 +637,24 @@ extern void dhd_log_dump_write(int type, const char *fmt, ...);
 extern char *dhd_log_dump_get_timestamp(void);
 #endif /* DHD_LOG_DUMP */
 
+#define DHD_LOG_DUMP_TS_MULTIPLIER_VALUE    60
+#define DHD_LOG_DUMP_TS_FMT_YYMMDDHHMMSSMSMS    "%02d%02d%02d%02d%02d%02d%04d"
+
+extern void get_debug_dump_time(char *str);
+extern void clear_debug_dump_time(char *str);
+#if defined(WL_CFGVENDOR_SEND_HANG_EVENT) || defined(DHD_PKT_LOGGING)
+extern void copy_debug_dump_time(char *dest, char *src);
+#endif /* WL_CFGVENDOR_SEND_HANG_EVENT || DHD_PKT_LOGGING */
+
+#define DHD_DEBUG_DUMP_TYPE	"debug_dump_USER"
+
 #if defined(CUSTOMER_HW4)
 #ifndef DHD_COMMON_DUMP_PATH
-#define DHD_COMMON_DUMP_PATH	"/data/log/wifi/"
+#if defined(PLATFORM_SLP)
+#define DHD_COMMON_DUMP_PATH	"/opt/usr/data/network/"
+#else
+#define DHD_COMMON_DUMP_PATH	"/data/media/wifi/log/"
+#endif /* PLATFORM_SLP */
 #endif /* !DHD_COMMON_DUMP_PATH */
 #else
 #define DHD_COMMON_DUMP_PATH	"/installmedia/"
@@ -650,6 +698,8 @@ struct module_metadata {
 	u64 data_addr;	/* address of module data in host */
 };
 #endif
+
+#define MAX_MTU_SZ (1600u)
 
 #ifdef DMAMAP_STATS
 typedef struct dmamap_stats {
@@ -722,7 +772,7 @@ typedef struct dhd_pub {
 	ulong rx_readahead_cnt;	/* Number of packets where header read-ahead was used. */
 	ulong tx_realloc;	/* Number of tx packets we had to realloc for headroom */
 	ulong fc_packets;       /* Number of flow control pkts recvd */
-
+	ulong tx_big_packets;	/* Dropped data packets that are larger than MAX_MTU_SZ */
 #ifdef DMAMAP_STATS
 	/* DMA Mapping statistics */
 	dma_stats_t dma_stats;
@@ -955,10 +1005,10 @@ typedef struct dhd_pub {
 	char	*cached_clm;
 	int	cached_clm_length;
 #endif
-#ifdef KEEP_JP_REGREV
+#if defined(KEEP_KR_REGREV) || defined(KEEP_JP_REGREV)
 	char vars_ccode[WLC_CNTRY_BUF_SZ];
 	uint vars_regrev;
-#endif /* KEEP_JP_REGREV */
+#endif /* KEEP_KR_REGREV || KEEP_JP_REGREV */
 #ifdef WLTDLS
 	uint32 tdls_mode;
 #endif
@@ -1043,6 +1093,21 @@ typedef struct dhd_pub {
 #if defined(STAT_REPORT)
 	void *stat_report_info;
 #endif
+#ifdef DHD_DUMP_MNGR
+	struct _dhd_dump_file_manage *dump_file_manage;
+#endif /* DHD_DUMP_MNGR */
+#ifdef DYNAMIC_MUMIMO_CONTROL
+	uint8 reassoc_mumimo_sw;
+	uint8 murx_block_eapol;
+#endif /* DYNAMIC_MUMIMO_CONTROL */
+#ifdef DHD_USE_CLMINFO_PARSER
+	bool is_clm_mult_regrev;	/* Checking for CLM single/multiple regrev */
+#endif /* DHD_USE_CLMINFO_PARSER */
+#ifdef WL_CFGVENDOR_SEND_HANG_EVENT
+	char *hang_info;
+	int hang_info_cnt;
+	char debug_dump_time_hang_str[DEBUG_DUMP_TIME_BUF_LEN];
+#endif /* WL_CFGVENDOR_SEND_HANG_EVENT */
 } dhd_pub_t;
 
 typedef struct {
@@ -1600,8 +1665,13 @@ void dhd_schedule_sssr_dump(dhd_pub_t *dhdp);
 #define DHD_ARP_FILTER_NUM		5
 #define DHD_BROADCAST_ARP_FILTER_NUM	6
 #define DHD_IP4BCAST_DROP_FILTER_NUM	7
+#define DHD_CISCO_STP_DROP_FILTER_NUM	8
+#define DHD_CISCO_XID_DROP_FILTER_NUM	9
+#define DHD_UDPNETBIOS_DROP_FILTER_NUM 10
 #define DISCARD_IPV4_MCAST	"102 1 6 IP4_H:16 0xf0 0xe0"
 #define DISCARD_IPV6_MCAST	"103 1 6 IP6_H:24 0xff 0xff"
+#define DISCARD_IPV4_BCAST	"107 1 6 IP4_H:16 0xffffffff 0xffffffff"
+#define DISCARD_UDPNETBIOS	"110 1 6 UDP_H:2 0xffff 0x0089"
 extern int dhd_os_enable_packet_filter(dhd_pub_t *dhdp, int val);
 extern void dhd_enable_packet_filter(int value, dhd_pub_t *dhd);
 extern int dhd_packet_filter_add_remove(dhd_pub_t *dhdp, int add_remove, int num);
@@ -1661,6 +1731,30 @@ typedef struct {
 	uint32 rom_rodata_end;
 } dhd_event_log_t;
 #endif /* SHOW_LOGTRACE */
+
+#if defined(DHD_NON_DMA_M2M_CORRUPTION)
+#define PCIE_DMAXFER_LPBK_LENGTH	4096
+typedef struct dhd_pcie_dmaxfer_lpbk {
+	union {
+		uint32	length;
+		uint32	status;
+	} u;
+	uint32	srcdelay;
+	uint32	destdelay;
+	uint32	lpbkmode;
+	uint32	wait;
+	uint32	core;
+} dhd_pcie_dmaxfer_lpbk_t;
+#endif /* DHD_NON_DMA_M2M_CORRUPTION */
+enum d11_lpbk_type {
+	M2M_DMA_LPBK = 0,
+	D11_LPBK = 1,
+	BMC_LPBK = 2,
+	M2M_NON_DMA_LPBK = 3,
+	D11_HOST_MEM_LPBK = 4,
+	BMC_HOST_MEM_LPBK = 5,
+	MAX_LPBK = 6
+};
 
 #ifdef KEEP_ALIVE
 extern int dhd_dev_start_mkeep_alive(dhd_pub_t *dhd_pub, uint8 mkeep_alive_id, uint8 *ip_pkt,
@@ -1782,6 +1876,8 @@ extern int dhd_os_busbusy_wait_condition(dhd_pub_t *pub, uint *var, uint conditi
 extern int dhd_os_busbusy_wait_negation(dhd_pub_t * pub, uint * condition);
 extern int dhd_os_d3ack_wait(dhd_pub_t * pub, uint * condition);
 extern int dhd_os_d3ack_wake(dhd_pub_t * pub);
+extern int dhd_os_dmaxfer_wait(dhd_pub_t *pub, uint *condition);
+extern int dhd_os_dmaxfer_wake(dhd_pub_t *pub);
 
 /*
  * Manage sta objects in an interface. Interface is identified by an ifindex and
@@ -2090,6 +2186,7 @@ static INLINE int dhd_check_module_mac(dhd_pub_t *dhdp) { return 0; }
 int dhd_read_cis(dhd_pub_t *dhdp);
 void dhd_clear_cis(dhd_pub_t *dhdp);
 #if defined(SUPPORT_MULTIPLE_MODULE_CIS) && defined(USE_CID_CHECK)
+bool dhd_check_module(char *module_name);
 extern int dhd_check_module_b85a(void);
 extern int dhd_check_module_b90(void);
 #define BCM4359_MODULE_TYPE_B90B 1
@@ -2337,6 +2434,10 @@ int dhd_download_blob(dhd_pub_t *dhd, unsigned char *image,
 		uint32 len, char *iovar);
 
 int dhd_apply_default_clm(dhd_pub_t *dhd, char *clm_path);
+#ifdef DHD_USE_CLMINFO_PARSER
+int dhd_get_clminfo(dhd_pub_t *dhd, char *clm_path);
+#define NUM_OF_COUNTRYS 150
+#endif /* DHD_USE_CLMINFO_PARSER */
 
 #ifdef SHOW_LOGTRACE
 int dhd_parse_logstrs_file(osl_t *osh, char *raw_fmts, int logstrs_size,
@@ -2409,6 +2510,9 @@ extern void dhd_lb_stats_rxc_percpu_cnt_incr(dhd_pub_t *dhdp);
 #define DHD_LB_STATS_TXC_PERCPU_CNT_INCR(dhdp) DHD_LB_STATS_NOOP
 #define DHD_LB_STATS_RXC_PERCPU_CNT_INCR(dhdp) DHD_LB_STATS_NOOP
 #endif /* !DHD_LB_STATS */
+#ifdef DHD_LB_IRQSET
+extern void dhd_irq_set_affinity(dhd_pub_t *dhdp);
+#endif /* DHD_LB_IRQSET */
 
 #ifdef DHD_SSSR_DUMP
 #define DHD_SSSR_MEMPOOL_SIZE	(1024 * 1024) /* 1MB size */
@@ -2543,6 +2647,8 @@ int dhd_send_msg_to_daemon(struct sk_buff *skb, void *data, int size);
 void dhd_send_trap_to_fw_for_timeout(dhd_pub_t * pub, timeout_reasons_t reason);
 #endif
 
+extern void dhd_prhex(const char *msg, volatile uchar *buf, uint nbytes, uint8 dbg_level);
+
 #if defined(CONFIG_64BIT)
 #define DHD_SUPPORT_64BIT
 #elif defined(DHD_EFI)
@@ -2569,4 +2675,49 @@ wake_counts_t* dhd_get_wakecount(dhd_pub_t *dhdp);
 #ifdef BCM_ASLR_HEAP
 extern uint32 dhd_get_random_number(void);
 #endif /* BCM_ASLR_HEAP */
+
+#define DHD_DUMP_TYPE_NAME_SIZE		32
+#define DHD_DUMP_FILE_PATH_SIZE		256
+#define DHD_DUMP_FILE_COUNT_MAX		5
+#define DHD_DUMP_TYPE_COUNT_MAX		10
+
+#ifdef DHD_DUMP_MNGR
+typedef struct _DFM_elem {
+	char type_name[DHD_DUMP_TYPE_NAME_SIZE];
+	char file_path[DHD_DUMP_FILE_COUNT_MAX][DHD_DUMP_FILE_PATH_SIZE];
+	int file_idx;
+} DFM_elem_t;
+
+typedef struct _dhd_dump_file_manage {
+	DFM_elem_t elems[DHD_DUMP_TYPE_COUNT_MAX];
+} dhd_dump_file_manage_t;
+
+extern void dhd_dump_file_manage_enqueue(dhd_pub_t *dhd, char *dump_path, char *fname);
+#endif /* DHD_DUMP_MNGR */
+
+int dhd_check_eapol_4way_message(char *dump_data);
+#ifdef DYNAMIC_MUMIMO_CONTROL
+#ifdef ARGOS_CPU_SCHEDULER
+void argos_config_mumimo_reset(void);
+#endif /* ARGOS_CPU_SCHEDULER */
+#endif /* DYNAMIC_MUMIMO_CONTROL */
+#if defined(BCMSDIO) || defined(BCMPCIE)
+extern uint dhd_get_chip_id(dhd_pub_t *dhdp);
+extern uint dhd_get_chiprev_id(dhd_pub_t *dhdp);
+#endif /* BCMSDIO || BCMPCIE */
+
+#if defined(DHD_BLOB_EXISTENCE_CHECK) && defined(DHD_USE_CLMINFO_PARSER)
+#define CHECK_IS_BLOB(dhdp)		(dhdp)->is_blob
+#define CHECK_IS_MULT_REGREV(dhdp)	(dhdp)->is_clm_mult_regrev
+#elif defined(DHD_BLOB_EXISTENCE_CHECK) && !defined(DHD_USE_CLMINFO_PARSER)
+#define CHECK_IS_BLOB(dhdp)		(dhdp)->is_blob
+#define CHECK_IS_MULT_REGREV(dhdp)	FALSE
+#elif !defined(DHD_BLOB_EXISTENCE_CHECK) && defined(DHD_USE_CLMINFO_PARSER)
+#define CHECK_IS_BLOB(dhdp)		TRUE
+#define CHECK_IS_MULT_REGREV(dhdp)	(dhdp)->is_clm_mult_regrev
+#else /* !DHD_BLOB_EXISTENCE_CHECK && !DHD_USE_CLMINFO_PARSER */
+#define CHECK_IS_BLOB(dhdp)		FALSE
+#define CHECK_IS_MULT_REGREV(dhdp)	TRUE
+#endif /* DHD_BLOB_EXISTENCE_CHECK && DHD_USE_CLMINFO_PARSER */
+
 #endif /* _dhd_h_ */

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,9 +19,9 @@
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
 #include "msm_sensor.h"
 #endif
+#include "msm_actuator_fpga.h"
 
 DEFINE_MSM_MUTEX(msm_actuator_mutex);
-
 #undef CDBG
 #ifdef MSM_ACTUATOR_DEBUG
 #define CDBG(fmt, args...) pr_err(fmt, ##args)
@@ -35,6 +35,8 @@ DEFINE_MSM_MUTEX(msm_actuator_mutex);
 #define MAX_QVALUE 4096
 
 static struct v4l2_file_operations msm_actuator_v4l2_subdev_fops;
+static int32_t msm_actuator_sleep_mode(struct msm_actuator_ctrl_t *a_ctrl);
+static int32_t msm_actuator_active_mode(struct msm_actuator_ctrl_t *a_ctrl);
 static int32_t msm_actuator_power_up(struct msm_actuator_ctrl_t *a_ctrl);
 static int32_t msm_actuator_power_down(struct msm_actuator_ctrl_t *a_ctrl);
 
@@ -55,7 +57,6 @@ static struct msm_actuator *actuators[] = {
 
 #if defined(CONFIG_SAMSUNG_OIS_RUMBA_S4) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S6)
 struct msm_actuator_ctrl_t *g_msm_actuator_t[2];
-extern int msm_ois_shift_calibration(uint16_t af_position);
 
 /***** for only ois selftest , set the actuator initial position to 256 *****/
 int16_t msm_actuator_move_for_ois_test(void)
@@ -98,6 +99,14 @@ int16_t msm_actuator_move_for_ois_test(void)
 }
 #endif
 
+#if defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
+extern int msm_ois_shift_calibration(uint16_t af_position);
+#endif
+
+#if defined(CONFIG_SAMSUNG_OIS_RUMBA_S6)
+extern int msm_ois_shift_calibration(uint16_t af_position, uint16_t subdev_id);
+#endif
+
 static int32_t msm_actuator_piezo_set_default_focus(
 	struct msm_actuator_ctrl_t *a_ctrl,
 	struct msm_actuator_move_params_t *move_params)
@@ -105,6 +114,11 @@ static int32_t msm_actuator_piezo_set_default_focus(
 	int32_t rc = 0;
 	struct msm_camera_i2c_reg_setting reg_setting;
 	CDBG("Enter\n");
+
+	if (a_ctrl->i2c_reg_tbl == NULL) {
+		pr_err("failed. i2c reg tabl is NULL");
+		return -EFAULT;
+	}
 
 	if (a_ctrl->curr_step_pos != 0) {
 		a_ctrl->i2c_tbl_index = 0;
@@ -143,6 +157,11 @@ static void msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 
 	if (a_ctrl == NULL) {
 		pr_err("failed. actuator ctrl is NULL");
+		return;
+	}
+
+	if (a_ctrl->i2c_reg_tbl == NULL) {
+		pr_err("failed. i2c reg tabl is NULL");
 		return;
 	}
 
@@ -565,6 +584,11 @@ static int32_t msm_actuator_piezo_move_focus(
 	struct msm_camera_i2c_reg_setting reg_setting;
 	CDBG("Enter\n");
 
+	if (a_ctrl->i2c_reg_tbl == NULL) {
+		pr_err("failed. i2c reg tabl is NULL");
+		return -EFAULT;
+	}
+
 	if (copy_from_user(&ringing_params_kernel,
 		&(move_params->ringing_params[0]),
 		sizeof(struct damping_params_t))) {
@@ -635,6 +659,11 @@ static int32_t msm_actuator_move_focus(
 		pr_err("Invalid direction = %d\n", dir);
 		return -EFAULT;
 	}
+
+	if (a_ctrl->i2c_reg_tbl == NULL) {
+		pr_err("failed. i2c reg tabl is NULL");
+		return -EFAULT;
+	}
 	if (dest_step_pos > a_ctrl->total_steps) {
 		pr_err("Step pos greater than total steps = %d\n",
 		dest_step_pos);
@@ -669,6 +698,8 @@ static int32_t msm_actuator_move_focus(
 		a_ctrl->curr_step_pos, dest_step_pos, curr_lens_pos);
 
 	while (a_ctrl->curr_step_pos != dest_step_pos) {
+		if (a_ctrl->curr_region_index >= a_ctrl->region_size)
+			break;
 		step_boundary =
 			a_ctrl->region_params[a_ctrl->curr_region_index].
 			step_bound[dir];
@@ -1330,12 +1361,14 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 
 	a_ctrl->region_size = set_info->af_tuning_params.region_size;
 	a_ctrl->pwd_step = set_info->af_tuning_params.pwd_step;
-	a_ctrl->total_steps = set_info->af_tuning_params.total_steps;
 
 	if (copy_from_user(&a_ctrl->region_params,
 		(void *)set_info->af_tuning_params.region_params,
-		a_ctrl->region_size * sizeof(struct region_params_t)))
-		return -EFAULT;
+		a_ctrl->region_size * sizeof(struct region_params_t))) {
+			pr_err("Error copying region_params\n");
+			return -EFAULT;
+	}
+
 
 	if (a_ctrl->act_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 		cci_client = a_ctrl->i2c_client.cci_client;
@@ -1366,6 +1399,7 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 		(a_ctrl->i2c_reg_tbl != NULL)) {
 		kfree(a_ctrl->i2c_reg_tbl);
 	}
+
 	a_ctrl->i2c_reg_tbl = NULL;
 	a_ctrl->i2c_reg_tbl =
 		kmalloc(sizeof(struct msm_camera_i2c_reg_array) *
@@ -1374,6 +1408,8 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 		pr_err("kmalloc fail\n");
 		return -ENOMEM;
 	}
+
+	a_ctrl->total_steps = set_info->af_tuning_params.total_steps;
 
 	if (copy_from_user(&a_ctrl->reg_tbl,
 		(void *)set_info->actuator_params.reg_tbl_params,
@@ -1417,9 +1453,10 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 				pr_err("Error actuator_init_focus\n");
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
 				if (rc == -EIO) {
-					if (!msm_is_sec_get_sensor_position(&hw_cam_position)) {
-						if (hw_cam_position != NULL) {
-							if (*hw_cam_position == BACK_CAMERA_B) {
+					msm_is_sec_get_sensor_position(&hw_cam_position);
+					if (hw_cam_position != NULL) {
+						switch(*hw_cam_position) {
+							case BACK_CAMERA_B:
 								if (!msm_is_sec_get_rear_hw_param(&hw_param)) {
 									if (hw_param != NULL) {
 										pr_err("[HWB_DBG][R][AF] Err\n");
@@ -1427,36 +1464,54 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 										hw_param->need_update_to_file = TRUE;
 									}
 								}
-							}
-							else if ((*hw_cam_position == FRONT_CAMERA_B) && !msm_is_sec_get_secure_mode(&hw_cam_secure)) {
-								if (hw_cam_secure != NULL) {
-									if (!(*hw_cam_secure)) {
-										if (!msm_is_sec_get_front_hw_param(&hw_param)) {
-											if (hw_param != NULL) {
-												pr_err("[HWB_DBG][F][AF] Err\n");
-												hw_param->i2c_af_err_cnt++;
-												hw_param->need_update_to_file = TRUE;
+								break;
 
+							case FRONT_CAMERA_B:
+								msm_is_sec_get_secure_mode(&hw_cam_secure);
+								if (hw_cam_secure != NULL) {
+									switch(*hw_cam_secure) {
+										case FALSE:
+											if (!msm_is_sec_get_front_hw_param(&hw_param)) {
+												if (hw_param != NULL) {
+													pr_err("[HWB_DBG][F][AF] Err\n");
+													hw_param->i2c_af_err_cnt++;
+													hw_param->need_update_to_file = TRUE;
+												}
 											}
-										}
-									}
-									else if ((*hw_cam_secure)) {
-										if (!msm_is_sec_get_iris_hw_param(&hw_param)) {
-											if (hw_param != NULL) {
-												pr_err("[HWB_DBG][I][AF] Err\n");
-												hw_param->i2c_af_err_cnt++;
-												hw_param->need_update_to_file = TRUE;
+											break;
+
+										case TRUE:
+											if (!msm_is_sec_get_iris_hw_param(&hw_param)) {
+												if (hw_param != NULL) {
+													pr_err("[HWB_DBG][I][AF] Err\n");
+													hw_param->i2c_af_err_cnt++;
+													hw_param->need_update_to_file = TRUE;
+												}
 											}
-										}
-									}
-									else {
-										//Check.
+											break;
+
+										default:
+											pr_err("[HWB_DBG][F_I][AF] Unsupport\n");
+											break;
 									}
 								}
-							}
-							else {
-								//Check.
-							}
+								break;
+
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+							case AUX_CAMERA_B:
+								if (!msm_is_sec_get_rear2_hw_param(&hw_param)) {
+									if (hw_param != NULL) {
+										pr_err("[HWB_DBG][R2][AF] Err\n");
+										hw_param->i2c_af_err_cnt++;
+										hw_param->need_update_to_file = TRUE;
+									}
+								}
+								break;
+#endif
+
+							default:
+								pr_err("[HWB_DBG][NON][AF] Unsupport\n");
+								break;
 						}
 					}
 				}
@@ -1488,12 +1543,14 @@ static int msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl)
 		pr_err("failed\n");
 		return -EINVAL;
 	}
+#if !defined(CONFIG_USE_ACTUATOR_FPGA)
 	if (a_ctrl->act_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 		rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_util(
 			&a_ctrl->i2c_client, MSM_CCI_INIT);
 		if (rc < 0)
 			pr_err("cci_init failed\n");
 	}
+#endif
 	a_ctrl->actuator_state = ACT_OPS_ACTIVE;
 	CDBG("Exit\n");
 	return rc;
@@ -1572,6 +1629,18 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 			pr_err("Failed actuator power up%d\n", rc);
 		break;
 
+	case CFG_ACTUATOR_ACTIVE:
+		rc = msm_actuator_active_mode(a_ctrl);
+		if (rc < 0)
+			pr_err("Failed actuator active mode %d\n", rc);
+		break;
+
+	case CFG_ACTUATOR_SLEEP:
+		rc = msm_actuator_sleep_mode(a_ctrl);
+		if (rc < 0)
+			pr_err("Failed actuator sleep mode %d\n", rc);
+		break;
+
 	default:
 		break;
 	}
@@ -1599,18 +1668,6 @@ static int32_t msm_actuator_get_subdev_id(struct msm_actuator_ctrl_t *a_ctrl,
 	return 0;
 }
 
-static struct msm_camera_i2c_fn_t msm_sensor_cci_func_tbl = {
-	.i2c_read = msm_camera_cci_i2c_read,
-	.i2c_read_seq = msm_camera_cci_i2c_read_seq,
-	.i2c_write = msm_camera_cci_i2c_write,
-	.i2c_write_table = msm_camera_cci_i2c_write_table,
-	.i2c_write_seq_table = msm_camera_cci_i2c_write_seq_table,
-	.i2c_write_table_w_microdelay =
-		msm_camera_cci_i2c_write_table_w_microdelay,
-	.i2c_util = msm_sensor_cci_i2c_util,
-	.i2c_poll =  msm_camera_cci_i2c_poll,
-};
-
 static struct msm_camera_i2c_fn_t msm_sensor_qup_func_tbl = {
 	.i2c_read = msm_camera_qup_i2c_read,
 	.i2c_read_seq = msm_camera_qup_i2c_read_seq,
@@ -1622,6 +1679,31 @@ static struct msm_camera_i2c_fn_t msm_sensor_qup_func_tbl = {
 	.i2c_poll = msm_camera_qup_i2c_poll,
 };
 
+#if defined(CONFIG_USE_ACTUATOR_FPGA)
+static struct msm_camera_i2c_fn_t msm_sensor_fpga_func_tbl = {
+	.i2c_read = msm_camera_fpga_i2c_read,
+	.i2c_read_seq = msm_camera_fpga_i2c_read_seq,
+	.i2c_write = msm_camera_fpga_i2c_write,
+	.i2c_write_table = msm_camera_fpga_i2c_write_table,
+	.i2c_write_seq_table = msm_camera_fpga_i2c_write_seq_table,
+	.i2c_write_table_w_microdelay =
+		msm_camera_fpga_i2c_write_table_w_microdelay,
+	.i2c_poll = msm_camera_fpga_i2c_poll,
+};
+#else
+static struct msm_camera_i2c_fn_t msm_sensor_cci_func_tbl = {
+	.i2c_read = msm_camera_cci_i2c_read,
+	.i2c_read_seq = msm_camera_cci_i2c_read_seq,
+	.i2c_write = msm_camera_cci_i2c_write,
+	.i2c_write_table = msm_camera_cci_i2c_write_table,
+	.i2c_write_seq_table = msm_camera_cci_i2c_write_seq_table,
+	.i2c_write_table_w_microdelay =
+		msm_camera_cci_i2c_write_table_w_microdelay,
+	.i2c_util = msm_sensor_cci_i2c_util,
+	.i2c_poll =  msm_camera_cci_i2c_poll,
+};
+#endif
+
 static int msm_actuator_close(struct v4l2_subdev *sd,
 	struct v4l2_subdev_fh *fh) {
 	int rc = 0;
@@ -1632,6 +1714,7 @@ static int msm_actuator_close(struct v4l2_subdev *sd,
 		return -EINVAL;
 	}
 	mutex_lock(a_ctrl->actuator_mutex);
+#if !defined(CONFIG_USE_ACTUATOR_FPGA)
 	if (a_ctrl->act_device_type == MSM_CAMERA_PLATFORM_DEVICE &&
 		a_ctrl->actuator_state != ACT_DISABLE_STATE) {
 		rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_util(
@@ -1639,6 +1722,7 @@ static int msm_actuator_close(struct v4l2_subdev *sd,
 		if (rc < 0)
 			pr_err("cci_init failed\n");
 	}
+#endif
 	kfree(a_ctrl->i2c_reg_tbl);
 	a_ctrl->i2c_reg_tbl = NULL;
 	a_ctrl->actuator_state = ACT_DISABLE_STATE;
@@ -1805,6 +1889,10 @@ static long msm_actuator_subdev_do_ioctl(
 			parg = &actuator_data;
 			break;
 		}
+		break;
+	case VIDIOC_MSM_ACTUATOR_CFG:
+		pr_err("%s: invalid cmd 0x%x received\n", __func__, cmd);
+		return -EINVAL;
 	}
 
 	rc = msm_actuator_subdev_ioctl(sd, cmd, parg);
@@ -1834,6 +1922,47 @@ static long msm_actuator_subdev_fops_ioctl(struct file *file, unsigned int cmd,
 	return video_usercopy(file, cmd, arg, msm_actuator_subdev_do_ioctl);
 }
 #endif
+
+static int32_t msm_actuator_sleep_mode(struct msm_actuator_ctrl_t *a_ctrl)
+{
+    int rc = 0;
+
+	CDBG("%s called\n", __func__);
+
+    rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(&a_ctrl->i2c_client, 0x02, 32, MSM_CAMERA_I2C_BYTE_DATA);
+	CDBG("[sleep_test] actuator sleep mode\n");
+    if (rc < 0) {
+        pr_err("actuator sleep mode failed, i2c fail\n");
+        rc = -1;
+    }
+
+    CDBG("Exit\n");
+    return rc;
+}
+
+static int32_t msm_actuator_active_mode(struct msm_actuator_ctrl_t *a_ctrl)
+{
+    int rc = 0;
+
+	CDBG("%s called\n", __func__);
+
+	rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(&a_ctrl->i2c_client, 0x00, 0xC8, MSM_CAMERA_I2C_BYTE_DATA);
+	if (rc < 0) {
+		pr_err("%s Failed I2C write Line %d\n", __func__, __LINE__);
+		return rc;
+	}
+	usleep_range(1000, 2000);
+
+    rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(&a_ctrl->i2c_client, 0x02, 0, MSM_CAMERA_I2C_BYTE_DATA);
+	CDBG("[sleep_test] actuator active mode\n");
+    if (rc < 0) {
+        pr_err("actuator active mode failed, i2c fail\n");
+        rc = -1;
+    }
+
+    CDBG("Exit\n");
+    return rc;
+}
 
 static int32_t msm_actuator_power_up(struct msm_actuator_ctrl_t *a_ctrl)
 {
@@ -2001,6 +2130,7 @@ static int32_t msm_actuator_platform_probe(struct platform_device *pdev)
 	struct msm_camera_cci_client *cci_client = NULL;
 	struct msm_actuator_ctrl_t *msm_actuator_t = NULL;
 	struct msm_actuator_vreg *vreg_cfg;
+
 	CDBG("Enter\n");
 
 	if (!pdev->dev.of_node) {
@@ -2043,6 +2173,8 @@ static int32_t msm_actuator_platform_probe(struct platform_device *pdev)
 			return rc;
 		}
 	}
+
+#if !defined(CONFIG_USE_ACTUATOR_FPGA)
 	rc = msm_sensor_driver_get_gpio_data(&(msm_actuator_t->gconf),
 		(&pdev->dev)->of_node);
 	if (rc < 0) {
@@ -2057,6 +2189,7 @@ static int32_t msm_actuator_platform_probe(struct platform_device *pdev)
 			msm_actuator_t->cam_pinctrl_status = 0;
 		}
 	}
+#endif
 
 	msm_actuator_t->act_v4l2_subdev_ops = &msm_actuator_subdev_ops;
 	msm_actuator_t->actuator_mutex = &msm_actuator_mutex;
@@ -2066,7 +2199,20 @@ static int32_t msm_actuator_platform_probe(struct platform_device *pdev)
 	msm_actuator_t->pdev = pdev;
 	/* Set device type as platform device */
 	msm_actuator_t->act_device_type = MSM_CAMERA_PLATFORM_DEVICE;
+
+#if defined(CONFIG_USE_ACTUATOR_FPGA)
+		if (pdev->id == 1) {
+			pr_info("%s, %d subcam actuator\n", __func__, __LINE__);
+			msm_actuator_t->i2c_client.dev_id = 0x0;
+		} else if (pdev->id == 2) {
+			pr_info("%s, %d vtcam actuator\n", __func__, __LINE__);
+			msm_actuator_t->i2c_client.dev_id = 0x1;
+		}
+		msm_actuator_t->i2c_client.i2c_func_tbl = &msm_sensor_fpga_func_tbl;
+#else
 	msm_actuator_t->i2c_client.i2c_func_tbl = &msm_sensor_cci_func_tbl;
+#endif
+
 	msm_actuator_t->i2c_client.cci_client = kzalloc(sizeof(
 		struct msm_camera_cci_client), GFP_KERNEL);
 	if (!msm_actuator_t->i2c_client.cci_client) {
@@ -2093,6 +2239,13 @@ static int32_t msm_actuator_platform_probe(struct platform_device *pdev)
 	msm_sd_register(&msm_actuator_t->msm_sd);
 	msm_actuator_t->actuator_state = ACT_DISABLE_STATE;
 	msm_cam_copy_v4l2_subdev_fops(&msm_actuator_v4l2_subdev_fops);
+
+#if defined(CONFIG_SAMSUNG_OIS_RUMBA_S6)
+	if (pdev->id == 0)
+		g_msm_actuator_t[0] = msm_actuator_t;
+	if (pdev->id == 1)
+		g_msm_actuator_t[1] = msm_actuator_t;
+#endif
 #ifdef CONFIG_COMPAT
 	msm_actuator_v4l2_subdev_fops.compat_ioctl32 =
 		msm_actuator_subdev_fops_ioctl;
@@ -2173,6 +2326,16 @@ static int32_t msm_actuator_hall_effect_init_focus(
 	int32_t rc = 0;
 
 	CDBG("%s [QTI] Enter %d\n", __func__, __LINE__);
+
+	rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+		&a_ctrl->i2c_client, 0x00, 0xC8,
+		MSM_CAMERA_I2C_BYTE_DATA);
+	if (rc < 0) {
+		pr_err("%s Failed I2C write Line %d\n", __func__, __LINE__);
+		return rc;
+	}
+	usleep_range(1000, 2000);
+
 	rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
 		&a_ctrl->i2c_client, 0x02, 0x00,
 		MSM_CAMERA_I2C_BYTE_DATA);
@@ -2297,9 +2460,14 @@ static int32_t msm_actuator_hall_effect_set_position(
 		pr_err("%s Failed I2C write Line %d\n", __func__, __LINE__);
 		return rc;
 	}
-#if defined(CONFIG_SAMSUNG_OIS_RUMBA_S4) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S6)
-        if (msm_ois_shift_calibration(set_pos->pos[0]) < 0)
-            pr_err("%s Failed to ois shift calibration %d\n", __func__, __LINE__);
+#if defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
+	if (msm_ois_shift_calibration(set_pos->pos[0]) < 0)
+		pr_err("%s Failed to ois shift calibration %d\n", __func__, __LINE__);
+#endif
+
+#if defined(CONFIG_SAMSUNG_OIS_RUMBA_S6)
+	if (msm_ois_shift_calibration(set_pos->pos[0], a_ctrl->cam_name) < 0)
+		pr_err("%s Failed to ois shift calibration %d\n", __func__, __LINE__);
 #endif
 
 	CDBG("%s exit %d\n", __func__, __LINE__);

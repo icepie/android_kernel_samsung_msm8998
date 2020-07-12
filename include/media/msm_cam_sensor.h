@@ -253,6 +253,7 @@ struct msm_ois_cfg_data32 {
 	int cfgtype;
 	uint16_t set_value;
 	compat_uptr_t version;
+	compat_uptr_t image_shift_cal;
 	compat_uptr_t ois_cal_info;
 	union {
 		struct msm_ois_set_info_t32 set_info;
@@ -319,6 +320,15 @@ struct companion_cfg_data32 {
 	uint16_t isDump;
 };
 
+struct msm_phone_fw_data_t32 {
+    compat_uptr_t valid_sensor_fw_info;
+    compat_uptr_t valid_companion_fw_info;
+    compat_uptr_t valid_ois_fw_info;
+    compat_uptr_t rear_sensor_fw_all;
+    compat_uptr_t companion_fw_all;
+    compat_uptr_t ois_fw_all;
+};
+
 #define VIDIOC_MSM_ACTUATOR_CFG32 \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 6, struct msm_actuator_cfg_data32)
 
@@ -351,6 +361,10 @@ struct companion_cfg_data32 {
 
 #define VIDIOC_MSM_IR_CUT_CFG32 \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 16, struct msm_ir_cut_cfg_data_t32)
+
+#define VIDIOC_MSM_PHONE_FW_INFO32 \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 17, struct msm_phone_fw_data_t32)
+
 #endif
 
 #endif

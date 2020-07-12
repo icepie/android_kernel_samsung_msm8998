@@ -223,16 +223,16 @@ static int sm5720_muic_irq_handler(muic_data_t *pmuic, int irq)
 		pr_err("%s: Ignore INTS, limit voltage \n", __func__);
 
 		switch (local_irq) {
-			case SM5720_MUIC_IRQ_INT3_QC20_ACCEPTED:
-			case SM5720_MUIC_IRQ_INT3_AFC_ERROR:
-			case SM5720_MUIC_IRQ_INT3_AFC_STA_CHG:
-			case SM5720_MUIC_IRQ_INT3_MULTI_BYTE:
-			case SM5720_MUIC_IRQ_INT3_VBUS_UPDATE:
-			case SM5720_MUIC_IRQ_INT3_AFC_ACCEPTED:
-			case SM5720_MUIC_IRQ_INT3_AFC_TA_ATTACHED:
-				return INT_REQ_DISCARD;
-			default:
-				break;
+		case SM5720_MUIC_IRQ_INT3_QC20_ACCEPTED:
+		case SM5720_MUIC_IRQ_INT3_AFC_ERROR:
+		case SM5720_MUIC_IRQ_INT3_AFC_STA_CHG:
+		case SM5720_MUIC_IRQ_INT3_MULTI_BYTE:
+		case SM5720_MUIC_IRQ_INT3_VBUS_UPDATE:
+		case SM5720_MUIC_IRQ_INT3_AFC_ACCEPTED:
+		case SM5720_MUIC_IRQ_INT3_AFC_TA_ATTACHED:
+			return INT_REQ_DISCARD;
+		default:
+			break;
 		}
 	}
 	else if(!pdata->afc_disable) {
@@ -269,7 +269,7 @@ static int sm5720_muic_irq_handler(muic_data_t *pmuic, int irq)
 			return INT_REQ_DISCARD;
 		}
 
-		if ((local_irq == SM5720_MUIC_IRQ_INT3_AFC_TA_ATTACHED)) {  /*AFC_TA_ATTACHED*/
+		if (local_irq == SM5720_MUIC_IRQ_INT3_AFC_TA_ATTACHED) {  /*AFC_TA_ATTACHED*/
 #if !defined(CONFIG_SEC_FACTORY)
 			/* To prevent damage by RP0 Cable, AFC should be progress after ccic_attach */
 			if (pmuic->is_ccic_attach) {
@@ -1010,6 +1010,9 @@ static int muic_probe(struct platform_device *pdev)
 
 	if (pmuic->pdata->init_switch_dev_cb)
 		pmuic->pdata->init_switch_dev_cb();
+
+	if (pmuic->pdata->init_cable_data_collect_cb)
+		pmuic->pdata->init_cable_data_collect_cb();
 
 	pr_info("  switch_sel : 0x%04x\n", get_switch_sel());
 

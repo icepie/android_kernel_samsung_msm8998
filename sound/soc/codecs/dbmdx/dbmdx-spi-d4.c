@@ -1,5 +1,5 @@
 /*
- * DSPG DBMD4/DBMD6 SPI interface driver
+ * DSPG DBMD4/DBMD6/DBMD8 SPI interface driver
  *
  * Copyright (C) 2014 DSP Group
  *
@@ -32,7 +32,8 @@
 #define DBMD4_MAX_SPI_BOOT_SPEED 4000000
 
 static const u8 clr_crc_cmd[] = {0x5A, 0x0F};
-static const u8 chng_pll_cmd[] = {0x5A, 0x10, 0, 0xEC, 0x0B, 00};
+static const u8 chng_pll_cmd_32k[] = {0x5A, 0x10, 0x00, 0xEC, 0x0B, 0x00};
+static const u8 chng_pll_cmd_24m[] = {0x5A, 0x10, 0x00, 0x04, 0x00, 0x00};
 
 
 
@@ -50,12 +51,20 @@ static int dbmd4_spi_boot(const void *fw_data, size_t fw_size,
 
 	dev_dbg(spi_p->dev, "%s\n", __func__);
 
-	while (retry--) {
+	do {
 
 		if (p->active_fw == DBMDX_FW_PRE_BOOT) {
 
-			/* reset DBMD4 chip */
-			p->reset_sequence(p);
+			if (!(p->boot_mode & DBMDX_BOOT_MODE_RESET_DISABLED)) {
+				/* reset DBMD4 chip */
+				p->reset_sequence(p);
+			} else {
+				/* If failed and reset is disabled, break */
+				if (retry != RETRY_COUNT) {
+					retry = -1;
+					break;
+				}
+			}
 
 			/* delay before sending commands */
 			if (p->clk_get_rate(p, DBMDX_CLK_MASTER) <= 32768)
@@ -72,7 +81,8 @@ static int dbmd4_spi_boot(const void *fw_data, size_t fw_size,
 			}
 
 			if ((spi->max_speed_hz > DBMD4_MAX_SPI_BOOT_SPEED) &&
-			(p->pdata->firmware_id == DBMDX_FIRMWARE_ID_DBMD4)) {
+			(p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD4) &&
+			!(p->cur_boot_options &	DBMDX_BOOT_OPT_DONT_SET_PLL)) {
 
 				ret = spi_set_speed(p, DBMDX_VA_SPEED_NORMAL);
 				if (ret < 0) {
@@ -81,14 +91,26 @@ static int dbmd4_spi_boot(const void *fw_data, size_t fw_size,
 					continue;
 				}
 
-				/* send CRC clear command */
-				ret = send_spi_data(p, chng_pll_cmd,
-					sizeof(chng_pll_cmd));
-				if (ret != sizeof(chng_pll_cmd)) {
-					dev_err(p->dev,
-						"%s: failed to clear CRC\n",
-						__func__);
-					continue;
+				/* Send change PLL command */
+				if (p->clk_get_rate(p, DBMDX_CLK_MASTER)
+					<= 32768) {
+					ret = send_spi_data(p, chng_pll_cmd_32k,
+						sizeof(chng_pll_cmd_32k));
+					if (ret != sizeof(chng_pll_cmd_32k)) {
+						dev_err(p->dev,
+						"%s: failed to change PLL\n",
+							__func__);
+						continue;
+					}
+				} else {
+					ret = send_spi_data(p, chng_pll_cmd_24m,
+						sizeof(chng_pll_cmd_24m));
+					if (ret != sizeof(chng_pll_cmd_24m)) {
+						dev_err(p->dev,
+						"%s: failed to change PLL\n",
+							__func__);
+						continue;
+					}
 				}
 				msleep(DBMDX_MSLEEP_SPI_D4_AFTER_PLL_CHANGE);
 
@@ -99,13 +121,30 @@ static int dbmd4_spi_boot(const void *fw_data, size_t fw_size,
 					continue;
 				}
 			}
-			/* send CRC clear command */
-			ret = send_spi_data(p, clr_crc_cmd,
-				sizeof(clr_crc_cmd));
-			if (ret != sizeof(clr_crc_cmd)) {
-				dev_err(p->dev, "%s: failed to clear CRC\n",
-					 __func__);
-				continue;
+			/* verify chip id */
+			if (p->cur_boot_options &
+				DBMDX_BOOT_OPT_VERIFY_CHIP_ID) {
+				ret = spi_verify_chip_id(p);
+				if (ret < 0) {
+					dev_err(spi_p->dev,
+						"%s: couldn't verify chip id\n",
+						__func__);
+					continue;
+				}
+			}
+
+			if (!(p->cur_boot_options &
+				DBMDX_BOOT_OPT_DONT_CLR_CRC)) {
+
+				/* send CRC clear command */
+				ret = send_spi_data(p, clr_crc_cmd,
+					sizeof(clr_crc_cmd));
+				if (ret != sizeof(clr_crc_cmd)) {
+					dev_err(p->dev,
+						"%s: failed to clear CRC\n",
+						__func__);
+					continue;
+				}
 			}
 		} else {
 			ret = send_spi_cmd_va(p,
@@ -132,7 +171,8 @@ static int dbmd4_spi_boot(const void *fw_data, size_t fw_size,
 		}
 
 		/* verify checksum */
-		if (checksum) {
+		if (checksum && !(p->cur_boot_options &
+					DBMDX_BOOT_OPT_DONT_VERIFY_CRC)) {
 			ret = spi_verify_boot_checksum(p, checksum, chksum_len);
 			if (ret < 0) {
 				dev_err(spi_p->dev,
@@ -146,19 +186,22 @@ static int dbmd4_spi_boot(const void *fw_data, size_t fw_size,
 		dev_info(p->dev, "%s: ---------> firmware loaded\n",
 			__func__);
 		break;
-	}
+	} while (--retry);
 
 	/* no retries left, failed to boot */
-	if (retry < 0) {
+	if (retry <= 0) {
 		dev_err(p->dev, "%s: failed to load firmware\n", __func__);
-		return -1;
+		return -EIO;
 	}
 
-	/* send boot command */
-	ret = send_spi_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
-	if (ret < 0) {
-		dev_err(p->dev, "%s: booting the firmware failed\n", __func__);
-		return -1;
+	if (!(p->cur_boot_options & DBMDX_BOOT_OPT_DONT_SEND_START_BOOT)) {
+		/* send boot command */
+		ret = send_spi_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
+		if (ret < 0) {
+			dev_err(p->dev,
+				"%s: booting the firmware failed\n", __func__);
+			return -EIO;
+		}
 	}
 
 
@@ -349,7 +392,7 @@ static int dbmd4_spi_switch_to_buffering_speed(struct dbmdx_private *p,
 
 	dev_dbg(spi_p->dev, "%s\n", __func__);
 
-	if (p->pdata->firmware_id == DBMDX_FIRMWARE_ID_DBMD4) {
+	if (p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD4) {
 		ret = dbmd4_spi_reset_post_pll_divider(p);
 
 		if (ret < 0) {
@@ -398,7 +441,7 @@ static int dbmd4_spi_switch_to_normal_speed(struct dbmdx_private *p,
 			__func__, ret);
 		return ret;
 	}
-	if (p->pdata->firmware_id == DBMDX_FIRMWARE_ID_DBMD4) {
+	if (p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD4) {
 
 		ret = dbmd4_spi_restore_post_pll_divider(p);
 
@@ -592,64 +635,68 @@ static int dbmd4_spi_probe(struct spi_device *client)
 	return rc;
 }
 
-static const struct of_device_id dbmd_4_6_spi_of_match[] = {
+static const struct of_device_id dbmd_4_8_spi_of_match[] = {
 	{ .compatible = "dspg,dbmd4-spi", },
 	{ .compatible = "dspg,dbmd6-spi", },
+	{ .compatible = "dspg,dbmd8-spi", },
 	{},
 };
 
 #ifdef CONFIG_SND_SOC_DBMDX
-MODULE_DEVICE_TABLE(of, dbmd_4_6_spi_of_match);
+MODULE_DEVICE_TABLE(of, dbmd_4_8_spi_of_match);
 #endif
 
-static const struct spi_device_id dbmd_4_6_spi_id[] = {
+static const struct spi_device_id dbmd_4_8_spi_id[] = {
 	{ "dbmdx-spi", 0 },
 	{ "dbmd4-spi", 0 },
 	{ "dbmd6-spi", 0 },
+	{ "dbmd8-spi", 0 },
 	{ }
 };
-MODULE_DEVICE_TABLE(spi, dbmd_4_6_spi_id);
+MODULE_DEVICE_TABLE(spi, dbmd_4_8_spi_id);
 
-static struct spi_driver dbmd_4_6_spi_driver = {
+static struct spi_driver dbmd_4_8_spi_driver = {
 	.driver = {
-		.name = "dbmd_4_6-spi",
+		.name = "dbmd_4_8-spi",
 		.bus	= &spi_bus_type,
 		.owner = THIS_MODULE,
-		.of_match_table = dbmd_4_6_spi_of_match,
+#ifdef CONFIG_OF
+		.of_match_table = dbmd_4_8_spi_of_match,
+#endif
 		.pm = &dbmdx_spi_pm,
 	},
 	.probe =    dbmd4_spi_probe,
 	.remove =   spi_common_remove,
-	.id_table = dbmd_4_6_spi_id,
+	.id_table = dbmd_4_8_spi_id,
 };
 
 #ifdef CONFIG_SND_SOC_DBMDX
-static int __init dbmd_4_6_modinit(void)
+static int __init dbmd_4_8_modinit(void)
 {
-	return spi_register_driver(&dbmd_4_6_spi_driver);
+	return spi_register_driver(&dbmd_4_8_spi_driver);
 }
-module_init(dbmd_4_6_modinit);
+module_init(dbmd_4_8_modinit);
 
-static void __exit dbmd_4_6_exit(void)
+static void __exit dbmd_4_8_exit(void)
 {
-	spi_unregister_driver(&dbmd_4_6_spi_driver);
+	spi_unregister_driver(&dbmd_4_8_spi_driver);
 }
-module_exit(dbmd_4_6_exit);
+module_exit(dbmd_4_8_exit);
 #else
 int dbmd4_spi_init_interface(void)
 {
-	spi_register_driver(&dbmd_4_6_spi_driver);
+	spi_register_driver(&dbmd_4_8_spi_driver);
 	return 0;
 }
 
 void  dbmd4_spi_deinit_interface(void)
 {
-	spi_unregister_driver(&dbmd_4_6_spi_driver);
+	spi_unregister_driver(&dbmd_4_8_spi_driver);
 }
 
 int (*dbmdx_init_interface)(void) = &dbmd4_spi_init_interface;
 void (*dbmdx_deinit_interface)(void) = &dbmd4_spi_deinit_interface;
 #endif
 
-MODULE_DESCRIPTION("DSPG DBMD4/DBMD6 spi interface driver");
+MODULE_DESCRIPTION("DSPG DBMD4/DBMD6/DBMD8 spi interface driver");
 MODULE_LICENSE("GPL");

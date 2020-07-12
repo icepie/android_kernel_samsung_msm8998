@@ -20,12 +20,14 @@ static inline void rwsem_set_owner(struct rw_semaphore *sem)
 {
 	WRITE_ONCE(sem->owner, current);
 	smp_wmb();
+	isb();
 }
 
 static inline void rwsem_clear_owner(struct rw_semaphore *sem)
 {
 	WRITE_ONCE(sem->owner, NULL);
 	smp_wmb();
+	isb();
 }
 
 static inline void rwsem_set_reader_owned(struct rw_semaphore *sem)

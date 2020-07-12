@@ -1454,6 +1454,7 @@ ctr_exit:
 	memset(reset_ice_key, 0, ICE_KEY_SIZE);
 	memset(reset_ice_salt, 0, ICE_SALT_SIZE);
 #endif
+
 	if (err)
 		req_crypt_dtr(ti);
 

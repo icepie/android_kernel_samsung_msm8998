@@ -35,6 +35,9 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/cpufreq_interactive.h>
 
+#define CONFIG_DYNAMIC_MODE_SUPPORT
+//#define CONFIG_DYNAMIC_MODE_SUPPORT_DEBUG
+
 struct cpufreq_interactive_policyinfo {
 	struct timer_list policy_timer;
 	struct timer_list policy_slack_timer;
@@ -93,6 +96,14 @@ static unsigned int default_above_hispeed_delay[] = {
 	DEFAULT_ABOVE_HISPEED_DELAY };
 
 static DEFINE_PER_CPU(unsigned int, cpu_util);
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+#define PERF_MODE 2
+#define SLOW_MODE 1
+#define NORMAL_MODE 0
+
+#define MAX_PARAM_SET 3 //* (PERF_MODE | SLOW_MODE | NORMAL_MODE) *//
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 struct cpufreq_interactive_tunables {
 	int usage_count;
@@ -162,6 +173,26 @@ struct cpufreq_interactive_tunables {
 
 	/* Whether to enable prediction or not */
 	bool enable_prediction;
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spinlock_t mode_lock;
+	spinlock_t param_index_lock;
+
+	unsigned int mode;
+	unsigned int old_mode;
+	unsigned int param_index;
+	unsigned int cur_param_index;
+
+	unsigned int *target_loads_set[MAX_PARAM_SET];
+	int ntarget_loads_set[MAX_PARAM_SET];
+
+	unsigned int *above_hispeed_delay_set[MAX_PARAM_SET];
+	int nabove_hispeed_delay_set[MAX_PARAM_SET];
+
+	unsigned int hispeed_freq_set[MAX_PARAM_SET];
+	unsigned long go_hispeed_load_set[MAX_PARAM_SET];
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
 };
 
 /* For cases where we have single governor instance for system */
@@ -421,14 +452,14 @@ static u64 update_load(int cpu)
 		ppol->policy->governor_data;
 	u64 now;
 	u64 now_idle;
-	unsigned int delta_idle;
-	unsigned int delta_time;
+	u64 delta_idle;
+	u64 delta_time;
 	u64 active_time;
 	unsigned int cur_load = 0;
 
 	now_idle = get_cpu_idle_time(cpu, &now, tunables->io_is_busy);
-	delta_idle = (unsigned int)(now_idle - pcpu->time_in_idle);
-	delta_time = (unsigned int)(now - pcpu->time_in_idle_timestamp);
+	delta_idle = (now_idle - pcpu->time_in_idle);
+	delta_time = (now - pcpu->time_in_idle_timestamp);
 
 	if (delta_time <= delta_idle)
 		active_time = 0;
@@ -458,6 +489,55 @@ static unsigned int sl_busy_to_laf(struct cpufreq_interactive_policyinfo *ppol,
 	return prev_load;
 }
 
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+
+static void set_new_param_set(unsigned int index, struct cpufreq_interactive_tunables *tunables)
+{
+	unsigned long flags;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT_DEBUG
+	int i;
+	int j;
+#endif
+	tunables->hispeed_freq = tunables->hispeed_freq_set[index];
+	tunables->go_hispeed_load = tunables->go_hispeed_load_set[index];
+
+	spin_lock_irqsave(&tunables->target_loads_lock, flags);
+	tunables->target_loads = tunables->target_loads_set[index];
+	tunables->ntarget_loads = tunables->ntarget_loads_set[index];
+	spin_unlock_irqrestore(&tunables->target_loads_lock, flags);
+
+	spin_lock_irqsave(&tunables->above_hispeed_delay_lock, flags);
+	tunables->above_hispeed_delay =
+		tunables->above_hispeed_delay_set[index];
+	tunables->nabove_hispeed_delay =
+		tunables->nabove_hispeed_delay_set[index];
+	spin_unlock_irqrestore(&tunables->above_hispeed_delay_lock, flags);
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT_DEBUG
+	printk("change to idx:%u\n", index);
+	for(i=0; i<MAX_PARAM_SET;i++){
+		printk("target_loads[%d]=", i);
+		for(j=0; j < tunables->ntarget_loads_set[i]; j++) printk("%u:", tunables->target_loads_set[i][j]);
+		printk("\n");
+		printk("above_hispeed_delay[%d]=", i);
+		for(j=0; j < tunables->nabove_hispeed_delay_set[i]; j++) printk("%u:", tunables->above_hispeed_delay_set[i][j]);
+		printk("\n");
+		printk("hispeed_freq[%d]:%u, go_hispeed_load[%d]:%lu\n", i, tunables->hispeed_freq_set[i], i, tunables->go_hispeed_load_set[i]);
+	}
+#endif
+	tunables->cur_param_index = index;
+}
+
+static void enter_mode(struct cpufreq_interactive_tunables *tunables)
+{
+	set_new_param_set(tunables->mode, tunables);
+}
+
+static void exit_mode(struct cpufreq_interactive_tunables *tunables)
+{
+	set_new_param_set(0, tunables);
+}
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
 #define NEW_TASK_RATIO 75
 #define PRED_TOLERANCE_PCT 10
 static void cpufreq_interactive_timer(unsigned long data)
@@ -486,6 +566,10 @@ static void cpufreq_interactive_timer(unsigned long data)
 	bool skip_hispeed_logic, skip_min_sample_time;
 	bool jump_to_max_no_ts = false;
 	bool jump_to_max = false;
+	bool start_hyst = true;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	unsigned long flags2;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 	if (!down_read_trylock(&ppol->enable_sem))
 		return;
@@ -497,7 +581,7 @@ static void cpufreq_interactive_timer(unsigned long data)
 	spin_lock_irqsave(&ppol->target_freq_lock, flags);
 	spin_lock(&ppol->load_lock);
 
-	skip_hispeed_logic = tunables->enable_prediction ? true :
+	skip_hispeed_logic =
 		tunables->ignore_hispeed_on_notif && ppol->notif_pending;
 	skip_min_sample_time = tunables->fast_ramp_down && ppol->notif_pending;
 	ppol->notif_pending = false;
@@ -562,6 +646,18 @@ static void cpufreq_interactive_timer(unsigned long data)
 	}
 	spin_unlock(&ppol->load_lock);
 
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	if(tunables->old_mode != tunables->mode){
+		if(tunables->mode & PERF_MODE || tunables->mode & SLOW_MODE)
+			enter_mode(tunables);
+		else
+			exit_mode(tunables);
+	}
+	tunables->old_mode = tunables->mode;
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
 	tunables->boosted = tunables->boost_val || now < tunables->boostpulse_endtime;
 
 	prev_chfreq = choose_freq(ppol, prev_laf);
@@ -597,8 +693,12 @@ static void cpufreq_interactive_timer(unsigned long data)
 	}
 
 	if (now - ppol->max_freq_hyst_start_time <
-	    tunables->max_freq_hysteresis)
+	    tunables->max_freq_hysteresis) {
+		if (new_freq < ppol->policy->max &&
+				ppol->policy->max <= tunables->hispeed_freq)
+			start_hyst = false;
 		new_freq = max(tunables->hispeed_freq, new_freq);
+	}
 
 	if (!skip_hispeed_logic &&
 	    ppol->target_freq >= tunables->hispeed_freq &&
@@ -655,7 +755,7 @@ static void cpufreq_interactive_timer(unsigned long data)
 		ppol->floor_validate_time = now;
 	}
 
-	if (new_freq >= ppol->policy->max && !jump_to_max_no_ts)
+	if (start_hyst && new_freq >= ppol->policy->max && !jump_to_max_no_ts)
 		ppol->max_freq_hyst_start_time = now;
 
 	if (ppol->target_freq == new_freq &&
@@ -942,12 +1042,22 @@ static ssize_t show_target_loads(
 	int i;
 	ssize_t ret = 0;
 	unsigned long flags;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	unsigned long flags2;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 	spin_lock_irqsave(&tunables->target_loads_lock, flags);
-
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	for (i = 0; i < tunables->ntarget_loads_set[tunables->param_index]; i++)
+		ret += sprintf(buf + ret, "%u%s", tunables->target_loads_set[tunables->param_index][i],
+			       i & 0x1 ? ":" : " ");
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#else
 	for (i = 0; i < tunables->ntarget_loads; i++)
 		ret += sprintf(buf + ret, "%u%s", tunables->target_loads[i],
 			       i & 0x1 ? ":" : " ");
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 	sprintf(buf + ret - 1, "\n");
 	spin_unlock_irqrestore(&tunables->target_loads_lock, flags);
@@ -961,17 +1071,39 @@ static ssize_t store_target_loads(
 	int ntokens;
 	unsigned int *new_target_loads = NULL;
 	unsigned long flags;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	unsigned long flags2;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 	new_target_loads = get_tokenized_data(buf, &ntokens);
 	if (IS_ERR(new_target_loads))
 		return PTR_RET(new_target_loads);
 
 	spin_lock_irqsave(&tunables->target_loads_lock, flags);
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	if (tunables->target_loads_set[tunables->param_index] != default_target_loads)
+		kfree(tunables->target_loads_set[tunables->param_index]);
+	tunables->target_loads_set[tunables->param_index] = new_target_loads;
+	tunables->ntarget_loads_set[tunables->param_index] = ntokens;
+	if (tunables->cur_param_index == tunables->param_index) {
+		tunables->target_loads = new_target_loads;
+		tunables->ntarget_loads = ntokens;
+	}
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#else
 	if (tunables->target_loads != default_target_loads)
 		kfree(tunables->target_loads);
 	tunables->target_loads = new_target_loads;
 	tunables->ntarget_loads = ntokens;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 	spin_unlock_irqrestore(&tunables->target_loads_lock, flags);
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	set_new_param_set(tunables->mode, tunables);
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 	sched_update_freq_max_load(&controlled_cpus);
 
@@ -984,14 +1116,23 @@ static ssize_t show_above_hispeed_delay(
 	int i;
 	ssize_t ret = 0;
 	unsigned long flags;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	unsigned long flags2;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 	spin_lock_irqsave(&tunables->above_hispeed_delay_lock, flags);
-
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	for (i = 0; i < tunables->nabove_hispeed_delay_set[tunables->param_index]; i++)
+		ret += sprintf(buf + ret, "%u%s", tunables->above_hispeed_delay_set[tunables->param_index][i],
+			       i & 0x1 ? ":" : " ");
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#else
 	for (i = 0; i < tunables->nabove_hispeed_delay; i++)
 		ret += sprintf(buf + ret, "%u%s",
 			       tunables->above_hispeed_delay[i],
 			       i & 0x1 ? ":" : " ");
-
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 	sprintf(buf + ret - 1, "\n");
 	spin_unlock_irqrestore(&tunables->above_hispeed_delay_lock, flags);
 	return ret;
@@ -1004,17 +1145,40 @@ static ssize_t store_above_hispeed_delay(
 	int ntokens;
 	unsigned int *new_above_hispeed_delay = NULL;
 	unsigned long flags;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	unsigned long flags2;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 	new_above_hispeed_delay = get_tokenized_data(buf, &ntokens);
 	if (IS_ERR(new_above_hispeed_delay))
 		return PTR_RET(new_above_hispeed_delay);
 
 	spin_lock_irqsave(&tunables->above_hispeed_delay_lock, flags);
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	if (tunables->above_hispeed_delay_set[tunables->param_index] != default_above_hispeed_delay)
+		kfree(tunables->above_hispeed_delay_set[tunables->param_index]);
+	tunables->above_hispeed_delay_set[tunables->param_index] = new_above_hispeed_delay;
+	tunables->nabove_hispeed_delay_set[tunables->param_index] = ntokens;
+	if (tunables->cur_param_index == tunables->param_index) {
+		tunables->above_hispeed_delay = new_above_hispeed_delay;
+		tunables->nabove_hispeed_delay = ntokens;
+	}
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#else
 	if (tunables->above_hispeed_delay != default_above_hispeed_delay)
 		kfree(tunables->above_hispeed_delay);
 	tunables->above_hispeed_delay = new_above_hispeed_delay;
 	tunables->nabove_hispeed_delay = ntokens;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 	spin_unlock_irqrestore(&tunables->above_hispeed_delay_lock, flags);
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	set_new_param_set(tunables->mode, tunables);
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
 	return count;
 
 }
@@ -1022,7 +1186,11 @@ static ssize_t store_above_hispeed_delay(
 static ssize_t show_hispeed_freq(struct cpufreq_interactive_tunables *tunables,
 		char *buf)
 {
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	return sprintf(buf, "%u\n", tunables->hispeed_freq_set[tunables->param_index]);
+#else
 	return sprintf(buf, "%u\n", tunables->hispeed_freq);
+#endif
 }
 
 static ssize_t store_hispeed_freq(struct cpufreq_interactive_tunables *tunables,
@@ -1030,11 +1198,29 @@ static ssize_t store_hispeed_freq(struct cpufreq_interactive_tunables *tunables,
 {
 	int ret;
 	long unsigned int val;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	unsigned long flags2;
+#endif
 
 	ret = kstrtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	tunables->hispeed_freq_set[tunables->param_index] = val;
+	if (tunables->cur_param_index == tunables->param_index)
+		tunables->hispeed_freq = val;
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#else
 	tunables->hispeed_freq = val;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	set_new_param_set(tunables->mode, tunables);
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
 	return count;
 }
 
@@ -1066,7 +1252,11 @@ show_store_one(enable_prediction);
 static ssize_t show_go_hispeed_load(struct cpufreq_interactive_tunables
 		*tunables, char *buf)
 {
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	return sprintf(buf, "%lu\n", tunables->go_hispeed_load_set[tunables->param_index]);
+#else
 	return sprintf(buf, "%lu\n", tunables->go_hispeed_load);
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 }
 
 static ssize_t store_go_hispeed_load(struct cpufreq_interactive_tunables
@@ -1074,11 +1264,29 @@ static ssize_t store_go_hispeed_load(struct cpufreq_interactive_tunables
 {
 	int ret;
 	unsigned long val;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	unsigned long flags2;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
 
 	ret = kstrtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	tunables->go_hispeed_load_set[tunables->param_index] = val;
+	if (tunables->cur_param_index == tunables->param_index)
+		tunables->go_hispeed_load = val;
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#else
 	tunables->go_hispeed_load = val;
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_irqsave(&tunables->mode_lock, flags2);
+	set_new_param_set(tunables->mode, tunables);
+	spin_unlock_irqrestore(&tunables->mode_lock, flags2);
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
 	return count;
 }
 
@@ -1421,6 +1629,35 @@ static ssize_t show_cpu_util(struct cpufreq_interactive_tunables
  * - sys: One governor instance for complete SYSTEM
  * - pol: One governor instance per struct cpufreq_policy
  */
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+#define index(file_name)					\
+static ssize_t show_##file_name(			\
+				struct cpufreq_interactive_tunables *tunables, char *buf)	\
+{									\
+	return sprintf(buf, "%u\n", tunables->file_name);				\
+}									\
+									\
+static ssize_t store_##file_name(						\
+		struct cpufreq_interactive_tunables *tunables,		\
+		const char *buf, size_t count)				\
+{									\
+        int ret;							\
+        long unsigned int val;						\
+									\
+        ret = kstrtoul(buf, 0, &val);				\
+        if (ret < 0)							\
+                return ret;						\
+									\
+	val &= NORMAL_MODE | SLOW_MODE | PERF_MODE;			\
+        tunables->file_name = val;							\
+        return count;							\
+}									\
+
+index(mode);
+index(param_index);
+#endif /* CONFIG_DYNAMIC_MODE_SUPPORT */
+
 #define show_gov_pol_sys(file_name)					\
 static ssize_t show_##file_name##_gov_sys				\
 (struct kobject *kobj, struct attribute *attr, char *buf)		\
@@ -1471,6 +1708,10 @@ show_store_gov_pol_sys(ignore_hispeed_on_notif);
 show_store_gov_pol_sys(fast_ramp_down);
 show_gov_pol_sys(cpu_util);
 show_store_gov_pol_sys(enable_prediction);
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+show_store_gov_pol_sys(mode);
+show_store_gov_pol_sys(param_index);
+#endif
 
 #define gov_sys_attr_rw(_name)						\
 static struct global_attr _name##_gov_sys =				\
@@ -1501,6 +1742,10 @@ gov_sys_pol_attr_rw(align_windows);
 gov_sys_pol_attr_rw(ignore_hispeed_on_notif);
 gov_sys_pol_attr_rw(fast_ramp_down);
 gov_sys_pol_attr_rw(enable_prediction);
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+gov_sys_pol_attr_rw(mode);
+gov_sys_pol_attr_rw(param_index);
+#endif
 
 static struct global_attr boostpulse_gov_sys =
 	__ATTR(boostpulse, 0200, NULL, store_boostpulse_gov_sys);
@@ -1534,6 +1779,10 @@ static struct attribute *interactive_attributes_gov_sys[] = {
 	&fast_ramp_down_gov_sys.attr,
 	&cpu_util_gov_sys.attr,
 	&enable_prediction_gov_sys.attr,
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	&mode_gov_sys.attr,
+	&param_index_gov_sys.attr,
+#endif
 	NULL,
 };
 
@@ -1563,6 +1812,10 @@ static struct attribute *interactive_attributes_gov_pol[] = {
 	&fast_ramp_down_gov_pol.attr,
 	&cpu_util_gov_pol.attr,
 	&enable_prediction_gov_pol.attr,
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	&mode_gov_pol.attr,
+	&param_index_gov_pol.attr,
+#endif
 	NULL,
 };
 
@@ -1583,6 +1836,28 @@ static void cpufreq_interactive_nop_timer(unsigned long data)
 {
 }
 
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+static void cpufreq_param_set_init(struct cpufreq_interactive_tunables *tunables)
+{
+	unsigned int i;
+	unsigned long flags;
+
+	spin_lock_irqsave(&tunables->mode_lock, flags);
+	for (i=0 ; i<MAX_PARAM_SET; i++) {
+		tunables->hispeed_freq_set[i] = 0;
+		tunables->go_hispeed_load_set[i] = tunables->go_hispeed_load;
+
+		tunables->target_loads_set[i] = tunables->target_loads;
+		tunables->ntarget_loads_set[i] = tunables->ntarget_loads;
+
+		tunables->above_hispeed_delay_set[i] = tunables->above_hispeed_delay;
+		tunables->nabove_hispeed_delay_set[i] = tunables->nabove_hispeed_delay;
+
+	}
+	spin_unlock_irqrestore(&tunables->mode_lock, flags);
+}
+#endif
+
 static struct cpufreq_interactive_tunables *alloc_tunable(
 					struct cpufreq_policy *policy)
 {
@@ -1602,6 +1877,11 @@ static struct cpufreq_interactive_tunables *alloc_tunable(
 	tunables->timer_rate = DEFAULT_TIMER_RATE;
 	tunables->boostpulse_duration_val = DEFAULT_MIN_SAMPLE_TIME;
 	tunables->timer_slack_val = DEFAULT_TIMER_SLACK;
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	spin_lock_init(&tunables->mode_lock);
+	cpufreq_param_set_init(tunables);
+#endif
 
 	spin_lock_init(&tunables->target_loads_lock);
 	spin_lock_init(&tunables->above_hispeed_delay_lock);
@@ -1678,6 +1958,9 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 		unsigned int event)
 {
 	int rc;
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+	unsigned int j;
+#endif
 	struct cpufreq_interactive_policyinfo *ppol;
 	struct cpufreq_frequency_table *freq_table;
 	struct cpufreq_interactive_tunables *tunables;
@@ -1774,6 +2057,12 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 		freq_table = cpufreq_frequency_get_table(policy->cpu);
 		if (!tunables->hispeed_freq)
 			tunables->hispeed_freq = policy->max;
+
+#ifdef CONFIG_DYNAMIC_MODE_SUPPORT
+		for (j=0 ; j<MAX_PARAM_SET ; j++)
+			if (!tunables->hispeed_freq_set[j])
+				tunables->hispeed_freq_set[j] = policy->max;
+#endif
 
 		ppol = per_cpu(polinfo, policy->cpu);
 		ppol->policy = policy;

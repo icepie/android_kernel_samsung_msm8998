@@ -123,6 +123,11 @@ static int input_leds_connect(struct input_handler *handler,
 
 		if (!input_led_info[led_code].name)
 			continue;
+		if (led_no >= num_leds)
+			break;
+
+		led->handle = &leds->handle;
+		led->code = led_code;
 
 		if (led_no >= num_leds)
 			break;

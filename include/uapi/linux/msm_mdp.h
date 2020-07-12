@@ -118,6 +118,8 @@
 #define MDSS_MDP_HW_REV_116	MDSS_MDP_REV(1, 16, 0) /* msmtitanium */
 #define MDSS_MDP_HW_REV_300	MDSS_MDP_REV(3, 0, 0)  /* msm8998 */
 #define MDSS_MDP_HW_REV_301	MDSS_MDP_REV(3, 0, 1)  /* msm8998 v1.0 */
+#define MDSS_MDP_HW_REV_320	MDSS_MDP_REV(3, 2, 0)  /* sdm660 */
+#define MDSS_MDP_HW_REV_330	MDSS_MDP_REV(3, 3, 0)  /* sdm630 */
 
 enum {
 	NOTIFY_UPDATE_INIT,
@@ -1413,11 +1415,15 @@ enum mdp_color_space {
 	MDP_CSC_ITU_R_601,
 	MDP_CSC_ITU_R_601_FR,
 	MDP_CSC_ITU_R_709,
-	MDP_CSC_ITU_R_2020,	
-	MDP_CSC_ITU_R_2020_FR,	
-	MDP_CSC_ITU_R_P3,
-	MDP_CSC_ITU_R_P3_FR,
 };
+
+/*
+* These definitions are a continuation of the mdp_color_space enum above
+*/
+#define MDP_CSC_ITU_R_2020 (MDP_CSC_ITU_R_709 + 1)
+#define MDP_CSC_ITU_R_2020_FR (MDP_CSC_ITU_R_2020 + 1)
+#define MDP_CSC_ITU_R_P3 (MDP_CSC_ITU_R_2020_FR + 1)
+#define MDP_CSC_ITU_R_P3_FR (MDP_CSC_ITU_R_P3 + 1)
 
 enum {
 	mdp_igc_v1_7 = 1,

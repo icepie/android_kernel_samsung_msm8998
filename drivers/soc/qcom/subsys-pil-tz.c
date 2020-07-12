@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,6 +25,7 @@
 #include <linux/msm-bus-board.h>
 #include <linux/msm-bus.h>
 #include <linux/dma-mapping.h>
+#include <linux/highmem.h>
 
 #include <soc/qcom/subsystem_restart.h>
 #include <soc/qcom/ramdump.h>
@@ -33,6 +34,9 @@
 #include <soc/qcom/smem.h>
 
 #include "peripheral-loader.h"
+#ifdef CONFIG_SENSORS_SSC
+#include <linux/adsp/ssc_ssr_reason.h>
+#endif
 
 #define XO_FREQ			19200000
 #define PROXY_TIMEOUT_MS	10000
@@ -45,6 +49,10 @@
 
 #define desc_to_data(d) container_of(d, struct pil_tz_data, desc)
 #define subsys_to_data(d) container_of(d, struct pil_tz_data, subsys_desc)
+
+#ifdef CONFIG_SENSORS_SSC
+#define SSR_WITHOUT_PANIC 99
+#endif
 
 /**
  * struct reg_info - regulator info
@@ -613,6 +621,10 @@ static int pil_init_image_trusted(struct pil_desc *pil,
 		return -ENOMEM;
 	}
 
+	/* Make sure there are no mappings in PKMAP and fixmap */
+	kmap_flush_unused();
+	kmap_atomic_flush_unused();
+
 	memcpy(mdata_buf, metadata, size);
 
 	request.proc = d->pas_id;
@@ -817,6 +829,13 @@ static void log_failure_reason(const struct pil_tz_data *d)
 	strlcpy(reason, smem_reason, min(size, MAX_SSR_REASON_LEN));
 	pr_err("%s subsystem failure reason: %s.\n", name, reason);
 
+#ifdef CONFIG_SENSORS_SSC
+	if (!strncmp(name, "slpi", 4))
+		ssr_reason_call_back(reason, min(size, MAX_SSR_REASON_LEN));
+	if (!strcmp(name, "slpi") && (strstr(reason, "force_reset") != NULL))
+		subsys_set_ssr_reason(d->subsys, SSR_WITHOUT_PANIC);
+#endif
+
 	smem_reason[0] = '\0';
 	wmb();
 }
@@ -862,7 +881,7 @@ static int subsys_ramdump(int enable, const struct subsys_desc *subsys)
 	if (!enable)
 		return 0;
 
-	return pil_do_ramdump(&d->desc, d->ramdump_dev);
+	return pil_do_ramdump(&d->desc, d->ramdump_dev, NULL);
 }
 
 static void subsys_free_memory(const struct subsys_desc *subsys)
@@ -896,7 +915,7 @@ static irqreturn_t subsys_err_fatal_intr_handler (int irq, void *dev_id)
 #ifdef CONFIG_SENSORS_SSC
 	subsys_set_ssr_reason(d->subsys, SSR_ERROR_FATAL);
 #endif
-	subsys_set_crash_status(d->subsys, true);
+	subsys_set_crash_status(d->subsys, CRASH_STATUS_ERR_FATAL);
 	log_failure_reason(d);
 	subsystem_restart_dev(d->subsys);
 
@@ -918,7 +937,7 @@ static irqreturn_t subsys_wdog_bite_irq_handler(int irq, void *dev_id)
 #ifdef CONFIG_SENSORS_SSC
 	subsys_set_ssr_reason(d->subsys, SSR_WDOG_BITE);
 #endif
-	subsys_set_crash_status(d->subsys, true);
+	subsys_set_crash_status(d->subsys, CRASH_STATUS_WDOG_BITE);
 	log_failure_reason(d);
 	subsystem_restart_dev(d->subsys);
 
@@ -936,7 +955,7 @@ static irqreturn_t subsys_stop_ack_intr_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static void check_pbl_done(struct pil_tz_data *d)
+static void clear_pbl_done(struct pil_tz_data *d)
 {
 	uint32_t err_value;
 
@@ -963,20 +982,21 @@ static void check_pbl_done(struct pil_tz_data *d)
 	__raw_writel(BIT(d->bits_arr[PBL_DONE]), d->irq_clear);
 }
 
-static void check_err_ready(struct pil_tz_data *d)
+static void clear_err_ready(struct pil_tz_data *d)
 {
-	uint32_t err_value;
-
-	err_value =  __raw_readl(d->err_status_spare);
-	if (!err_value) {
-		pr_debug("Subsystem error services up received from %s!\n",
+	pr_debug("Subsystem error services up received from %s!\n",
 							d->subsys_desc.name);
-		__raw_writel(BIT(d->bits_arr[ERR_READY]), d->irq_clear);
-		complete_err_ready(d->subsys);
-	} else if (err_value == 0x44554d50) {
+	__raw_writel(BIT(d->bits_arr[ERR_READY]), d->irq_clear);
+	complete_err_ready(d->subsys);
+}
+
+static void clear_wdog(struct pil_tz_data *d)
+{
+	/* Check crash status to know if device is restarting*/
+	if (!subsys_get_crash_status(d->subsys)) {
 		pr_err("wdog bite received from %s!\n", d->subsys_desc.name);
 		__raw_writel(BIT(d->bits_arr[ERR_READY]), d->irq_clear);
-		subsys_set_crash_status(d->subsys, true);
+		subsys_set_crash_status(d->subsys, CRASH_STATUS_WDOG_BITE);
 		log_failure_reason(d);
 		subsystem_restart_dev(d->subsys);
 	}
@@ -985,17 +1005,21 @@ static void check_err_ready(struct pil_tz_data *d)
 static irqreturn_t subsys_generic_handler(int irq, void *dev_id)
 {
 	struct pil_tz_data *d = subsys_to_data(dev_id);
-	uint32_t status_val;
+	uint32_t status_val, err_value;
 
-	if (subsys_get_crash_status(d->subsys))
-		return IRQ_HANDLED;
-
+	err_value =  __raw_readl(d->err_status_spare);
 	status_val = __raw_readl(d->irq_status);
 
-	if (status_val & BIT(d->bits_arr[ERR_READY]))
-		check_err_ready(d);
-	else if (status_val & BIT(d->bits_arr[PBL_DONE]))
-		check_pbl_done(d);
+	if ((status_val & BIT(d->bits_arr[ERR_READY])) && !err_value)
+		clear_err_ready(d);
+
+	if ((status_val & BIT(d->bits_arr[ERR_READY])) &&
+					err_value == 0x44554d50)
+		clear_wdog(d);
+
+	if (status_val & BIT(d->bits_arr[PBL_DONE]))
+		clear_pbl_done(d);
+
 	return IRQ_HANDLED;
 }
 
@@ -1049,6 +1073,7 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 	d->desc.ops = &pil_ops_trusted;
 
 	d->desc.proxy_timeout = PROXY_TIMEOUT_MS;
+	d->desc.clear_fw_region = true;
 
 	rc = of_property_read_u32(pdev->dev.of_node, "qcom,proxy-timeout-ms",
 					&proxy_timeout);
@@ -1058,7 +1083,7 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 	if (!d->subsys_desc.no_auth) {
 		rc = piltz_resc_init(pdev, d);
 		if (rc)
-			return -ENOENT;
+			return rc;
 
 		rc = of_property_read_u32(pdev->dev.of_node, "qcom,pas-id",
 								&d->pas_id);
@@ -1127,6 +1152,7 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 		rc = PTR_ERR(d->subsys);
 		goto err_subsys;
 	}
+	d->desc.subsys_dev = d->subsys;
 
 	return 0;
 err_subsys:

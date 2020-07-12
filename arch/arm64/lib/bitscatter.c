@@ -41,13 +41,13 @@ MODULE_DESCRIPTION("bitScatter: probabilistic logic probing hardware robustness"
  **/
 #define NR_INFINITE	0x7FFFFFFF
 #define MAX_THREAD	8
+#define MAX_SPACE	(0x8000 * PAGE_SIZE)
 
 #define HOOK_SIZE	(0x200)
 #define HOOK_DEGREE	12
 
 #define BURST_TEST	NR_INFINITE
-#define	BURST_SIZE	(0x4000 * PAGE_SIZE)
-#define BURST_DEGREE	29
+#define	BURST_SIZE	MAX_SPACE
 #define BURST_THREAD	4
 
 /**
@@ -55,9 +55,10 @@ MODULE_DESCRIPTION("bitScatter: probabilistic logic probing hardware robustness"
  **/
 typedef enum {
 	UNINIT		= 0,
-	IDLING		= 1,
-	RUNNING		= 2,
-	HOOKING		= 3,
+	IDLING		= (1UL << 0),
+	RUNNING		= (1UL << 1),
+	HOOKING		= (1UL << 2),
+	MIXING		= (1UL << 1) | (1UL << 2)
 } bs_state_t;
 
 /**
@@ -230,7 +231,7 @@ static int bitscatterd(void *arg)
 
 		/* State transition to RUNNING */
 		spin_lock(&bs_inst->lock);
-		bs_inst->state = RUNNING;
+		bs_inst->state |= RUNNING;
 		spin_unlock(&bs_inst->lock);
 
 		/* nr_test can be overrided by an user request.
@@ -290,19 +291,25 @@ static int run_bitscatter(const char *val, struct kernel_param *kp)
 
 	/**
 	 * 'val' defines test mode.
+	 * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 	 * """burst mode"""
-	 *   -
-	 *   -
+	 *   the entire test consumes a relatively huge space.
+	 *   memory size, number of threads, number of tests is configurable.
 	 *
 	 * """hook mode"""
-	 *   - instant test mode consuming local task stack.
-	 *   - no configuration can override the preset for this mode.
+	 *   instant test mode consuming local task stack.
+	 *   no configuration can override the preset for this mode.
+	 *
+	 * """mixed mode"""
+	 *   both burst mode and hook mode are simultaneously conducted.
+	 * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 	 **/
 	if (!strncmp(val, "burst", 5)) {
 		printk(KERN_NOTICE "%s: setting burst mode(0x%x)..\n", __func__, bs_inst->state);
 		switch (bs_inst->state) {
-			case HOOKING:
 			case UNINIT:
+			case HOOKING:
+			case MIXING:
 				spin_lock(&bs_inst->lock);
 				__bs_hook = false;
 				bs_inst->state = IDLING;
@@ -312,7 +319,10 @@ static int run_bitscatter(const char *val, struct kernel_param *kp)
 				if (IS_ERR(bs_inst->self)) {
 					printk(KERN_ERR "%s: failed to create daemon..\n", __func__);
 					err = PTR_ERR(bs_inst->self);
+					spin_lock(&bs_inst->lock);
 					bs_inst->self = NULL;
+					bs_inst->state = IDLING;
+					spin_unlock(&bs_inst->lock);
 				} else {
 					wake_up_process(bs_inst->self);
 					printk(KERN_NOTICE "%s: setting burst mode is done\n", __func__);
@@ -320,7 +330,8 @@ static int run_bitscatter(const char *val, struct kernel_param *kp)
 				}
 				break;
 			case RUNNING:
-				err = -EINVAL;
+				printk(KERN_NOTICE "%s: burst mode is already set\n", __func__);
+				err = 0;
 				break;
 			default:
 				err = -EBUSY;
@@ -330,16 +341,56 @@ static int run_bitscatter(const char *val, struct kernel_param *kp)
 		printk(KERN_NOTICE "%s: setting hook mode(0x%x)..\n", __func__, bs_inst->state);
 		switch (bs_inst->state) {
 			case RUNNING:
+			case MIXING:
 				kthread_stop(bs_inst->self);
 				bs_inst->self = NULL;
-			case HOOKING:
-			case IDLING:
 			case UNINIT:
+			case IDLING:
+			case HOOKING:
 				spin_lock(&bs_inst->lock);
-				bs_inst->state = HOOKING;
 				__bs_hook = true;
+				bs_inst->state = HOOKING;
 				spin_unlock(&bs_inst->lock);
 				printk(KERN_NOTICE "%s: setting hook mode is done\n", __func__);
+				err = 0;
+				break;
+			default:
+				err = -EBUSY;
+				break;
+		}
+	} else if (!strncmp(val, "mixed", 5)) {
+		printk(KERN_NOTICE "%s: setting both burst and hook mode enabled(0x%x)..\n", __func__, bs_inst->state);
+		switch (bs_inst->state) {
+			case RUNNING:
+				spin_lock(&bs_inst->lock);
+				__bs_hook = true;
+				bs_inst->state = MIXING;
+				spin_unlock(&bs_inst->lock);
+				printk(KERN_NOTICE "%s: setting mixed mode is done\n", __func__);
+				break;
+			case UNINIT:
+			case IDLING:
+				spin_lock(&bs_inst->lock);
+				__bs_hook = true;
+				bs_inst->state = MIXING;
+				spin_unlock(&bs_inst->lock);
+			case HOOKING:
+				bs_inst->self = kthread_create(bitscatterd, NULL, "bitscatterd");
+				if (IS_ERR(bs_inst->self)) {
+					printk(KERN_ERR "%s: failed to create daemon..\n", __func__);
+					err = PTR_ERR(bs_inst->self);
+					spin_lock(&bs_inst->lock);
+					bs_inst->self = NULL;
+					bs_inst->state = IDLING;
+					spin_unlock(&bs_inst->lock);
+				} else {
+					wake_up_process(bs_inst->self);
+					printk(KERN_NOTICE "%s: setting burst mode is done\n", __func__);
+					err = 0;
+				}
+				break;
+			case MIXING:
+				printk(KERN_NOTICE "%s: mixed mode is already set\n", __func__);
 				err = 0;
 				break;
 			default:
@@ -351,14 +402,15 @@ static int run_bitscatter(const char *val, struct kernel_param *kp)
 		switch (bs_inst->state) {
 			case RUNNING:
 			case HOOKING:
+			case MIXING:
 			case IDLING:
 				if (bs_inst->self) {
 					kthread_stop(bs_inst->self);
 					bs_inst->self = NULL;
 				}
 				spin_lock(&bs_inst->lock);
-				bs_inst->state = IDLING;
 				__bs_hook = false;
+				bs_inst->state = IDLING;
 				spin_unlock(&bs_inst->lock);
 				err = 0;
 				break;
@@ -375,7 +427,7 @@ static int run_bitscatter(const char *val, struct kernel_param *kp)
 	return err;
 }
 module_param_call(mode, run_bitscatter, NULL, NULL, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(mode, "configuring what mode bitscatter runs;'burst','hook','stop'");
+MODULE_PARM_DESC(mode, "configuring what mode bitscatter runs;'burst','hook','mixed','stop'");
 
 static int bitscatter_nrtest(const char *val, struct kernel_param *kp)
 {
@@ -405,7 +457,7 @@ static int bitscatter_memsz(const char *val, struct kernel_param *kp)
 		/* space where each thead should manage */
 		size = (int)((size << 10) / tnr);
 		spin_lock(&bs_inst->lock);
-		bs_inst->sz_test = (size <= 0) ? BURST_SIZE : min_t(unsigned int, size, BURST_SIZE);
+		bs_inst->sz_test = (size <= 0) ? MAX_SPACE : min_t(unsigned int, size, MAX_SPACE);
 		spin_unlock(&bs_inst->lock);
 		return 0;
 	} else 

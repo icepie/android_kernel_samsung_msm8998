@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,6 +22,9 @@
 #include "msm_vidc_res_parse.h"
 #include "venus_boot.h"
 #include "soc/qcom/secure_buffer.h"
+#include "soc/qcom/cx_ipeak.h"
+
+#include <linux/qcom/sec_debug.h>
 
 enum clock_properties {
 	CLOCK_PROP_HAS_SCALING = 1 << 0,
@@ -171,6 +174,8 @@ void msm_vidc_free_platform_resources(
 	msm_vidc_free_qdss_addr_table(res);
 	msm_vidc_free_bus_vectors(res);
 	msm_vidc_free_buffer_usage_table(res);
+	cx_ipeak_unregister(res->cx_ipeak_context);
+	res->cx_ipeak_context = NULL;
 }
 
 static int msm_vidc_load_reg_table(struct msm_vidc_platform_resources *res)
@@ -1084,6 +1089,13 @@ int read_platform_resources_from_dt(
 		goto err_load_max_hw_load;
 	}
 
+	rc = of_property_read_u32(pdev->dev.of_node, "qcom,power-conf",
+			&res->power_conf);
+	if (rc) {
+		dprintk(VIDC_DBG,
+			"Failed to read power configuration: %d\n", rc);
+	}
+
 	rc = msm_vidc_populate_legacy_context_bank(res);
 	if (rc) {
 		dprintk(VIDC_ERR,
@@ -1113,7 +1125,7 @@ int read_platform_resources_from_dt(
 	res->debug_timeout = of_property_read_bool(pdev->dev.of_node,
 			"qcom,debug-timeout");
 
-	res->debug_timeout |= msm_vidc_debug_timeout;
+	msm_vidc_debug_timeout |= res->debug_timeout;
 
 	of_property_read_u32(pdev->dev.of_node,
 			"qcom,pm-qos-latency-us", &res->pm_qos_latency_us);
@@ -1126,8 +1138,39 @@ int read_platform_resources_from_dt(
 	of_property_read_u32(pdev->dev.of_node,
 			"qcom,max-secure-instances",
 			&res->max_secure_inst_count);
+
+	if (of_find_property(pdev->dev.of_node,
+			"qcom,cx-ipeak-data", NULL)) {
+		res->cx_ipeak_context = cx_ipeak_register(
+			pdev->dev.of_node, "qcom,cx-ipeak-data");
+	}
+
+	if (IS_ERR(res->cx_ipeak_context)) {
+		rc = PTR_ERR(res->cx_ipeak_context);
+		if (rc == -EPROBE_DEFER)
+			dprintk(VIDC_INFO,
+				"cx-ipeak register failed. Deferring probe!");
+		else
+			dprintk(VIDC_ERR,
+				"cx-ipeak register failed. rc: %d", rc);
+
+		res->cx_ipeak_context = NULL;
+		goto err_register_cx_ipeak;
+	} else if (res->cx_ipeak_context) {
+		dprintk(VIDC_INFO, "cx-ipeak register successful");
+	} else {
+		dprintk(VIDC_INFO, "cx-ipeak register not implemented");
+	}
+
+	of_property_read_u32(pdev->dev.of_node,
+			"qcom,clock-freq-threshold",
+			&res->clk_freq_threshold);
+	dprintk(VIDC_DBG, "cx ipeak threshold frequency = %u\n",
+				res->clk_freq_threshold);
+
 	return rc;
 
+err_register_cx_ipeak:
 err_setup_legacy_cb:
 err_load_max_hw_load:
 	msm_vidc_free_allowed_clocks_table(res);
@@ -1238,6 +1281,8 @@ int msm_vidc_smmu_fault_handler(struct iommu_domain *domain,
 
 	if (core->smmu_fault_handled)
 		return -ENOSYS;
+
+	sec_debug_store_extc_idx(true);
 
 	dprintk(VIDC_ERR, "%s - faulting address: %lx\n", __func__, iova);
 

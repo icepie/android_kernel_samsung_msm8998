@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,8 +16,10 @@
 #include <linux/clk-provider.h>
 #include <linux/regmap.h>
 #include <linux/delay.h>
+#include <linux/sched.h>
 
 #include "clk-alpha-pll.h"
+#include "common.h"
 
 #define PLL_MODE		0x00
 #define PLL_OUTCTRL		BIT(0)
@@ -74,12 +76,16 @@ static int wait_for_pll(struct clk_alpha_pll *pll, u32 mask, bool inverse,
 	u32 val, off;
 	int count;
 	int ret;
-	const char *name = clk_hw_get_name(&pll->clkr.hw);
+	u64 time;
+	struct clk_hw *hw = &pll->clkr.hw;
+	const char *name = clk_hw_get_name(hw);
 
 	off = pll->offset;
 	ret = regmap_read(pll->clkr.regmap, off + PLL_MODE, &val);
 	if (ret)
 		return ret;
+
+	time = sched_clock();
 
 	for (count = 100; count > 0; count--) {
 		ret = regmap_read(pll->clkr.regmap, off + PLL_MODE, &val);
@@ -93,7 +99,13 @@ static int wait_for_pll(struct clk_alpha_pll *pll, u32 mask, bool inverse,
 		udelay(1);
 	}
 
-	WARN(1, "%s failed to %s!\n", name, action);
+	time = sched_clock() - time;
+
+	pr_err("PLL lock bit detection total wait time: %lld ns", time);
+
+	WARN_CLK(hw->core, name, 1, "failed to %s!\n", action);
+
+
 	return -ETIMEDOUT;
 }
 
@@ -301,7 +313,12 @@ static int clk_alpha_pll_enable(struct clk_hw *hw)
 		ret = clk_enable_regmap(hw);
 		if (ret)
 			return ret;
-		return wait_for_pll_enable(pll, PLL_ACTIVE_FLAG);
+		ret = wait_for_pll_enable(pll, PLL_ACTIVE_FLAG);
+		if (ret == 0) {
+			if (pll->flags & SUPPORTS_FSM_VOTE)
+				*pll->soft_vote |= (pll->soft_vote_mask);
+			return ret;
+		}
 	}
 
 	/* Skip if already enabled */
@@ -351,7 +368,13 @@ static void clk_alpha_pll_disable(struct clk_hw *hw)
 
 	/* If in FSM mode, just unvote it */
 	if (val & PLL_VOTE_FSM_ENA) {
-		clk_disable_regmap(hw);
+		if (pll->flags & SUPPORTS_FSM_VOTE) {
+			*pll->soft_vote &= ~(pll->soft_vote_mask);
+			if (!*pll->soft_vote)
+				clk_disable_regmap(hw);
+		} else
+			clk_disable_regmap(hw);
+
 		return;
 	}
 
@@ -578,7 +601,11 @@ static void clk_alpha_pll_list_registers(struct seq_file *f, struct clk_hw *hw)
 		{"PLL_ALPHA_VAL", 0x8},
 		{"PLL_ALPHA_VAL_U", 0xC},
 		{"PLL_USER_CTL", 0x10},
+		{"PLL_USER_CTL_U", 0x14},
 		{"PLL_CONFIG_CTL", 0x18},
+		{"PLL_TEST_CTL", 0x1c},
+		{"PLL_TEST_CTL_U", 0x20},
+		{"PLL_STATUS", 0x24},
 	};
 
 	static struct clk_register_data data1[] = {
@@ -590,7 +617,8 @@ static void clk_alpha_pll_list_registers(struct seq_file *f, struct clk_hw *hw)
 	for (i = 0; i < size; i++) {
 		regmap_read(pll->clkr.regmap, pll->offset + data[i].offset,
 					&val);
-		seq_printf(f, "%20s: 0x%.8x\n", data[i].name, val);
+		clock_debug_output(f, false, "%20s: 0x%.8x\n",
+							data[i].name, val);
 	}
 
 	regmap_read(pll->clkr.regmap, pll->offset + data[0].offset, &val);
@@ -598,7 +626,8 @@ static void clk_alpha_pll_list_registers(struct seq_file *f, struct clk_hw *hw)
 	if (val & PLL_FSM_ENA) {
 		regmap_read(pll->clkr.regmap, pll->clkr.enable_reg +
 					data1[0].offset, &val);
-		seq_printf(f, "%20s: 0x%.8x\n", data1[0].name, val);
+		clock_debug_output(f, false, "%20s: 0x%.8x\n",
+							data1[0].name, val);
 	}
 }
 
@@ -847,5 +876,6 @@ const struct clk_ops clk_alpha_pll_slew_ops = {
 	.recalc_rate = clk_alpha_pll_recalc_rate,
 	.round_rate = clk_alpha_pll_round_rate,
 	.set_rate = clk_alpha_pll_slew_set_rate,
+	.list_registers = clk_alpha_pll_list_registers,
 };
 EXPORT_SYMBOL_GPL(clk_alpha_pll_slew_ops);

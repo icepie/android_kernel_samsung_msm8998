@@ -56,11 +56,6 @@ extern long  pn547_dev_ioctl(struct file *filp, unsigned int cmd,
 /* size of maximum read/write buffer supported by driver */
 #define MAX_BUFFER_SIZE   258U
 
-#ifdef CONFIG_SEC_FACTORY
-#undef CONFIG_ESE_SECURE
-#endif
-//static struct class *p61_device_class;
-
 /* Different driver debug lever */
 enum P61_DEBUG_LEVEL {
     P61_DEBUG_OFF,
@@ -110,9 +105,36 @@ struct p61_device {
 #endif
 	const char *ap_vendor;
 };
+static struct p61_device *p61_dev;
 
 /* T==1 protocol specific global data */
 const unsigned char SOF = 0xA5u;
+
+/* Qcom Factory spi immediate pinctrl */
+int ese_spi_pinctrl(int enable) {
+	int ret=0;
+#ifndef CONFIG_ESE_SECURE
+	pr_info("%s [%d]\n", __func__, enable);
+
+	switch (enable) {
+	case 0:
+		ret = ese_spi_free_gpios(p61_dev->spi);
+		if (ret < 0)
+			pr_err("%s: couldn't config spi gpio\n", __func__);
+		break;
+	case 1:
+		ret = ese_spi_request_gpios(p61_dev->spi);
+		if (ret < 0)
+			pr_err("%s: couldn't config spi gpio\n", __func__);
+	    break;
+	default:
+		pr_err("%s no matching!\n", __func__);
+		ret = -EINVAL;
+	}
+#endif
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ese_spi_pinctrl);
 
 #ifdef CONFIG_ESE_SECURE
 /**
@@ -338,9 +360,7 @@ static int p61_rw_spi_message(struct p61_device *p61_dev,
  * \param[in]       struct file *
  *
  * \retval 0 if ok.
- *
 */
-
 static int p61_dev_open(struct inode *inode, struct file *filp)
 {
 	struct p61_device *p61_dev = container_of(filp->private_data,
@@ -751,7 +771,7 @@ static int p61_parse_dt(struct device *dev,
 static int p61_probe(struct spi_device *spi)
 {
 	int ret = -1;
-	struct p61_device *p61_dev = NULL;
+	/*struct p61_device *p61_dev = NULL;*/
 
 	pr_info("%s: chip select(%d), bus number(%d)\n",
 		__func__, spi->chip_select, spi->master->bus_num);

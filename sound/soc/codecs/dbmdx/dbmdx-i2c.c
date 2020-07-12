@@ -79,10 +79,6 @@ ssize_t send_i2c_cmd_vqe(struct dbmdx_private *p,
 	do {
 		ret = i2c_master_recv(i2c_p->client, recv, 4);
 		if (ret < 0) {
-#if 0
-			dev_dbg(i2c_p->dev, "%s: read failed; retries:%d\n",
-				__func__, retries);
-#endif
 			/* Wait before polling again */
 			usleep_range(10000, 11000);
 
@@ -186,6 +182,9 @@ ssize_t read_i2c_data(struct dbmdx_private *p, void *buf, size_t len)
 	size_t count = i2c_p->pdata->read_chunk_size;
 	ssize_t i;
 	int ret;
+	u8 *d = (u8 *)buf;
+	/* if stuck for more than 10s, something is wrong */
+	unsigned long timeout = jiffies + msecs_to_jiffies(10000);
 
 	/* We are going to read everything in on chunk */
 	if (len < count) {
@@ -199,36 +198,32 @@ ssize_t read_i2c_data(struct dbmdx_private *p, void *buf, size_t len)
 		}
 
 		return len;
-	} else {
-
-		u8 *d = (u8 *)buf;
-		/* if stuck for more than 10s, something is wrong */
-		unsigned long timeout = jiffies + msecs_to_jiffies(10000);
-
-		for (i = 0; i < len; i += count) {
-			if ((i + count) > len)
-				count = len - i;
-
-			ret =  i2c_master_recv(i2c_p->client,
-				i2c_p->pdata->read_buf, count);
-			if (ret < 0) {
-				dev_err(i2c_p->dev, "%s: i2c_master_recv failed\n",
-					__func__);
-				i = -EIO;
-				goto out;
-			}
-			memcpy(d + i, i2c_p->pdata->read_buf, count);
-
-			if (!time_before(jiffies, timeout)) {
-				dev_err(i2c_p->dev,
-					"%s: read data timed out after %zd bytes\n",
-					__func__, i);
-				i = -ETIMEDOUT;
-				goto out;
-			}
-		}
-		return len;
 	}
+
+	for (i = 0; i < len; i += count) {
+		if ((i + count) > len)
+			count = len - i;
+
+		ret =  i2c_master_recv(i2c_p->client,
+			i2c_p->pdata->read_buf, count);
+		if (ret < 0) {
+			dev_err(i2c_p->dev, "%s: i2c_master_recv failed\n",
+					__func__);
+			i = -EIO;
+			goto out;
+		}
+		memcpy(d + i, i2c_p->pdata->read_buf, count);
+
+		if (!time_before(jiffies, timeout)) {
+			dev_err(i2c_p->dev,
+				"%s: read data timed out after %zd bytes\n",
+				__func__, i);
+				i = -ETIMEDOUT;
+			goto out;
+		}
+	}
+
+	return len;
 out:
 	return i;
 }
@@ -266,20 +261,21 @@ int send_i2c_cmd_boot(struct dbmdx_private *p, u32 command)
 	u8 send[3];
 	int ret = 0;
 
-	dev_info(i2c_p->dev, "%s: send_i2c_cmd_boot = %x\n", __func__, command);
+	dev_info(i2c_p->dev, "%s: command = %x\n", __func__, command);
 
 	send[0] = (command >> 16) & 0xff;
 	send[1] = (command >>  8) & 0xff;
 
 	ret = i2c_master_send(i2c_p->client, send, 2);
 	if (ret < 0) {
-		dev_err(i2c_p->dev, "%s: i2c_master_send failed ret = %d\n",
+		dev_err(i2c_p->dev, "%s: Failed ret = %d\n",
 			__func__, ret);
 		return ret;
 	}
 
 	/* A host command received will blocked until the current audio frame
-	   processing is finished, which can take up to 10 ms */
+	 *  processing is finished, which can take up to 10 ms
+	 */
 	usleep_range(DBMDX_USLEEP_I2C_AFTER_BOOT_CMD,
 		DBMDX_USLEEP_I2C_AFTER_BOOT_CMD + 1000);
 
@@ -327,6 +323,102 @@ int i2c_verify_boot_checksum(struct dbmdx_private *p,
 	return 0;
 }
 
+int i2c_verify_chip_id(struct dbmdx_private *p)
+{
+	struct dbmdx_i2c_private *i2c_p =
+				(struct dbmdx_i2c_private *)p->chip->pdata;
+
+	int ret;
+	u8 idr_read_cmd[] = {0x5A, 0x07, 0x68, 0x00, 0x00, 0x03};
+	u8 idr_read_result[7] = {0};
+	u8 chip_rev_id_low_a = 0;
+	u8 chip_rev_id_low_b = 0;
+	u8 chip_rev_id_high = 0;
+
+	u8 recv_chip_rev_id_high = 0;
+	u8 recv_chip_rev_id_low = 0;
+
+	if (p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD2) {
+		idr_read_cmd[2] = 0x68;
+		chip_rev_id_high = 0x0d;
+		chip_rev_id_low_a = 0xb0;
+		chip_rev_id_low_b = 0xb1;
+	} else if (p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD4) {
+		idr_read_cmd[2] = 0x74;
+		chip_rev_id_high = 0xdb;
+		chip_rev_id_low_a = 0x40;
+		chip_rev_id_low_b = 0x40;
+	} else if (p->cur_firmware_id == DBMDX_FIRMWARE_ID_DBMD6) {
+		idr_read_cmd[2] = 0x74;
+		chip_rev_id_high = 0xdb;
+		chip_rev_id_low_a = 0x60;
+		chip_rev_id_low_b = 0x60;
+	} else {
+		idr_read_cmd[2] = 0x74;
+		chip_rev_id_high = 0xdb;
+		chip_rev_id_low_a = 0x80;
+		chip_rev_id_low_b = 0x80;
+	}
+
+	ret = write_i2c_data(p, idr_read_cmd, 6);
+	if (ret != sizeof(idr_read_cmd)) {
+		dev_err(i2c_p->dev, "%s: idr_read_cmd ret = %d\n",
+			__func__, ret);
+		return ret;
+	}
+
+	usleep_range(DBMDX_USLEEP_I2C_AFTER_BOOT_CMD,
+		DBMDX_USLEEP_I2C_AFTER_BOOT_CMD + 1000);
+
+	ret = i2c_master_recv(i2c_p->client, (void *)idr_read_result, 6);
+
+	if (ret < 0) {
+		dev_err(i2c_p->dev, "%s: could not idr register data\n",
+			__func__);
+		return -EIO;
+	}
+	/* Verify answer */
+	if ((idr_read_result[0] != idr_read_cmd[0]) ||
+		(idr_read_result[1] != idr_read_cmd[1]) ||
+		(idr_read_result[4] != 0x00) ||
+		(idr_read_result[5] != 0x00)) {
+		dev_err(i2c_p->dev, "%s: Wrong IDR resp: %x:%x:%x:%x:%x:%x\n",
+				__func__,
+				idr_read_result[0],
+				idr_read_result[1],
+				idr_read_result[2],
+				idr_read_result[3],
+				idr_read_result[4],
+				idr_read_result[5]);
+		return -EIO;
+	}
+	recv_chip_rev_id_high = idr_read_result[3];
+	recv_chip_rev_id_low = idr_read_result[2];
+
+	if ((recv_chip_rev_id_high != chip_rev_id_high) ||
+		((recv_chip_rev_id_low != chip_rev_id_low_a) &&
+		(recv_chip_rev_id_low != chip_rev_id_low_b))) {
+
+		dev_err(i2c_p->dev,
+			"%s: Wrong chip ID: Received 0x%2x%2x Expected: 0x%2x%2x | 0x%2x%2x\n",
+				__func__,
+				recv_chip_rev_id_high,
+				recv_chip_rev_id_low,
+				chip_rev_id_high,
+				chip_rev_id_low_a,
+				chip_rev_id_high,
+				chip_rev_id_low_b);
+		return -EILSEQ;
+	}
+
+	dev_info(i2c_p->dev,
+			"%s: Chip ID was successfully verified: 0x%2x%2x\n",
+				__func__,
+				recv_chip_rev_id_high,
+				recv_chip_rev_id_low);
+	return 0;
+}
+
 static int i2c_can_boot(struct dbmdx_private *p)
 {
 	struct dbmdx_i2c_private *i2c_p =
@@ -363,10 +455,10 @@ static int i2c_finish_boot(struct dbmdx_private *p)
 	return 0;
 }
 
-static int i2c_dump_state(struct dbmdx_private *p, char *buf)
+static int i2c_dump_state(struct chip_interface *chip, char *buf)
 {
 	struct dbmdx_i2c_private *i2c_p =
-				(struct dbmdx_i2c_private *)p->chip->pdata;
+				(struct dbmdx_i2c_private *)chip->pdata;
 	int off = 0;
 
 	dev_dbg(i2c_p->dev, "%s\n", __func__);

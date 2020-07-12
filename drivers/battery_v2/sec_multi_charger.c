@@ -93,8 +93,10 @@ static bool sec_multi_chg_check_sub_charging(struct sec_multi_charger_info *char
 
 	if (charger->pdata->sub_charger_condition &
 		SEC_SUB_CHARGER_CONDITION_CURRENT_NOW) {
-		int max_current_now = (charger->total_current.fast_charging_current / 2) +
-			charger->full_check_current_1st + SEC_SUB_CHARGER_CURRENT_MARGIN;
+		int max_current_now = (charger->sub_is_charging) ? 
+			charger->sub_current.fast_charging_current : (charger->total_current.fast_charging_current / 2);
+		max_current_now = max_current_now +
+			charger->full_check_current_1st + charger->pdata->sub_charger_condition_current_margin;
 		pr_info("%s: update max_current_now(%d)\n", __func__, max_current_now);
 
 		psy_do_property(charger->pdata->battery_name, get,
@@ -104,7 +106,7 @@ static bool sec_multi_chg_check_sub_charging(struct sec_multi_charger_info *char
 			if (charger->sub_is_charging)
 				pr_info("%s: sub charger off CURRENT_NOW(%d)\n", __func__, value.intval);
 			return false;
-		} else if (value.intval < max_current_now + SEC_SUB_CHARGER_CURRENT_MARGIN) {
+		} else if (value.intval < max_current_now + charger->pdata->sub_charger_condition_current_margin) {
 			if (!charger->sub_is_charging) {
 				return false;
 			}
@@ -125,12 +127,11 @@ static int sec_multi_chg_set_input_current(struct sec_multi_charger_info *charge
 		sub_input_current = charger->total_current.input_current_limit / 2;
 
 		/* check current max */
-		value.intval = sub_input_current;
 		psy_do_property(charger->pdata->sub_charger_name, get,
 			POWER_SUPPLY_PROP_CURRENT_MAX, value);
 		if (value.intval != sub_input_current) {
-			main_input_current = charger->total_current.input_current_limit - value.intval;
-			sub_input_current = value.intval;
+			main_input_current = charger->total_current.input_current_limit - sub_input_current;
+			sub_input_current = charger->total_current.input_current_limit - main_input_current;
 		}
 	} else {
 		main_input_current = charger->total_current.input_current_limit;
@@ -167,6 +168,15 @@ static int sec_multi_chg_set_charging_current(struct sec_multi_charger_info *cha
 	if (charger->sub_is_charging) {
 		main_charging_current = charger->total_current.fast_charging_current / 2;
 		sub_charging_current = charger->total_current.fast_charging_current / 2;
+
+		if (!charger->pdata->is_serial) {
+			psy_do_property(charger->pdata->sub_charger_name, get,
+				POWER_SUPPLY_PROP_CURRENT_NOW, value);
+			if (value.intval != sub_charging_current) {
+				main_charging_current = charger->total_current.fast_charging_current - sub_charging_current;
+				sub_charging_current = charger->total_current.fast_charging_current - main_charging_current;
+			}
+		}
 	} else {
 		main_charging_current = charger->total_current.fast_charging_current;
 		sub_charging_current = 0;
@@ -249,6 +259,8 @@ static void sec_multi_chg_check_input_current(struct sec_multi_charger_info *cha
 
 		psy_do_property(charger->pdata->sub_charger_name, set,
 			POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+
+		sec_multi_chg_set_charging_current(charger);
 	}
 }
 
@@ -274,17 +286,21 @@ static int sec_multi_chg_check_enable(struct sec_multi_charger_info *charger)
 
 	/* set sub charging */
 	if (charger->sub_is_charging != sub_is_charging) {
-		if (charger->sub_is_charging)
-			value.intval = SEC_BAT_CHG_MODE_CHARGING;
-		else
+		if (!charger->sub_is_charging) {
 			value.intval = SEC_BAT_CHG_MODE_CHARGING_OFF;
+			psy_do_property(charger->pdata->sub_charger_name, set,
+				POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+		}
 
 		/* set charging current */
 		sec_multi_chg_set_input_current(charger);
 		sec_multi_chg_set_charging_current(charger);
 
-		psy_do_property(charger->pdata->sub_charger_name, set,
-			POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+		if (charger->sub_is_charging) {
+			value.intval = SEC_BAT_CHG_MODE_CHARGING;
+			psy_do_property(charger->pdata->sub_charger_name, set,
+				POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+		}
 
 		pr_info("%s: change sub_is_charging(%d)\n", __func__, charger->sub_is_charging);
 	} else if (charger->sub_is_charging && sec_multi_chg_check_abnormal_case(charger)) {
@@ -292,12 +308,12 @@ static int sec_multi_chg_check_enable(struct sec_multi_charger_info *charger)
 
 		charger->sub_is_charging = false;
 
-		sec_multi_chg_set_input_current(charger);
-		sec_multi_chg_set_charging_current(charger);
-
 		value.intval = SEC_BAT_CHG_MODE_CHARGING_OFF;
 		psy_do_property(charger->pdata->sub_charger_name, set,
 			POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+
+		sec_multi_chg_set_input_current(charger);
+		sec_multi_chg_set_charging_current(charger);
 	}
 	return 0;
 }
@@ -329,12 +345,17 @@ static int sec_multi_chg_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CHARGE_OTG_CONTROL:
 	case POWER_SUPPLY_PROP_CHARGE_UNO_CONTROL:
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT_MAX:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 		psy_do_property(charger->pdata->main_charger_name, get, psp, value);
 		val->intval = value.intval;
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
-		psy_do_property(charger->pdata->main_charger_name, get, psp, value);
-		val->intval = value.intval;
+		if (!charger->pdata->is_serial)
+			val->intval = charger->total_current.input_current_limit;
+		else {
+			psy_do_property(charger->pdata->main_charger_name, get, psp, value);
+			val->intval = value.intval;
+		}
 		sec_multi_chg_check_enable(charger);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
@@ -427,13 +448,13 @@ static int sec_multi_chg_set_property(struct power_supply *psy,
 			charger->chg_mode == SEC_BAT_CHG_MODE_CHARGING &&
 			charger->multi_mode == SEC_MULTI_CHARGER_NORMAL) {
 			charger->sub_is_charging = false;
-			/* set charging current */
-			sec_multi_chg_set_input_current(charger);
-			sec_multi_chg_set_charging_current(charger);
 			/* disable sub charger */
 			value.intval = SEC_BAT_CHG_MODE_CHARGING_OFF;
 			psy_do_property(charger->pdata->sub_charger_name, set,
 				POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+			/* set charging current */
+			sec_multi_chg_set_input_current(charger);
+			sec_multi_chg_set_charging_current(charger);
 		} else {
 			pr_info("%s: invalid condition (sub_is_charging(%d), chg_mode(%d), multi_mode(%d))\n",
 				__func__, charger->sub_is_charging, charger->chg_mode, charger->multi_mode);
@@ -630,6 +651,14 @@ static int sec_multi_charger_parse_dt(struct device *dev,
 			} else {
 				pdata->sub_charger_condition &= ~SEC_SUB_CHARGER_CONDITION_ONLINE;
 				pdata->sub_charger_condition_online_size = 0;
+			}
+
+			
+			ret = of_property_read_u32(np, "charger,sub_charger_condition_current_margin",
+					&pdata->sub_charger_condition_current_margin);
+			if (ret) {
+				pr_err("%s: sub_charger_condition_current_margin is Empty\n", __func__);
+				pdata->sub_charger_condition_current_margin = SEC_SUB_CHARGER_CURRENT_MARGIN;
 			}
 
 			pr_info("%s: sub_charger_condition(0x%x)\n", __func__, pdata->sub_charger_condition);

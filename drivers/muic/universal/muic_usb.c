@@ -114,7 +114,6 @@ static int muic_handle_usb_notification(struct notifier_block *nb,
 		}
 		muic_noti_usbconnection_status(1, "USB");
 		break;
-
 	/* receive powerrole and change the BC 1.2 operation */
 	case EXTERNAL_NOTIFY_POWERROLE:
 		pr_info("%s: POWER ROLE(%d)\n", __func__, devicetype);

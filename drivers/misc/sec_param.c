@@ -85,12 +85,13 @@ bool sec_open_param(void)
 
 	pr_info("%s start \n",__func__);
 
-	if (param_data != NULL)
-		return true;
+	if (!param_data)
+		param_data = kmalloc(sizeof(struct sec_param_data), GFP_KERNEL);
 
-	mutex_lock(&sec_param_mutex);
-
-	param_data = kmalloc(sizeof(struct sec_param_data), GFP_KERNEL);
+	if (unlikely(!param_data)) {
+		pr_err("failed to alloc for param_data\n");
+		return false;
+	}
 
 	sched_sec_param_data.value=param_data;
 	sched_sec_param_data.offset=SEC_PARAM_FILE_OFFSET;
@@ -102,8 +103,6 @@ bool sec_open_param(void)
 
 	pr_info("%s end \n",__func__);
 
-	mutex_unlock(&sec_param_mutex);
-
 	return ret;
 
 	}
@@ -113,8 +112,6 @@ bool sec_write_param(void)
 	int ret = true;
 
 	pr_info("%s start\n",__func__);
-
-	mutex_lock(&sec_param_mutex);
 
 	sched_sec_param_data.value=param_data;
 	sched_sec_param_data.offset=SEC_PARAM_FILE_OFFSET;
@@ -126,18 +123,19 @@ bool sec_write_param(void)
 
 	pr_info("%s end\n",__func__);
 
-	mutex_unlock(&sec_param_mutex);
-
 	return ret;
 
 }
 
 bool sec_get_param(enum sec_param_index index, void *value)
 {
-	int ret = true;
+	bool ret = true;
+
+	mutex_lock(&sec_param_mutex);
+
 	ret = sec_open_param();
 	if (!ret)
-		return ret;
+		goto out;
 
 	switch (index) {
 	case param_index_debuglevel:
@@ -166,14 +164,8 @@ bool sec_get_param(enum sec_param_index index, void *value)
 		break;
 #endif
 #ifdef CONFIG_RTC_AUTO_PWRON_PARAM
-	case param_index_boot_alarm_set:
-		memcpy(value, &(param_data->boot_alarm_set), sizeof(unsigned int));
-		break;
-	case param_index_boot_alarm_value_l:
-		memcpy(value, &(param_data->boot_alarm_value_l), sizeof(unsigned int));
-		break;
-	case param_index_boot_alarm_value_h:
-		memcpy(value, &(param_data->boot_alarm_value_h), sizeof(unsigned int));
+	case param_index_sapa:
+		memcpy(value, param_data->sapa, sizeof(unsigned int)*3);
 		break;
 #endif
 #ifdef CONFIG_SEC_MONITOR_BATTERY_REMOVAL
@@ -226,43 +218,55 @@ bool sec_get_param(enum sec_param_index index, void *value)
 		memcpy(value, param_data->param_lcd_resolution,
 			sizeof(param_data->param_lcd_resolution));
 		break;
+	case param_index_api_gpio_test:
+		memcpy(value, &(param_data->api_gpio_test),
+			sizeof(param_data->api_gpio_test));
+		break;
+	case param_index_api_gpio_test_result:
+		memcpy(value, param_data->api_gpio_test_result,
+			sizeof(param_data->api_gpio_test_result));
+		break;
+	case param_index_reboot_recovery_cause:
+		memcpy(value, param_data->reboot_recovery_cause,
+				sizeof(param_data->reboot_recovery_cause));
+		break;
 #ifdef CONFIG_SEC_NAD
 	case param_index_qnad:
-		mutex_lock(&sec_param_mutex);
 		sched_sec_param_data.value=value;
 		sched_sec_param_data.offset=SEC_PARAM_NAD_OFFSET;
 		sched_sec_param_data.size=sizeof(struct param_qnad);
 		sched_sec_param_data.direction=PARAM_RD;
 		schedule_work(&sched_sec_param_data.sec_param_work);
 		wait_for_completion(&sched_sec_param_data.work);
-		mutex_unlock(&sec_param_mutex);
 		break;
 	case param_index_qnad_ddr_result:
-		mutex_lock(&sec_param_mutex);
 		sched_sec_param_data.value=value;
 		sched_sec_param_data.offset=SEC_PARAM_NAD_DDR_RESULT_OFFSET;
 		sched_sec_param_data.size=sizeof(struct param_qnad_ddr_result);
 		sched_sec_param_data.direction=PARAM_RD;
 		schedule_work(&sched_sec_param_data.sec_param_work);
 		wait_for_completion(&sched_sec_param_data.work);
-		mutex_unlock(&sec_param_mutex);
 		break;
 #endif
 	default:
-		return false;
+		ret = false;
 	}
 
-	return true;
+out:
+	mutex_unlock(&sec_param_mutex);
+	return ret;
 }
 EXPORT_SYMBOL(sec_get_param);
 
 bool sec_set_param(enum sec_param_index index, void *value)
 {
-	int ret = true;
+	bool ret = true;
+
+	mutex_lock(&sec_param_mutex);
 
 	ret = sec_open_param();
 	if (!ret)
-		return ret;
+		goto out;
 
 	switch (index) {
 	case param_index_debuglevel:
@@ -292,14 +296,8 @@ bool sec_set_param(enum sec_param_index index, void *value)
 		break;
 #endif
 #ifdef CONFIG_RTC_AUTO_PWRON_PARAM
-	case param_index_boot_alarm_set:
-		memcpy(&(param_data->boot_alarm_set), value, sizeof(unsigned int));
-		break;
-	case param_index_boot_alarm_value_l:
-		memcpy(&(param_data->boot_alarm_value_l), value, sizeof(unsigned int));
-		break;
-	case param_index_boot_alarm_value_h:
-		memcpy(&(param_data->boot_alarm_value_h), value, sizeof(unsigned int));
+	case param_index_sapa:
+		memcpy(param_data->sapa, value, sizeof(unsigned int)*3);
 		break;
 #endif
 #ifdef CONFIG_SEC_MONITOR_BATTERY_REMOVAL
@@ -355,34 +353,45 @@ bool sec_set_param(enum sec_param_index index, void *value)
 		memcpy(&(param_data->param_lcd_resolution),
 				value, sizeof(param_data->param_lcd_resolution));
 		break;
+	case param_index_api_gpio_test:
+		memcpy(&(param_data->api_gpio_test),
+				value, sizeof(param_data->api_gpio_test));
+		break;
+	case param_index_api_gpio_test_result:
+		memcpy(&(param_data->api_gpio_test_result),
+				value, sizeof(param_data->api_gpio_test_result));
+		break;
+	case param_index_reboot_recovery_cause:
+		memcpy(param_data->reboot_recovery_cause,
+				value, sizeof(param_data->reboot_recovery_cause));
+		break;
 #ifdef CONFIG_SEC_NAD
 	case param_index_qnad:
-		mutex_lock(&sec_param_mutex);
 		sched_sec_param_data.value=(struct param_qnad *)value;
 		sched_sec_param_data.offset=SEC_PARAM_NAD_OFFSET;
 		sched_sec_param_data.size=sizeof(struct param_qnad);
 		sched_sec_param_data.direction=PARAM_WR;
 		schedule_work(&sched_sec_param_data.sec_param_work);
 		wait_for_completion(&sched_sec_param_data.work);
-		mutex_unlock(&sec_param_mutex);
 		break;
 	case param_index_qnad_ddr_result:
-		mutex_lock(&sec_param_mutex);
 		sched_sec_param_data.value=(struct param_qnad_ddr_result *)value;
 		sched_sec_param_data.offset=SEC_PARAM_NAD_DDR_RESULT_OFFSET;
 		sched_sec_param_data.size=sizeof(struct param_qnad_ddr_result);
 		sched_sec_param_data.direction=PARAM_WR;
 		schedule_work(&sched_sec_param_data.sec_param_work);
 		wait_for_completion(&sched_sec_param_data.work);
-		mutex_unlock(&sec_param_mutex);
 		break;
 #endif
 	default:
-		return false;
+		ret = false;
+		goto out;
 	}
 
 	ret = sec_write_param();
 
+out:
+	mutex_unlock(&sec_param_mutex);
 	return ret;
 }
 EXPORT_SYMBOL(sec_set_param);

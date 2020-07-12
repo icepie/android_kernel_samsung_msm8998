@@ -471,6 +471,9 @@ enum msm_sensor_cfg_type_t {
 #if 1 //defined(CONFIG_SENSOR_RETENTION)
 	CFG_SET_SENSOR_RETENTION,
 #endif
+	CFG_SET_SENSOR_SOF_FREEZE_NOTI,
+	CFG_SET_SENSOR_STREAM_ON_NOTI,
+	CFG_SET_SENSOR_STREAM_OFF_NOTI,
 	CFG_MATCH_ID,
 };
 
@@ -483,6 +486,8 @@ enum msm_actuator_cfg_type_t {
 	CFG_ACTUATOR_POWERDOWN,
 	CFG_ACTUATOR_POWERUP,
 	CFG_ACTUATOR_INIT,
+	CFG_ACTUATOR_SLEEP,
+	CFG_ACTUATOR_ACTIVE,
 };
 
 struct msm_ois_opcode {
@@ -496,6 +501,7 @@ enum msm_ois_cfg_type_t {
 	CFG_OIS_INIT,
 	CFG_OIS_POWERDOWN,
 	CFG_OIS_POWERUP,
+	CFG_OIS_SUSPEND_MODE,
 	CFG_OIS_CONTROL,
 	CFG_OIS_I2C_WRITE_SEQ_TABLE,
 	CFG_OIS_SET_MODE,
@@ -506,6 +512,7 @@ enum msm_ois_cfg_type_t {
 	CFG_OIS_GET_FW_STATUS,
 	CFG_OIS_FW_UPDATE,
 	CFG_OIS_SET_GGFADE,
+	CFG_OIS_SET_IMAGE_SHIFT_CAL,
 };
 
 enum msm_ois_cfg_download_type_t {
@@ -621,6 +628,7 @@ struct msm_ois_cfg_data {
 	int cfgtype;
 	uint16_t set_value;
 	uint8_t *version;
+	uint8_t *image_shift_cal;
 	struct msm_ois_cal_info_t *ois_cal_info;
 	union {
 		struct msm_ois_set_info_t set_info;

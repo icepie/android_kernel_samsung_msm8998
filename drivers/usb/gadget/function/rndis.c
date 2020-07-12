@@ -689,13 +689,6 @@ static int rndis_reset_response(struct rndis_params *params,
 	rndis_reset_cmplt_type *resp;
 	rndis_resp_t *r;
 
-	u32 length;
-	u8 *xbuf;
-
-	/* drain the response queue */
-	while ((xbuf = rndis_get_next_response(params, &length)))
-		rndis_free_response(params, xbuf);
-
 	r = rndis_add_response(params, sizeof(rndis_reset_cmplt_type));
 	if (!r)
 		return -ENOMEM;
@@ -823,6 +816,7 @@ int rndis_msg_parser(struct rndis_params *params, u8 *buf)
 	case RNDIS_MSG_INIT:
 		pr_debug("%s: RNDIS_MSG_INIT\n",
 			__func__);
+		tmp++; /* to get RequestID */
 		major = get_unaligned_le32(tmp++);
 		minor = get_unaligned_le32(tmp++);
 		max_transfer_size = get_unaligned_le32(tmp++);
@@ -884,8 +878,10 @@ int rndis_msg_parser(struct rndis_params *params, u8 *buf)
 		 */
 		pr_warning("%s: unknown RNDIS message 0x%08X len %d\n",
 			__func__, MsgType, MsgLength);
+		/*
 		print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET,
 				     buf, MsgLength);
+		*/
 		break;
 	}
 

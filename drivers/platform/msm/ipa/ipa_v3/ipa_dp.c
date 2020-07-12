@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -62,7 +62,7 @@
 #define IPA_SIZE_DL_CSUM_META_TRAILER 8
 
 #define IPA_GSI_MAX_CH_LOW_WEIGHT 15
-#define IPA_GSI_EVT_RING_INT_MODT 3200 /* 0.1s under 32KHz clock */
+#define IPA_GSI_EVT_RING_INT_MODT (32 * 1) /* 1ms under 32KHz clock */
 
 #define IPA_GSI_CH_20_WA_NUM_CH_TO_ALLOC 10
 /* The below virtual channel cannot be used by any entity */
@@ -337,7 +337,7 @@ int ipa3_send_one(struct ipa3_sys_context *sys, struct ipa3_desc *desc,
 	int result;
 	u16 sps_flags = SPS_IOVEC_FLAG_EOT;
 	dma_addr_t dma_address;
-	u16 len;
+	u16 len = 0;
 	u32 mem_flag = GFP_ATOMIC;
 
 	if (unlikely(!in_atomic))
@@ -356,7 +356,7 @@ int ipa3_send_one(struct ipa3_sys_context *sys, struct ipa3_desc *desc,
 		dma_address = desc->dma_address;
 		tx_pkt->no_unmap_dma = true;
 	}
-	if (!dma_address) {
+	if (dma_mapping_error(ipa3_ctx->pdev, dma_address)) {
 		IPAERR("failed to DMA wrap\n");
 		goto fail_dma_map;
 	}
@@ -471,7 +471,6 @@ int ipa3_send(struct ipa3_sys_context *sys,
 	int i = 0;
 	int j;
 	int result;
-	int fail_dma_wrap = 0;
 	uint size;
 	u32 mem_flag = GFP_ATOMIC;
 	int ipa_ep_idx;
@@ -527,7 +526,7 @@ int ipa3_send(struct ipa3_sys_context *sys,
 			}
 			dma_addr  = dma_map_single(ipa3_ctx->pdev,
 					transfer.iovec, size, DMA_TO_DEVICE);
-			if (!dma_addr) {
+			if (dma_mapping_error(ipa3_ctx->pdev, dma_addr)) {
 				IPAERR("dma_map_single failed\n");
 				kfree(transfer.iovec);
 				return -EFAULT;
@@ -540,7 +539,6 @@ int ipa3_send(struct ipa3_sys_context *sys,
 	spin_lock_bh(&sys->spinlock);
 
 	for (i = 0; i < num_desc; i++) {
-		fail_dma_wrap = 0;
 		tx_pkt = kmem_cache_zalloc(ipa3_ctx->tx_pkt_wrapper_cache,
 					   mem_flag);
 		if (!tx_pkt) {
@@ -563,7 +561,7 @@ int ipa3_send(struct ipa3_sys_context *sys,
 			if (ipa_populate_tag_field(&desc[i], tx_pkt,
 				&tag_pyld_ret)) {
 				IPAERR("Failed to populate tag field\n");
-				goto failure;
+				goto failure_dma_map;
 			}
 		}
 
@@ -579,11 +577,6 @@ int ipa3_send(struct ipa3_sys_context *sys,
 					tx_pkt->mem.base,
 					tx_pkt->mem.size,
 					DMA_TO_DEVICE);
-				if (!tx_pkt->mem.phys_base) {
-					IPAERR("failed to do dma map.\n");
-					fail_dma_wrap = 1;
-					goto failure;
-				}
 			} else {
 					tx_pkt->mem.phys_base =
 						desc[i].dma_address;
@@ -599,17 +592,17 @@ int ipa3_send(struct ipa3_sys_context *sys,
 					desc[i].frag,
 					0, tx_pkt->mem.size,
 					DMA_TO_DEVICE);
-				if (!tx_pkt->mem.phys_base) {
-					IPAERR("dma map failed\n");
-					fail_dma_wrap = 1;
-					goto failure;
-				}
 			} else {
 				tx_pkt->mem.phys_base =
 					desc[i].dma_address;
 				tx_pkt->no_unmap_dma = true;
 			}
 		}
+		if (dma_mapping_error(ipa3_ctx->pdev, tx_pkt->mem.phys_base)) {
+			IPAERR("failed to do dma map.\n");
+			goto failure_dma_map;
+		}
+
 		tx_pkt->sys = sys;
 		tx_pkt->callback = desc[i].callback;
 		tx_pkt->user1 = desc[i].user1;
@@ -637,10 +630,12 @@ int ipa3_send(struct ipa3_sys_context *sys,
 			if (i == (num_desc - 1)) {
 				gsi_xfer_elem_array[i].flags |=
 					GSI_XFER_FLAG_EOT;
+				if (sys->ep->client == IPA_CLIENT_APPS_WAN_PROD
+					&& sys->policy == IPA_POLICY_INTR_MODE)
+					gsi_xfer_elem_array[i].flags |=
+						GSI_XFER_FLAG_BEI;
 				gsi_xfer_elem_array[i].xfer_user_data =
 					tx_pkt_first;
-				/* "mark" the last desc */
-				tx_pkt->cnt = IPA_LAST_DESC_CNT;
 			} else
 				gsi_xfer_elem_array[i].flags |=
 					GSI_XFER_FLAG_CHAIN;
@@ -702,29 +697,31 @@ int ipa3_send(struct ipa3_sys_context *sys,
 	spin_unlock_bh(&sys->spinlock);
 	return 0;
 
+failure_dma_map:
+		kmem_cache_free(ipa3_ctx->tx_pkt_wrapper_cache, tx_pkt);
+
 failure:
 	ipahal_destroy_imm_cmd(tag_pyld_ret);
 	tx_pkt = tx_pkt_first;
 	for (j = 0; j < i; j++) {
 		next_pkt = list_next_entry(tx_pkt, link);
 		list_del(&tx_pkt->link);
-		if (desc[j].type != IPA_DATA_DESC_SKB_PAGED) {
-			dma_unmap_single(ipa3_ctx->pdev, tx_pkt->mem.phys_base,
-				tx_pkt->mem.size,
-				DMA_TO_DEVICE);
-		} else {
-			dma_unmap_page(ipa3_ctx->pdev, tx_pkt->mem.phys_base,
-				tx_pkt->mem.size,
-				DMA_TO_DEVICE);
+
+		if (!tx_pkt->no_unmap_dma) {
+			if (desc[j].type != IPA_DATA_DESC_SKB_PAGED) {
+				dma_unmap_single(ipa3_ctx->pdev,
+					tx_pkt->mem.phys_base,
+					tx_pkt->mem.size, DMA_TO_DEVICE);
+		    } else {
+				dma_unmap_page(ipa3_ctx->pdev,
+					tx_pkt->mem.phys_base,
+					tx_pkt->mem.size,
+					DMA_TO_DEVICE);
+			}
 		}
 		kmem_cache_free(ipa3_ctx->tx_pkt_wrapper_cache, tx_pkt);
 		tx_pkt = next_pkt;
 	}
-	if (j < num_desc)
-		/* last desc failed */
-		if (fail_dma_wrap)
-			kmem_cache_free(ipa3_ctx->tx_pkt_wrapper_cache, tx_pkt);
-
 	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
 		kfree(gsi_xfer_elem_array);
 	} else {
@@ -1191,6 +1188,15 @@ static void ipa3_handle_rx(struct ipa3_sys_context *sys)
 		} else {
 			inactive_cycles = 0;
 		}
+
+		/*
+		 * if pipe is out of buffers there is no point polling for
+		 * completed descs; release the worker so delayed work can
+		 * run in a timely manner
+		 */
+		if (sys->len == 0)
+			break;
+
 	} while (inactive_cycles <= POLLING_INACTIVITY_RX);
 
 	trace_poll_to_intr3(sys->ep->client);
@@ -1262,37 +1268,12 @@ int ipa3_setup_sys_pipe(struct ipa_sys_connect_params *sys_in, u32 *clnt_hdl)
 	}
 
 	ep = &ipa3_ctx->ep[ipa_ep_idx];
-	IPA_ACTIVE_CLIENTS_INC_EP(sys_in->client);
-
 	if (ep->valid == 1) {
-		if (sys_in->client != IPA_CLIENT_APPS_LAN_WAN_PROD) {
-			IPAERR("EP already allocated.\n");
-			goto fail_and_disable_clocks;
-		} else {
-			if (ipa3_cfg_ep_hdr(ipa_ep_idx,
-						&sys_in->ipa_ep_cfg.hdr)) {
-				IPAERR("fail to configure hdr prop of EP.\n");
-				result = -EFAULT;
-				goto fail_and_disable_clocks;
-			}
-			if (ipa3_cfg_ep_cfg(ipa_ep_idx,
-						&sys_in->ipa_ep_cfg.cfg)) {
-				IPAERR("fail to configure cfg prop of EP.\n");
-				result = -EFAULT;
-				goto fail_and_disable_clocks;
-			}
-			IPADBG("client %d (ep: %d) overlay ok sys=%p\n",
-					sys_in->client, ipa_ep_idx, ep->sys);
-			ep->client_notify = sys_in->notify;
-			ep->priv = sys_in->priv;
-			*clnt_hdl = ipa_ep_idx;
-			if (!ep->keep_ipa_awake)
-				IPA_ACTIVE_CLIENTS_DEC_EP(sys_in->client);
-
-			return 0;
-		}
+		IPAERR("EP %d already allocated.\n", ipa_ep_idx);
+		goto fail_gen;
 	}
 
+	IPA_ACTIVE_CLIENTS_INC_EP(sys_in->client);
 	memset(ep, 0, offsetof(struct ipa3_ep_context, sys));
 
 	if (!ep->sys) {
@@ -1308,7 +1289,7 @@ int ipa3_setup_sys_pipe(struct ipa_sys_connect_params *sys_in, u32 *clnt_hdl)
 		snprintf(buff, IPA_RESOURCE_NAME_MAX, "ipawq%d",
 				sys_in->client);
 		ep->sys->wq = alloc_workqueue(buff,
-				WQ_MEM_RECLAIM | WQ_UNBOUND, 1);
+				WQ_HIGHPRI | WQ_MEM_RECLAIM | WQ_UNBOUND, 1);
 		if (!ep->sys->wq) {
 			IPAERR("failed to create wq for client %d\n",
 					sys_in->client);
@@ -1319,7 +1300,7 @@ int ipa3_setup_sys_pipe(struct ipa_sys_connect_params *sys_in, u32 *clnt_hdl)
 		snprintf(buff, IPA_RESOURCE_NAME_MAX, "iparepwq%d",
 				sys_in->client);
 		ep->sys->repl_wq = alloc_workqueue(buff,
-				WQ_MEM_RECLAIM | WQ_UNBOUND, 1);
+				WQ_HIGHPRI | WQ_MEM_RECLAIM | WQ_UNBOUND, 1);
 		if (!ep->sys->repl_wq) {
 			IPAERR("failed to create rep wq for client %d\n",
 					sys_in->client);
@@ -1360,13 +1341,6 @@ int ipa3_setup_sys_pipe(struct ipa_sys_connect_params *sys_in, u32 *clnt_hdl)
 		}
 	}
 
-	result = ipa3_enable_data_path(ipa_ep_idx);
-	if (result) {
-		IPAERR("enable data path failed res=%d clnt=%d.\n", result,
-				ipa_ep_idx);
-		goto fail_gen2;
-	}
-
 	if (!ep->skip_ep_cfg) {
 		if (ipa3_cfg_ep(ipa_ep_idx, &sys_in->ipa_ep_cfg)) {
 			IPAERR("fail to configure EP.\n");
@@ -1376,9 +1350,9 @@ int ipa3_setup_sys_pipe(struct ipa_sys_connect_params *sys_in, u32 *clnt_hdl)
 			IPAERR("fail to configure status of EP.\n");
 			goto fail_gen2;
 		}
-		IPADBG("ep configuration successful\n");
+		IPADBG("ep %d configuration successful\n", ipa_ep_idx);
 	} else {
-		IPADBG("skipping ep configuration\n");
+		IPADBG("skipping ep %d configuration\n", ipa_ep_idx);
 	}
 
 	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
@@ -1492,10 +1466,17 @@ int ipa3_setup_sys_pipe(struct ipa_sys_connect_params *sys_in, u32 *clnt_hdl)
 	ipa3_ctx->skip_ep_cfg_shadow[ipa_ep_idx] = ep->skip_ep_cfg;
 	if (!ep->skip_ep_cfg && IPA_CLIENT_IS_PROD(sys_in->client)) {
 		if (ipa3_ctx->modem_cfg_emb_pipe_flt &&
-			sys_in->client == IPA_CLIENT_APPS_LAN_WAN_PROD)
+			sys_in->client == IPA_CLIENT_APPS_WAN_PROD)
 			IPADBG("modem cfg emb pipe flt\n");
 		else
 			ipa3_install_dflt_flt_rules(ipa_ep_idx);
+	}
+
+	result = ipa3_enable_data_path(ipa_ep_idx);
+	if (result) {
+		IPAERR("enable data path failed res=%d ep=%d.\n", result,
+			ipa_ep_idx);
+		goto fail_gen2;
 	}
 
 	if (!ep->keep_ipa_awake)
@@ -1538,6 +1519,7 @@ int ipa3_teardown_sys_pipe(u32 clnt_hdl)
 	struct ipa3_ep_context *ep;
 	int empty;
 	int result;
+	int i;
 
 	if (clnt_hdl >= ipa3_ctx->ipa_num_pipes ||
 	    ipa3_ctx->ep[clnt_hdl].valid == 0) {
@@ -1574,13 +1556,23 @@ int ipa3_teardown_sys_pipe(u32 clnt_hdl)
 		cancel_delayed_work_sync(&ep->sys->replenish_rx_work);
 	flush_workqueue(ep->sys->wq);
 	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
-		result = ipa3_stop_gsi_channel(clnt_hdl);
+		/* channel stop might fail on timeout if IPA is busy */
+		for (i = 0; i < IPA_GSI_CHANNEL_STOP_MAX_RETRY; i++) {
+			result = ipa3_stop_gsi_channel(clnt_hdl);
+			if (result == GSI_STATUS_SUCCESS)
+				break;
+
+			if (result != -GSI_STATUS_AGAIN &&
+			    result != -GSI_STATUS_TIMED_OUT)
+				break;
+		}
+
 		if (result != GSI_STATUS_SUCCESS) {
 			IPAERR("GSI stop chan err: %d.\n", result);
 			BUG();
 			return result;
 		}
-		result = gsi_reset_channel(ep->gsi_chan_hdl);
+		result = ipa3_reset_gsi_channel(clnt_hdl);
 		if (result != GSI_STATUS_SUCCESS) {
 			IPAERR("Failed to reset chan: %d.\n", result);
 			BUG();
@@ -1632,7 +1624,7 @@ int ipa3_teardown_sys_pipe(u32 clnt_hdl)
 
 	if (!ep->skip_ep_cfg && IPA_CLIENT_IS_PROD(ep->client)) {
 		if (ipa3_ctx->modem_cfg_emb_pipe_flt &&
-			ep->client == IPA_CLIENT_APPS_LAN_WAN_PROD)
+			ep->client == IPA_CLIENT_APPS_WAN_PROD)
 			IPADBG("modem cfg emb pipe flt\n");
 		else
 			ipa3_delete_dflt_flt_rules(clnt_hdl);
@@ -1723,6 +1715,7 @@ int ipa3_tx_dp(enum ipa_client_type dst, struct sk_buff *skb,
 	struct ipa3_sys_context *sys;
 	int src_ep_idx;
 	int num_frags, f;
+	int data_idx;
 	struct ipa_gsi_ep_config *gsi_ep;
 
 	if (unlikely(!ipa3_ctx)) {
@@ -1745,10 +1738,10 @@ int ipa3_tx_dp(enum ipa_client_type dst, struct sk_buff *skb,
 	 *
 	 */
 	if (IPA_CLIENT_IS_CONS(dst)) {
-		src_ep_idx = ipa3_get_ep_mapping(IPA_CLIENT_APPS_LAN_WAN_PROD);
+		src_ep_idx = ipa3_get_ep_mapping(IPA_CLIENT_APPS_LAN_PROD);
 		if (-1 == src_ep_idx) {
 			IPAERR("Client %u is not mapped\n",
-				IPA_CLIENT_APPS_LAN_WAN_PROD);
+				IPA_CLIENT_APPS_LAN_PROD);
 			goto fail_gen;
 		}
 		dst_ep_idx = ipa3_get_ep_mapping(dst);
@@ -1859,40 +1852,54 @@ int ipa3_tx_dp(enum ipa_client_type dst, struct sk_buff *skb,
 		IPA_STATS_INC_CNT(ipa3_ctx->stats.tx_sw_pkts);
 	} else {
 		/* HW data path */
-		desc[0].opcode =
-			ipahal_imm_cmd_get_opcode(
-				IPA_IMM_CMD_IP_PACKET_TAG_STATUS);
-		desc[0].type = IPA_IMM_CMD_DESC;
-		desc[0].callback = ipa3_tag_destroy_imm;
-		desc[1].pyld = skb->data;
-		desc[1].len = skb_headlen(skb);
-		desc[1].type = IPA_DATA_DESC_SKB;
-		desc[1].callback = ipa3_tx_comp_usr_notify_release;
-		desc[1].user1 = skb;
-		desc[1].user2 = src_ep_idx;
+		data_idx = 0;
+		if (sys->policy == IPA_POLICY_NOINTR_MODE) {
+			/*
+			 * For non-interrupt mode channel (where there is no
+			 * event ring) TAG STATUS are used for completion
+			 * notification. IPA will generate a status packet with
+			 * tag info as a result of the TAG STATUS command.
+			 */
+			desc[data_idx].opcode =
+				ipahal_imm_cmd_get_opcode(
+					IPA_IMM_CMD_IP_PACKET_TAG_STATUS);
+			desc[data_idx].type = IPA_IMM_CMD_DESC;
+			desc[data_idx].callback = ipa3_tag_destroy_imm;
+			data_idx++;
+		}
+		desc[data_idx].pyld = skb->data;
+		desc[data_idx].len = skb_headlen(skb);
+		desc[data_idx].type = IPA_DATA_DESC_SKB;
+		desc[data_idx].callback = ipa3_tx_comp_usr_notify_release;
+		desc[data_idx].user1 = skb;
+		desc[data_idx].user2 = src_ep_idx;
 
 		if (meta && meta->dma_address_valid) {
-			desc[1].dma_address_valid = true;
-			desc[1].dma_address = meta->dma_address;
+			desc[data_idx].dma_address_valid = true;
+			desc[data_idx].dma_address = meta->dma_address;
 		}
 		if (num_frags == 0) {
-			if (ipa3_send(sys, 2, desc, true)) {
+			if (ipa3_send(sys, data_idx + 1, desc, true)) {
 				IPAERR("fail to send skb %p HWP\n", skb);
 				goto fail_mem;
 			}
 		} else {
 			for (f = 0; f < num_frags; f++) {
-				desc[2+f].frag = &skb_shinfo(skb)->frags[f];
-				desc[2+f].type = IPA_DATA_DESC_SKB_PAGED;
-				desc[2+f].len = skb_frag_size(desc[2+f].frag);
+				desc[data_idx+f+1].frag =
+					&skb_shinfo(skb)->frags[f];
+				desc[data_idx+f+1].type =
+					IPA_DATA_DESC_SKB_PAGED;
+				desc[data_idx+f+1].len =
+					skb_frag_size(desc[data_idx+f+1].frag);
 			}
 			/* don't free skb till frag mappings are released */
-			desc[2+f-1].callback = desc[1].callback;
-			desc[2+f-1].user1 = desc[1].user1;
-			desc[2+f-1].user2 = desc[1].user2;
-			desc[1].callback = NULL;
+			desc[data_idx+f].callback = desc[data_idx].callback;
+			desc[data_idx+f].user1 = desc[data_idx].user1;
+			desc[data_idx+f].user2 = desc[data_idx].user2;
+			desc[data_idx].callback = NULL;
 
-			if (ipa3_send(sys, num_frags + 2, desc, true)) {
+			if (ipa3_send(sys, num_frags + data_idx + 1,
+				desc, true)) {
 				IPAERR("fail to send skb %p num_frags %u HWP\n",
 					skb, num_frags);
 				goto fail_mem;
@@ -1970,8 +1977,7 @@ begin:
 		rx_pkt->data.dma_addr = dma_map_single(ipa3_ctx->pdev, ptr,
 						     sys->rx_buff_sz,
 						     DMA_FROM_DEVICE);
-		if (rx_pkt->data.dma_addr == 0 ||
-				rx_pkt->data.dma_addr == ~0) {
+		if (dma_mapping_error(ipa3_ctx->pdev, rx_pkt->data.dma_addr)) {
 			pr_err_ratelimited("%s dma map fail %p for %p sys=%p\n",
 			       __func__, (void *)rx_pkt->data.dma_addr,
 			       ptr, sys);
@@ -2087,6 +2093,8 @@ static void ipa3_cleanup_wlan_rx_common_cache(void)
 	struct ipa3_rx_pkt_wrapper *rx_pkt;
 	struct ipa3_rx_pkt_wrapper *tmp;
 
+	spin_lock_bh(&ipa3_ctx->wc_memb.wlan_spinlock);
+
 	list_for_each_entry_safe(rx_pkt, tmp,
 		&ipa3_ctx->wc_memb.wlan_comm_desc_list, link) {
 		list_del(&rx_pkt->link);
@@ -2106,6 +2114,8 @@ static void ipa3_cleanup_wlan_rx_common_cache(void)
 	if (ipa3_ctx->wc_memb.wlan_comm_total_cnt != 0)
 		IPAERR("wlan comm buff total cnt: %d\n",
 			ipa3_ctx->wc_memb.wlan_comm_total_cnt);
+
+	spin_unlock_bh(&ipa3_ctx->wc_memb.wlan_spinlock);
 
 }
 
@@ -2138,18 +2148,19 @@ static void ipa3_alloc_wlan_rx_common_cache(u32 size)
 		ptr = skb_put(rx_pkt->data.skb, IPA_WLAN_RX_BUFF_SZ);
 		rx_pkt->data.dma_addr = dma_map_single(ipa3_ctx->pdev, ptr,
 				IPA_WLAN_RX_BUFF_SZ, DMA_FROM_DEVICE);
-		if (rx_pkt->data.dma_addr == 0 ||
-				rx_pkt->data.dma_addr == ~0) {
+		if (dma_mapping_error(ipa3_ctx->pdev, rx_pkt->data.dma_addr)) {
 			IPAERR("dma_map_single failure %p for %p\n",
 			       (void *)rx_pkt->data.dma_addr, ptr);
 			goto fail_dma_mapping;
 		}
 
+		spin_lock_bh(&ipa3_ctx->wc_memb.wlan_spinlock);
 		list_add_tail(&rx_pkt->link,
 			&ipa3_ctx->wc_memb.wlan_comm_desc_list);
 		rx_len_cached = ++ipa3_ctx->wc_memb.wlan_comm_total_cnt;
 
 		ipa3_ctx->wc_memb.wlan_comm_free_cnt++;
+		spin_unlock_bh(&ipa3_ctx->wc_memb.wlan_spinlock);
 
 	}
 
@@ -2210,8 +2221,7 @@ static void ipa3_replenish_rx_cache(struct ipa3_sys_context *sys)
 		rx_pkt->data.dma_addr = dma_map_single(ipa3_ctx->pdev, ptr,
 						     sys->rx_buff_sz,
 						     DMA_FROM_DEVICE);
-		if (rx_pkt->data.dma_addr == 0 ||
-				rx_pkt->data.dma_addr == ~0) {
+		if (dma_mapping_error(ipa3_ctx->pdev, rx_pkt->data.dma_addr)) {
 			IPAERR("dma_map_single failure %p for %p\n",
 			       (void *)rx_pkt->data.dma_addr, ptr);
 			goto fail_dma_mapping;
@@ -2301,8 +2311,8 @@ static void ipa3_replenish_rx_cache_recycle(struct ipa3_sys_context *sys)
 			ptr = skb_put(rx_pkt->data.skb, sys->rx_buff_sz);
 			rx_pkt->data.dma_addr = dma_map_single(ipa3_ctx->pdev,
 				ptr, sys->rx_buff_sz, DMA_FROM_DEVICE);
-			if (rx_pkt->data.dma_addr == 0 ||
-				rx_pkt->data.dma_addr == ~0) {
+			if (dma_mapping_error(ipa3_ctx->pdev,
+				rx_pkt->data.dma_addr)) {
 				IPAERR("dma_map_single failure %p for %p\n",
 					(void *)rx_pkt->data.dma_addr, ptr);
 				goto fail_dma_mapping;
@@ -2317,8 +2327,8 @@ static void ipa3_replenish_rx_cache_recycle(struct ipa3_sys_context *sys)
 			ptr = skb_put(rx_pkt->data.skb, sys->rx_buff_sz);
 			rx_pkt->data.dma_addr = dma_map_single(ipa3_ctx->pdev,
 				ptr, sys->rx_buff_sz, DMA_FROM_DEVICE);
-			if (rx_pkt->data.dma_addr == 0 ||
-				rx_pkt->data.dma_addr == ~0) {
+			if (dma_mapping_error(ipa3_ctx->pdev,
+				rx_pkt->data.dma_addr)) {
 				IPAERR("dma_map_single failure %p for %p\n",
 					(void *)rx_pkt->data.dma_addr, ptr);
 				goto fail_dma_mapping;
@@ -3234,7 +3244,8 @@ static void ipa3_free_rx_wrapper(struct ipa3_rx_pkt_wrapper *rk_pkt)
 static int ipa3_assign_policy(struct ipa_sys_connect_params *in,
 		struct ipa3_sys_context *sys)
 {
-	if (in->client == IPA_CLIENT_APPS_CMD_PROD) {
+	if (in->client == IPA_CLIENT_APPS_CMD_PROD ||
+		in->client == IPA_CLIENT_APPS_WAN_PROD) {
 		sys->policy = IPA_POLICY_INTR_MODE;
 		sys->sps_option = (SPS_O_AUTO_ENABLE | SPS_O_EOT);
 		sys->sps_callback = ipa3_sps_irq_tx_no_aggr_notify;
@@ -3665,7 +3676,7 @@ int ipa3_sys_setup(struct ipa_sys_connect_params *sys_in,
 	IPA_ACTIVE_CLIENTS_INC_EP(sys_in->client);
 
 	if (ep->valid == 1) {
-		if (sys_in->client != IPA_CLIENT_APPS_LAN_WAN_PROD) {
+		if (sys_in->client != IPA_CLIENT_APPS_WAN_PROD) {
 			IPAERR("EP %d already allocated\n", ipa_ep_idx);
 			goto fail_and_disable_clocks;
 		} else {
@@ -3986,7 +3997,7 @@ static int ipa_gsi_setup_channel(struct ipa_sys_connect_params *in,
 
 		gsi_evt_ring_props.ring_base_vaddr =
 			dma_alloc_coherent(ipa3_ctx->pdev,
-			gsi_evt_ring_props.ring_len, &evt_dma_addr, GFP_KERNEL);
+			gsi_evt_ring_props.ring_len, &evt_dma_addr, GFP_ATOMIC);
 		if (!gsi_evt_ring_props.ring_base_vaddr) {
 			IPAERR("fail to dma alloc %u bytes\n",
 				gsi_evt_ring_props.ring_len);
@@ -4002,7 +4013,15 @@ static int ipa_gsi_setup_channel(struct ipa_sys_connect_params *in,
 			gsi_evt_ring_props.ring_base_vaddr;
 
 		gsi_evt_ring_props.int_modt = IPA_GSI_EVT_RING_INT_MODT;
-		gsi_evt_ring_props.int_modc = 1;
+		if (ep->client == IPA_CLIENT_APPS_WAN_PROD)
+			gsi_evt_ring_props.int_modc = 248;
+		else
+			gsi_evt_ring_props.int_modc = 1;
+
+		IPADBG("client=%d moderation threshold cycles=%u cnt=%u\n",
+			ep->client,
+			gsi_evt_ring_props.int_modt,
+			gsi_evt_ring_props.int_modc);
 		gsi_evt_ring_props.rp_update_addr = 0;
 		gsi_evt_ring_props.exclusive = true;
 		gsi_evt_ring_props.err_cb = ipa_gsi_evt_ring_err_cb;
@@ -4038,18 +4057,23 @@ static int ipa_gsi_setup_channel(struct ipa_sys_connect_params *in,
 	 * GSI ring length is calculated based on the desc_fifo_sz which was
 	 * meant to define the BAM desc fifo. GSI descriptors are 16B as opposed
 	 * to 8B for BAM. For PROD pipes there is also an additional descriptor
-	 * for TAG STATUS immediate command.
+	 * for TAG STATUS immediate command. APPS_WAN_PROD pipe is an exception
+	 * as this pipe do not use TAG STATUS for completion. Instead it uses
+	 * event ring based completions.
 	 */
-	if (IPA_CLIENT_IS_PROD(ep->client))
+	if (ep->client == IPA_CLIENT_APPS_WAN_PROD)
+		gsi_channel_props.ring_len = 2 * in->desc_fifo_sz;
+	else if (IPA_CLIENT_IS_PROD(ep->client))
 		gsi_channel_props.ring_len = 4 * in->desc_fifo_sz;
 	else
 		gsi_channel_props.ring_len = 2 * in->desc_fifo_sz;
 	gsi_channel_props.ring_base_vaddr =
 		dma_alloc_coherent(ipa3_ctx->pdev, gsi_channel_props.ring_len,
-			&dma_addr, GFP_KERNEL);
+			&dma_addr, GFP_ATOMIC);
 	if (!gsi_channel_props.ring_base_vaddr) {
 		IPAERR("fail to dma alloc %u bytes\n",
 			gsi_channel_props.ring_len);
+		result = -ENOMEM;
 		goto fail_alloc_channel_ring;
 	}
 	gsi_channel_props.ring_base_addr = dma_addr;

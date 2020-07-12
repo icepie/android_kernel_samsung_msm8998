@@ -33,10 +33,6 @@
 #include <linux/device.h>
 #include <linux/wakelock.h>
 
-#if defined(CONFIG_BATTERY_SBM_DATA)
-#include "sec_battery_sbm.h"
-#endif
-
 /* definitions */
 #define SEC_BATTERY_CABLE_HV_WIRELESS_ETX	100
 
@@ -51,13 +47,18 @@ enum power_supply_ext_property {
 	POWER_SUPPLY_EXT_PROP_CHECK_MULTI_CHARGE,
 	POWER_SUPPLY_EXT_PROP_CHIP_ID,
 	POWER_SUPPLY_EXT_PROP_SYSOVLO,
-	POWER_SUPPLY_EXT_PROP_VBAT_OVP,	
-	POWER_SUPPLY_EXT_PROP_USB_CONFIGURE,	
-#if defined(CONFIG_BATTERY_SBM_DATA)	
-	POWER_SUPPLY_EXT_PROP_SBM_DATA,
-#endif
+	POWER_SUPPLY_EXT_PROP_VBAT_OVP,
+	POWER_SUPPLY_EXT_PROP_USB_CONFIGURE,
 	POWER_SUPPLY_EXT_PROP_WDT_STATUS,
+	POWER_SUPPLY_EXT_PROP_HV_DISABLE,
 	POWER_SUPPLY_EXT_PROP_SUB_PBA_TEMP_REC,
+	POWER_SUPPLY_EXT_PROP_INBAT_VOLTAGE_FGSRC_SWITCHING,
+	POWER_SUPPLY_EXT_PROP_FUELGAUGE_RESET,
+	POWER_SUPPLY_EXT_PROP_FACTORY_VOLTAGE_REGULATION,
+	POWER_SUPPLY_EXT_PROP_ANDIG_IVR_SWITCH,
+	POWER_SUPPLY_EXT_PROP_FUELGAUGE_FACTORY,
+	POWER_SUPPLY_EXT_PROP_CURRENT_MEASURE,
+	POWER_SUPPLY_EXT_PROP_UPDATE_BATTERY_DATA
 };
 
 enum sec_battery_usb_conf {
@@ -70,8 +71,6 @@ enum sec_battery_rp_curr {
 	RP_CURRENT_RP1 = 500,
 	RP_CURRENT_RP2 = 1500,
 	RP_CURRENT_RP3 = 3000,
-	RP_CURRENT_DEFAULT_IN = 1800,
-	RP_CURRENT_DEFAULT_OUT = 2100,
 };
 
 enum power_supply_ext_health {
@@ -111,7 +110,10 @@ enum sec_battery_cable {
 	SEC_BATTERY_CABLE_WIRELESS_HV_VEHICLE,	/* 28 */
 	SEC_BATTERY_CABLE_PREPARE_WIRELESS_HV,	/* 29 */
 	SEC_BATTERY_CABLE_TIMEOUT,	        /* 30 */
-	SEC_BATTERY_CABLE_MAX,                	/* 31 */
+	SEC_BATTERY_CABLE_SMART_OTG,            /* 31 */
+	SEC_BATTERY_CABLE_SMART_NOTG,           /* 32 */
+	SEC_BATTERY_CABLE_POGO,                 /* 33 */
+	SEC_BATTERY_CABLE_MAX,                	/* 34 */
 };
 
 enum sec_battery_voltage_mode {
@@ -348,6 +350,12 @@ enum sec_battery_full_charged {
 	SEC_BATTERY_FULLCHARGED_CHGPSY,
 };
 
+/* BATT_INBAT_VOLTAGE */
+enum sec_battery_inbat_fgsrc_switching {
+	SEC_BAT_INBAT_FGSRC_SWITCHING_ON = 0,
+	SEC_BAT_INBAT_FGSRC_SWITCHING_OFF,
+};
+
 #define sec_battery_full_charged_t \
 	enum sec_battery_full_charged
 
@@ -572,7 +580,7 @@ struct sec_charging_current {
 
 #if defined(CONFIG_BATTERY_AGE_FORECAST)
 struct sec_age_data {
-	unsigned int cycle;
+	int cycle;
 	unsigned int float_voltage;
 	unsigned int recharge_condition_vcell;
 	unsigned int full_condition_vcell;
@@ -877,6 +885,8 @@ struct sec_battery_platform_data {
 	int wc_hero_stand_cv_current;
 	int wc_hero_stand_hv_cv_current;
 
+	int default_input_current;
+	int default_charging_current;
 	int max_input_voltage;
 	int max_input_current;
 	int pre_afc_work_delay;
@@ -907,6 +917,7 @@ struct sec_battery_platform_data {
 	unsigned int full_check_current_2nd;
 
 	unsigned int pd_charging_charge_power;
+	unsigned int nv_charge_power;
 
 	unsigned int expired_time;
 	unsigned int recharging_expired_time;
@@ -945,11 +956,6 @@ struct sec_charger_platform_data {
 	sec_battery_full_charged_t full_check_type_2nd;
 
 	sec_charger_functions_t chg_functions_setting;
-
-#if defined(CONFIG_BATTERY_SBM_DATA)
-	int sbm_data_type;
-	char sbm_str[512];
-#endif		
 };
 
 struct sec_fuelgauge_platform_data {
@@ -992,11 +998,6 @@ struct sec_fuelgauge_platform_data {
 	sec_age_data_t* age_data;
 	unsigned int full_condition_soc;
 #endif
-
-#if defined(CONFIG_BATTERY_SBM_DATA)
-	int sbm_data_type;
-	char sbm_str[512];
-#endif	
 };
 
 #define sec_battery_platform_data_t \
@@ -1072,6 +1073,12 @@ static inline struct power_supply *get_power_supply_by_name(char *name)
 
 #define is_wireless_type(cable_type) \
 	(is_hv_wireless_type(cable_type) || is_nv_wireless_type(cable_type))
+
+#define is_wcin_type(cable_type) \
+	(is_wireless_type(cable_type) || is_pogo_type(cable_type))
+
+#define is_pogo_type(cable_type) ( \
+	cable_type == SEC_BATTERY_CABLE_POGO)
 
 #define is_not_wireless_type(cable_type) ( \
 	cable_type != SEC_BATTERY_CABLE_WIRELESS && \

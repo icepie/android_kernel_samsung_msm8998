@@ -17,23 +17,21 @@
 #include "adsp.h"
 #define VENDOR "STM"
 #define CHIP_ID "K6DS3TR"
-#define GYRO_SELFTEST_TRY_CNT	7
 
 #define RAWDATA_TIMER_MS 200
-#define RAWDATA_TIMER_MARGIN_MS	20
-#define SELFTEST_MAX_LIMITATION (172)
-#define SELFTEST_MIN_LIMITATION SELFTEST_MAX_LIMITATION * -1
+#define RAWDATA_TIMER_MARGIN_MS 20
+#define ST_TIMEOUT_CNT 200
 
 static ssize_t gyro_vendor_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%s\n", VENDOR);
+	return snprintf(buf, PAGE_SIZE, "%s\n", VENDOR);
 }
 
 static ssize_t gyro_name_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%s\n", CHIP_ID);
+	return snprintf(buf, PAGE_SIZE, "%s\n", CHIP_ID);
 }
 
 static ssize_t gyro_power_off(struct device *dev,
@@ -41,7 +39,7 @@ static ssize_t gyro_power_off(struct device *dev,
 {
 	pr_info("[FACTORY]: %s\n", __func__);
 
-	return sprintf(buf, "%d\n", 1);
+	return snprintf(buf, PAGE_SIZE, "%d\n", 1);
 }
 
 static ssize_t gyro_power_on(struct device *dev,
@@ -49,71 +47,76 @@ static ssize_t gyro_power_on(struct device *dev,
 {
 	pr_info("[FACTORY]: %s\n", __func__);
 
-	return sprintf(buf, "%d\n", 1);
+	return snprintf(buf, PAGE_SIZE, "%d\n", 1);
 }
 
 static ssize_t gyro_temp_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
-	unsigned long timeout;
 	struct msg_data message;
 	int gyro_temp = -99;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_GYRO_TEMP;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_GYRO_TEMP, 0, 0);
+	data->selftest_ready_flag &= ~(1 << ADSP_FACTORY_GYRO_TEMP);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_GYRO_TEMP, 0, 0);
 
-	timeout = jiffies + (10 * HZ);
-	while (!(data->selftest_ready_flag & 1 << ADSP_FACTORY_GYRO_TEMP)) {
+	while (!(data->selftest_ready_flag & 1 << ADSP_FACTORY_GYRO_TEMP) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
-		if (time_after(jiffies, timeout)) {
-			pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
-			return -1;
-		}
+
+	data->selftest_ready_flag &= ~(1 << ADSP_FACTORY_GYRO_TEMP);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d\n", gyro_temp);
 	}
 
-	data->selftest_ready_flag &= 0 << ADSP_FACTORY_GYRO_TEMP;
 	gyro_temp = data->gyro_st_result.result1;
 	pr_info("[FACTORY] %s: gyro_temp = %d\n", __func__, gyro_temp);
 
-	return sprintf(buf, "%d\n", gyro_temp);
+	return snprintf(buf, PAGE_SIZE, "%d\n", gyro_temp);
 }
 
 static ssize_t gyro_selftest_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
-	unsigned long timeout;
 	struct msg_data message;
 	int gyro_fifo_avg[3] = {0,}, gyro_self_zro[3] = {0,};
 	int gyro_self_bias[3] = {0,}, gyro_self_diff[3] = {0,};
 	int fifo_ret = 0;
 	int cal_ret = 0;
+	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_GYRO;
 
-	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_SELFTEST_SHOW_DATA, 0, 0);
-	timeout = jiffies + (10 * HZ);
+	data->selftest_ready_flag &= ~(1 << ADSP_FACTORY_GYRO);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_SELFTEST_SHOW_DATA, 0, 0);
 
-	while (!(data->selftest_ready_flag & 1 << ADSP_FACTORY_GYRO)) {
+	while (!(data->selftest_ready_flag & 1 << ADSP_FACTORY_GYRO) &&
+		cnt++ < ST_TIMEOUT_CNT)
 		msleep(20);
-		if (time_after(jiffies, timeout)) {
-			pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
-			return sprintf(buf,
-				"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
-				gyro_fifo_avg[0], gyro_fifo_avg[1],
-				gyro_fifo_avg[2], gyro_self_zro[0],
-				gyro_self_zro[1], gyro_self_zro[2],
-				gyro_self_bias[0], gyro_self_bias[1],
-				gyro_self_bias[2], gyro_self_diff[0],
-				gyro_self_diff[1], gyro_self_diff[2],
-				fifo_ret, cal_ret);
-		}
-	}
 
-	data->selftest_ready_flag &= 0 << ADSP_FACTORY_GYRO;
+	data->selftest_ready_flag &= ~(1 << ADSP_FACTORY_GYRO);
+
+	if (cnt >= ST_TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+
+		return snprintf(buf, PAGE_SIZE,
+			"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+			gyro_fifo_avg[0], gyro_fifo_avg[1],
+			gyro_fifo_avg[2], gyro_self_zro[0],
+			gyro_self_zro[1], gyro_self_zro[2],
+			gyro_self_bias[0], gyro_self_bias[1],
+			gyro_self_bias[2], gyro_self_diff[0],
+			gyro_self_diff[1], gyro_self_diff[2],
+			fifo_ret, cal_ret);
+	}
 
 	gyro_fifo_avg[0] = data->gyro_st_result.fifo_zro_x;
 	gyro_fifo_avg[1] = data->gyro_st_result.fifo_zro_y;
@@ -136,28 +139,20 @@ static ssize_t gyro_selftest_show(struct device *dev,
 		cal_ret = 1;
 
 		pr_info("[FACTORY]: %s - "
-			"%d,%d,%d,"
-			"%d,%d,%d,"
-			"%d,%d,%d,"
-			"%d,%d,%d,%d,%d\n", __func__,
+			"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", __func__,
 			gyro_fifo_avg[0], gyro_fifo_avg[1], gyro_fifo_avg[2],
 			gyro_self_zro[0], gyro_self_zro[1], gyro_self_zro[2],
 			gyro_self_bias[0], gyro_self_bias[1], gyro_self_bias[2],
 			gyro_self_diff[0], gyro_self_diff[1], gyro_self_diff[2],
-			fifo_ret,
-			cal_ret);
+			fifo_ret, cal_ret);
 
-		return sprintf(buf,
-			"%d,%d,%d,"
-			"%d,%d,%d,"
-			"%d,%d,%d,"
-			"%d,%d,%d,%d,%d\n",
+		return snprintf(buf, PAGE_SIZE,
+			"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
 			gyro_fifo_avg[0], gyro_fifo_avg[1], gyro_fifo_avg[2],
 			gyro_self_zro[0], gyro_self_zro[1], gyro_self_zro[2],
 			gyro_self_bias[0], gyro_self_bias[1], gyro_self_bias[2],
 			gyro_self_diff[0], gyro_self_diff[1], gyro_self_diff[2],
-			fifo_ret,
-			cal_ret);
+			fifo_ret, cal_ret);
 	} else {
 		pr_info("[FACTORY] %s - failed(%d, %d)\n", __func__,
 			data->gyro_st_result.result1,
@@ -166,7 +161,7 @@ static ssize_t gyro_selftest_show(struct device *dev,
 		pr_info("[FACTORY]: %s - %d,%d,%d\n", __func__,
 			gyro_fifo_avg[0], gyro_fifo_avg[1], gyro_fifo_avg[2]);
 
-		return sprintf(buf, "%d,%d,%d\n",
+		return snprintf(buf, PAGE_SIZE, "%d,%d,%d\n",
 			gyro_fifo_avg[0], gyro_fifo_avg[1], gyro_fifo_avg[2]);
 	}
 }

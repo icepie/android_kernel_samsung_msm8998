@@ -115,7 +115,7 @@ uint32_t Iccc_SaveData_Kernel(uint32_t type, uint32_t value)
 	if (tima_iccc_load(app_name,&q_iccc_handle)) {
 		pr_err("%s: tima_iccc_load() error!\n", __func__);
 		/* Another way for iccc tzapp loading to fail. */
-		q_iccc_handle = NULL; /* Do we have a memory leak this way? */
+		q_iccc_handle = NULL;
 		ret = ICCC_FAILURE; /* iccc authentication failed. */
 		goto iccc_err_ret; /* leave the function now. */
 	}
@@ -285,7 +285,7 @@ static ssize_t iccc_write(struct file *fp, const char __user *buf, size_t len, l
 
 	is_iccc_ready = 1;
 
-#if defined(CONFIG_SECURITY_SELINUX)
+#if 0 //defined(CONFIG_SECURITY_SELINUX)
 	printk(KERN_INFO "%s: selinux_enabled:%d, selinux_enforcing:%d\n",
 		__func__, selinux_is_enabled(), selinux_is_enforcing());
 	if (selinux_is_enabled() && selinux_is_enforcing())

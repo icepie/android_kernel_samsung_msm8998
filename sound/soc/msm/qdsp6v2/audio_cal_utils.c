@@ -119,6 +119,9 @@ size_t get_cal_info_size(int32_t cal_type)
 	case AFE_SIDETONE_CAL_TYPE:
 		size = sizeof(struct audio_cal_info_sidetone);
 		break;
+	case AFE_SIDETONE_IIR_CAL_TYPE:
+		size = sizeof(struct audio_cal_info_sidetone_iir);
+		break;
 	case LSM_CUST_TOPOLOGY_CAL_TYPE:
 		size = 0;
 		break;
@@ -154,9 +157,6 @@ size_t get_cal_info_size(int32_t cal_type)
 		break;
 	case ULP_LSM_CAL_TYPE:
 		size = sizeof(struct audio_cal_info_lsm);
-		break;
-	case DTS_EAGLE_CAL_TYPE:
-		size = 0;
 		break;
 	case AUDIO_CORE_METAINFO_CAL_TYPE:
 		size = sizeof(struct audio_cal_info_metainfo);
@@ -265,6 +265,9 @@ size_t get_user_cal_type_size(int32_t cal_type)
 	case AFE_SIDETONE_CAL_TYPE:
 		size = sizeof(struct audio_cal_type_sidetone);
 		break;
+	case AFE_SIDETONE_IIR_CAL_TYPE:
+		size = sizeof(struct audio_cal_type_sidetone_iir);
+		break;
 	case LSM_CUST_TOPOLOGY_CAL_TYPE:
 		size = sizeof(struct audio_cal_type_basic);
 		break;
@@ -300,9 +303,6 @@ size_t get_user_cal_type_size(int32_t cal_type)
 		break;
 	case ULP_LSM_CAL_TYPE:
 		size = sizeof(struct audio_cal_type_lsm);
-		break;
-	case DTS_EAGLE_CAL_TYPE:
-		size = 0;
 		break;
 	case AUDIO_CORE_METAINFO_CAL_TYPE:
 		size = sizeof(struct audio_cal_type_metainfo);

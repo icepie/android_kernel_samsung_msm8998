@@ -76,8 +76,9 @@ static int dbmd2_uart_prepare_boot(struct dbmdx_private *p)
 		__func__, uart_p->boot_baud_rate);
 
 	/* Send init sequence for up to 100ms at 115200baud.
-	* 1 start bit, 8 data bits, 1 parity bit, 2 stop bits = 12 bits
-	* FIXME: make sure it is multiple of 8 */
+	 * 1 start bit, 8 data bits, 1 parity bit, 2 stop bits = 12 bits
+	 * FIXME: make sure it is multiple of 8
+	 */
 	uart_p->boot_lock_buffer_size = ((uart_p->boot_baud_rate / 12) *
 			UART_SYNC_LENGTH) / 1000;
 
@@ -101,12 +102,8 @@ static int dbmd2_uart_sync(struct dbmdx_private *p)
 	dev_info(p->dev, "%s: start boot sync\n", __func__);
 
 	buf = kzalloc(size, GFP_KERNEL);
-	if (!buf) {
-		dev_err(p->dev,
-				"%s: failure: no memory for sync buffer\n",
-				__func__);
+	if (!buf)
 		return -ENOMEM;
-	}
 
 	for (i = 0; i < size; i += 8) {
 		buf[i]   = 0x00;
@@ -172,7 +169,7 @@ static int dbmd2_uart_reset(struct dbmdx_private *p)
 			uart_p->boot_stop_bits,
 			uart_p->boot_parity,
 			0);
-		return -1;
+		return -EIO;
 	}
 
 	uart_flush_rx_fifo(uart_p);
@@ -253,30 +250,35 @@ static int dbmd2_uart_load_firmware(const void *fw_data, size_t fw_size,
 {
 	struct dbmdx_uart_private *uart_p =
 				(struct dbmdx_uart_private *)p->chip->pdata;
-	int ret;
+	int ret = 0;
 	int sbl_len = 0;
 
-	/* serach proper sbl image */
-	sbl_len = dbmd2_uart_sbl_search(p,  p->clk_type);
-	if (0 > sbl_len) {
-		dev_err(p->dev, "%s: ---------> can not find proper sbl img\n",
-			__func__);
-		return -1;
-	}
+	if (!(p->cur_boot_options & DBMDX_BOOT_OPT_DONT_SENT_SBL)) {
 
-	/* send SBL */
-	ret = uart_write_data(p, (void *)p->sbl_data, sbl_len);
-	if (ret != sbl_len) {
-		dev_err(p->dev, "%s: ---------> load sbl error\n", __func__);
-		return -1;
-	}
+		/* search proper sbl image */
+		sbl_len = dbmd2_uart_sbl_search(p,  p->clk_type);
+		if (sbl_len < 0) {
+			dev_err(p->dev,
+				"%s: ---------> can not find proper sbl img\n",
+				__func__);
+			return -EIO;
+		}
 
-	/* check if SBL is ok */
-	ret = uart_wait_for_ok(p);
-	if (ret != 0) {
-		dev_err(p->dev,
-			"%s: sbl does not respond with ok\n", __func__);
-		return -1;
+		/* send SBL */
+		ret = uart_write_data(p, (void *)p->sbl_data, sbl_len);
+		if (ret != sbl_len) {
+			dev_err(p->dev, "%s: ---------> load sbl error\n",
+				__func__);
+			return -EIO;
+		}
+
+		/* check if SBL is ok */
+		ret = uart_wait_for_ok(p);
+		if (ret != 0) {
+			dev_err(p->dev,
+				"%s: sbl does not respond with ok\n", __func__);
+			return -EIO;
+		}
 	}
 
 	/* set baudrate to FW upload speed */
@@ -285,15 +287,25 @@ static int dbmd2_uart_load_firmware(const void *fw_data, size_t fw_size,
 	if (ret) {
 		dev_err(p->dev, "%s: failed to send change speed command\n",
 			__func__);
-		return -1;
+		return -EIO;
+	}
+	/* verify chip id */
+	if (p->cur_boot_options & DBMDX_BOOT_OPT_VERIFY_CHIP_ID) {
+		ret = uart_verify_chip_id(p);
+		if (ret < 0) {
+			dev_err(p->dev, "%s: couldn't verify chip id\n",
+					__func__);
+			return -EIO;
+		}
 	}
 
-	/* send CRC clear command */
-	ret = uart_write_data(p, clr_crc, sizeof(clr_crc));
-	if (ret != sizeof(clr_crc)) {
-		dev_err(p->dev, "%s: failed to clear CRC\n",
-			 __func__);
-		return -1;
+	if (!(p->cur_boot_options & DBMDX_BOOT_OPT_DONT_CLR_CRC)) {
+		/* send CRC clear command */
+		ret = uart_write_data(p, clr_crc, sizeof(clr_crc));
+		if (ret != sizeof(clr_crc)) {
+			dev_err(p->dev, "%s: failed to clear CRC\n", __func__);
+			return -EIO;
+		}
 	}
 
 	/* send firmware */
@@ -301,17 +313,18 @@ static int dbmd2_uart_load_firmware(const void *fw_data, size_t fw_size,
 	if (ret != (fw_size - 4)) {
 		dev_err(p->dev, "%s: -----------> load firmware error\n",
 			__func__);
-		return -1;
+		return -EIO;
 	}
 	/* verify checksum */
-	if (checksum) {
+	if (checksum && !(p->cur_boot_options &
+					DBMDX_BOOT_OPT_DONT_VERIFY_CRC)) {
 		msleep(DBMDX_MSLEEP_UART_WAIT_FOR_CHECKSUM);
 		ret = uart_verify_boot_checksum(p, checksum, chksum_len);
 		if (ret < 0) {
 			dev_err(uart_p->dev,
 				"%s: could not verify checksum\n",
 				__func__);
-			return -1;
+			return -EIO;
 		}
 	}
 
@@ -333,18 +346,47 @@ static int dbmd2_uart_boot(const void *fw_data, size_t fw_size,
 	dev_dbg(uart_p->dev, "%s\n", __func__);
 
 	do {
-		reset_retry = RETRY_COUNT;
-		do {
-			ret = dbmd2_uart_reset(p);
-			if (ret == 0)
-				break;
-		} while (--reset_retry);
+		if (!(p->boot_mode & DBMDX_BOOT_MODE_RESET_DISABLED)) {
 
-		/* Unable to reset device */
-		if (reset_retry <= 0) {
-			dev_err(p->dev,
-				"%s, reset device err\n", __func__);
-			return -ENODEV;
+			reset_retry = RETRY_COUNT;
+			do {
+				ret = dbmd2_uart_reset(p);
+				if (ret == 0)
+					break;
+			} while (--reset_retry);
+
+			/* Unable to reset device */
+			if (reset_retry <= 0) {
+				dev_err(p->dev,
+					"%s, reset device err\n", __func__);
+				return -ENODEV;
+			}
+		} else {
+			/* If failed and reset is disabled, break */
+			if (fw_load_retry != RETRY_COUNT) {
+				fw_load_retry = -1;
+				break;
+			}
+			/* set baudrate to BOOT baud */
+			ret = uart_configure_tty(uart_p,
+						 uart_p->boot_baud_rate,
+						 uart_p->boot_stop_bits,
+						 uart_p->boot_parity, 0);
+			if (ret) {
+				dev_err(p->dev,
+					"%s: cannot configure tty to: %us%up%uf%u\n",
+					__func__,
+					uart_p->boot_baud_rate,
+					uart_p->boot_stop_bits,
+					uart_p->boot_parity,
+					0);
+				return -ENODEV;
+			}
+
+			uart_flush_rx_fifo(uart_p);
+
+			usleep_range(DBMDX_USLEEP_UART_D2_BEFORE_RESET,
+				DBMDX_USLEEP_UART_D2_BEFORE_RESET + 10000);
 		}
 
 		/* stop here if firmware does not need to be reloaded */
@@ -360,18 +402,18 @@ static int dbmd2_uart_boot(const void *fw_data, size_t fw_size,
 			}
 		}
 
-		ret = send_uart_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
-		if (ret) {
-			dev_err(p->dev, "%s: booting the firmware failed\n",
-				__func__);
-			continue;
+		if (!(p->cur_boot_options &
+			DBMDX_BOOT_OPT_DONT_SEND_START_BOOT)) {
+			/* send boot command */
+			ret = send_uart_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
+			if (ret) {
+				dev_err(p->dev,
+				"%s: booting the firmware failed\n", __func__);
+				continue;
+			}
 		}
 
-		if (p->pdata->uart_low_speed_enabled)
-			ret = uart_set_speed(p, DBMDX_VA_SPEED_NORMAL);
-		else
-			ret = uart_set_speed_host_only(p,
-				DBMDX_VA_SPEED_BUFFERING);
+		ret = uart_set_speed_host_only(p, DBMDX_VA_SPEED_BUFFERING);
 
 		if (ret) {
 			dev_err(p->dev,
@@ -382,22 +424,14 @@ static int dbmd2_uart_boot(const void *fw_data, size_t fw_size,
 
 		msleep(DBMDX_MSLEEP_UART_D2_AFTER_LOAD_FW);
 
-		ret = uart_wait_till_alive(p);
-
-		if (!ret) {
-			dev_err(p->dev,
-				"%s: device not responding\n", __func__);
-			continue;
-		}
-
 		/* everything went well */
 		break;
 	} while (--fw_load_retry);
 
-	if (!fw_load_retry) {
+	if (fw_load_retry <= 0) {
 		dev_err(p->dev, "%s: exceeded max attepmts to load fw\n",
 				__func__);
-		return -1;
+		return -EIO;
 	}
 
 	return 0;
@@ -411,29 +445,6 @@ static int dbmd2_uart_finish_boot(struct dbmdx_private *p)
 	dev_dbg(uart_p->dev, "%s\n", __func__);
 
 	return 0;
-}
-
-static int dbmd2_uart_set_va_firmware_ready(struct dbmdx_private *p)
-{
-	struct dbmdx_uart_private *uart_p =
-				(struct dbmdx_uart_private *)p->chip->pdata;
-	int ret = 0;
-
-	dev_dbg(uart_p->dev, "%s\n", __func__);
-
-	if (p->pdata->uart_low_speed_enabled) {
-		/* set baudrate to NORMAL baud */
-		ret = uart_set_speed(p, DBMDX_VA_SPEED_NORMAL);
-
-		if (ret) {
-			dev_err(p->dev,
-				"%s: failed to send change speed command\n",
-				__func__);
-			goto out;
-		}
-	}
-out:
-	return ret;
 }
 
 static int dbmd2_uart_set_vqe_firmware_ready(struct dbmdx_private *p)
@@ -611,7 +622,6 @@ static int uart_probe(struct platform_device *pdev)
 	p->chip.prepare_boot = dbmd2_uart_prepare_boot;
 	p->chip.boot = dbmd2_uart_boot;
 	p->chip.finish_boot = dbmd2_uart_finish_boot;
-	p->chip.set_va_firmware_ready = dbmd2_uart_set_va_firmware_ready;
 	p->chip.set_vqe_firmware_ready = dbmd2_uart_set_vqe_firmware_ready;
 	p->chip.prepare_buffering = dbmd2_uart_prepare_buffering;
 	p->chip.finish_buffering = dbmd2_uart_finish_buffering;
@@ -633,7 +643,9 @@ static struct platform_driver dbmd2_uart_platform_driver = {
 	.driver = {
 		.name = "dbmd2-uart",
 		.owner = THIS_MODULE,
+#ifdef CONFIG_OF
 		.of_match_table = dbmd2_uart_of_match,
+#endif
 		.pm = &dbmdx_uart_pm,
 	},
 	.probe =  uart_probe,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -607,8 +607,6 @@ static void wcd_cntl_do_shutdown(struct wcd_dsp_cntl *cntl)
 	/* Disable WDOG */
 	snd_soc_update_bits(codec, WCD934X_CPE_SS_WDOG_CFG,
 			    0x3F, 0x01);
-	snd_soc_update_bits(codec, WCD934X_CODEC_RPM_CLK_MCLK_CFG,
-			    0x04, 0x00);
 
 	/* Put WDSP in reset state */
 	snd_soc_update_bits(codec, WCD934X_CPE_SS_CPE_CTL,
@@ -618,6 +616,38 @@ static void wcd_cntl_do_shutdown(struct wcd_dsp_cntl *cntl)
 	if (cntl->is_wdsp_booted)
 		cntl->cdc_cb->cdc_vote_svs(codec, true);
 	cntl->is_wdsp_booted = false;
+}
+
+static u16 regs_to_dump[] = {
+	0x21F,
+	0x201,
+	0x202,
+	0x203,
+	0x204,
+	0x205,
+	0x206,
+	0x207,
+	0x208,
+	0x209,
+	0x20A,
+	0x20B,
+	0x20F,
+	0x221,
+	0x222,
+	0x225,
+	0x226,
+};
+
+static void wdsp_dump_dbg_registers(struct snd_soc_codec *codec)
+{
+	u8 reg_val;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(regs_to_dump); i++) {
+		reg_val = snd_soc_read(codec, regs_to_dump[i]);
+		pr_err("%s: reg 0x%x, value = 0x%x\n",
+			__func__, regs_to_dump[i], reg_val);
+	}
 }
 
 static int wcd_cntl_do_boot(struct wcd_dsp_cntl *cntl)
@@ -633,11 +663,7 @@ static int wcd_cntl_do_boot(struct wcd_dsp_cntl *cntl)
 	if (cntl->debug_mode) {
 		snd_soc_update_bits(codec, WCD934X_CPE_SS_WDOG_CFG,
 				    0x3F, 0x01);
-		snd_soc_update_bits(codec, WCD934X_CODEC_RPM_CLK_MCLK_CFG,
-				    0x04, 0x00);
 	} else {
-		snd_soc_update_bits(codec, WCD934X_CODEC_RPM_CLK_MCLK_CFG,
-				    0x04, 0x04);
 		snd_soc_update_bits(codec, WCD934X_CPE_SS_WDOG_CFG,
 				    0x3F, 0x21);
 	}
@@ -669,6 +695,19 @@ static int wcd_cntl_do_boot(struct wcd_dsp_cntl *cntl)
 	if (!ret) {
 		dev_err(codec->dev, "%s: WDSP boot timed out\n",
 			__func__);
+		snd_soc_write(codec, WCD934X_CPE_SS_BACKUP_INT, 0x02);
+
+		wdsp_dump_dbg_registers(codec);
+
+		msleep(1000);
+		if (cntl->m_dev && cntl->m_ops &&
+		    cntl->m_ops->signal_handler)
+			ret = cntl->m_ops->signal_handler(cntl->m_dev, WDSP_DBG_RAMDUMP_SIGNAL,
+						  NULL);
+		else
+			dev_err(codec->dev, "%s: no signal handler callback ??\n",
+				__func__);
+
 		ret = -ETIMEDOUT;
 		goto err_boot;
 	} else {
@@ -1012,11 +1051,9 @@ static int wcd_control_init(struct device *dev, void *priv_data)
 		goto done;
 	}
 
-	/* Unmask the fatal irqs */
-	snd_soc_write(codec, WCD934X_CPE_SS_SS_ERROR_INT_MASK_0A,
-		      ~(cntl->irqs.fatal_irqs & 0xFF));
-	snd_soc_write(codec, WCD934X_CPE_SS_SS_ERROR_INT_MASK_0B,
-		      ~((cntl->irqs.fatal_irqs >> 8) & 0xFF));
+	/* Unmask all the irqs */
+	snd_soc_write(codec, WCD934X_CPE_SS_SS_ERROR_INT_MASK_0A, 0x0E);
+	snd_soc_write(codec, WCD934X_CPE_SS_SS_ERROR_INT_MASK_0B, 0x00);
 
 	/*
 	 * CPE ERR irq is used only for error reporting from WCD DSP,

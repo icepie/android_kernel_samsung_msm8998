@@ -805,6 +805,8 @@ int rtc6213n_set_vol(struct rtc6213n_device *radio, int db)
 		0x0000, 0x0000, 0x0072, 0x00FF, 0x001F, 0x03FF, 0x16D1,
 		0x13B7, 0x0000};
 
+	mutex_lock(&radio->lock);
+
 	/*	First read all from bank0 */
 	if (rtc6213n_get_all_registers(radio) < 0) {
 		retval = -EIO;
@@ -935,6 +937,7 @@ int rtc6213n_set_vol(struct rtc6213n_device *radio, int db)
 	retval = rtc6213n_set_serial_registers(radio, swbk7, 23);
 
 done:
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -947,8 +950,6 @@ static int rtc6213n_vidioc_s_ctrl(struct file *file, void *priv,
 	struct rtc6213n_device *radio = video_drvdata(file);
 	int retval = 0;
 	
-	mutex_lock(&radio->lock);
-
 	/* safety checks */
 	retval = rtc6213n_disconnect_check(radio);
 	if (retval)
@@ -960,13 +961,18 @@ static int rtc6213n_vidioc_s_ctrl(struct file *file, void *priv,
 	case V4L2_CID_AUDIO_VOLUME:
 		dev_info(&radio->videodev->dev, "V4L2_CID_AUDIO_VOLUME : MPXCFG=0x%4.4hx POWERCFG=0x%4.4hx\n",
 			radio->registers[MPXCFG], radio->registers[POWERCFG]);
+		if ((ctrl->value > 15) || (ctrl->value < 0)) {
+			dev_err(&radio->videodev->dev, "Invalid volume index\n");
+			retval = -EINVAL;
+			goto done;
+		}
 	#ifdef New_VolumeControl
 		/* Volume Setting No1 - 20160714 */
 		global_volume = ctrl->value;
 		if(radio->vol_db)
 			retval = rtc6213n_set_vol(radio, radio->rx_vol[ctrl->value]);
 		else {
-			radio->registers[POWERCFG] = (ctrl->value < 9) ? (radio->registers[POWERCFG] | 0x0008) : 
+			radio->registers[POWERCFG] = (ctrl->value < 9) ? (radio->registers[POWERCFG] | 0x0008) :
 				(radio->registers[POWERCFG] & 0xFFF7);
 			if(ctrl->value == 8)
 				retval = rtc6213n_set_register(radio, POWERCFG);
@@ -989,11 +995,13 @@ static int rtc6213n_vidioc_s_ctrl(struct file *file, void *priv,
 	#endif
 		break;
 	case V4L2_CID_AUDIO_MUTE:
+		mutex_lock(&radio->lock);
 		if (ctrl->value == 1)
 			radio->registers[MPXCFG] &= ~MPXCFG_CSR0_DIS_MUTE;
 		else
 			radio->registers[MPXCFG] |= MPXCFG_CSR0_DIS_MUTE;
 		retval = rtc6213n_set_register(radio, MPXCFG);
+		mutex_unlock(&radio->lock);
 		break;
 	/* PRIVATE CID */
 	case V4L2_CID_PRIVATE_CSR0_DIS_SMUTE:
@@ -1090,7 +1098,6 @@ done:
 		"set control failed with %d\n", retval);
 	dev_info(&radio->videodev->dev, "========= Set V4L2_CONTROL End [0x%x] =====\n", ctrl->id);
 	
-	mutex_unlock(&radio->lock);
 	return retval;
 }
 

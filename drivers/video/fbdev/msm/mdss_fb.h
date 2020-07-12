@@ -232,7 +232,9 @@ struct msm_mdp_interface {
 	int (*configure_panel)(struct msm_fb_data_type *mfd, int mode,
 				int dest_ctrl);
 	int (*input_event_handler)(struct msm_fb_data_type *mfd);
+	void (*footswitch_ctrl)(bool on);
 	int (*pp_release_fnc)(struct msm_fb_data_type *mfd);
+	void (*signal_retire_fence)(struct msm_fb_data_type *mfd);
 	void *private1;
 };
 
@@ -240,6 +242,10 @@ struct msm_mdp_interface {
 #define MDSS_BRIGHT_TO_BL(out, v, bl_max, max_bright) do {\
 				out = (2 * (v) * (bl_max) + max_bright);\
 				do_div(out, 2 * max_bright);\
+				} while (0)
+#define MDSS_BL_TO_BRIGHT(out, v, bl_max, max_bright) do {\
+				out = (2 * ((v) * (max_bright)) + (bl_max));\
+				do_div(out, 2 * bl_max);\
 				} while (0)
 
 struct mdss_fb_file_info {
@@ -251,6 +257,12 @@ struct msm_fb_backup_type {
 	struct fb_info info;
 	struct mdp_display_commit disp_commit;
 	bool   atomic_commit;
+};
+
+struct msm_fb_fps_info {
+	u32 frame_count;
+	ktime_t last_sampled_time_us;
+	u32 measured_fps;
 };
 
 struct msm_fb_data_type {
@@ -271,6 +283,7 @@ struct msm_fb_data_type {
 
 	int idle_time;
 	u32 idle_state;
+	struct msm_fb_fps_info fps_info;
 	struct delayed_work idle_notify_work;
 
 	bool atomic_commit_pending;
@@ -298,11 +311,14 @@ struct msm_fb_data_type {
 	u32 calib_mode_bl;
 	u32 ad_bl_level;
 	u32 bl_level;
+	int bl_extn_level;
 	u32 bl_scale;
 	u32 unset_bl_level;
 	bool allow_bl_update;
 	u32 bl_level_scaled;
+	u32 bl_level_usr;
 	struct mutex bl_lock;
+	struct mutex mdss_sysfs_lock;
 	bool ipc_resume;
 
 	struct platform_device *pdev;
@@ -378,6 +394,12 @@ static inline void mdss_fb_update_notify_update(struct msm_fb_data_type *mfd)
 	}
 }
 
+/* Function returns true for split link */
+static inline bool is_panel_split_link(struct msm_fb_data_type *mfd)
+{
+	return mfd && mfd->panel_info && mfd->panel_info->split_link_enabled;
+}
+
 /* Function returns true for either any kind of dual display */
 static inline bool is_panel_split(struct msm_fb_data_type *mfd)
 {
@@ -425,12 +447,17 @@ static inline bool mdss_fb_is_power_on_ulp(struct msm_fb_data_type *mfd)
 	return mdss_panel_is_power_on_ulp(mfd->panel_power_state);
 }
 
+
 static inline bool mdss_fb_is_hdmi_primary(struct msm_fb_data_type *mfd)
 {
 	return (mfd && (mfd->index == 0) &&
 		(mfd->panel_info->type == DTV_PANEL));
 }
 
+static inline void mdss_fb_init_fps_info(struct msm_fb_data_type *mfd)
+{
+	memset(&mfd->fps_info, 0, sizeof(mfd->fps_info));
+}
 int mdss_fb_get_phys_info(dma_addr_t *start, unsigned long *len, int fb_num);
 void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl);
 void mdss_fb_update_backlight(struct msm_fb_data_type *mfd);
@@ -454,5 +481,6 @@ u32 mdss_fb_get_mode_switch(struct msm_fb_data_type *mfd);
 void mdss_fb_report_panel_dead(struct msm_fb_data_type *mfd);
 void mdss_panelinfo_to_fb_var(struct mdss_panel_info *pinfo,
 						struct fb_var_screeninfo *var);
+void mdss_fb_calc_fps(struct msm_fb_data_type *mfd);
 void mdss_fb_idle_pc(struct msm_fb_data_type *mfd);
 #endif /* MDSS_FB_H */

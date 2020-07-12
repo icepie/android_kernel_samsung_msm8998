@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -153,7 +153,7 @@ struct sdhci_msm_pltfm_data {
 	u32 ice_clk_max;
 	u32 ice_clk_min;
 	struct sdhci_msm_pm_qos_data pm_qos_data;
-	bool core_3_0v_support;
+	bool sdr104_wa;
 };
 
 struct sdhci_msm_bus_vote {
@@ -172,9 +172,17 @@ struct sdhci_msm_ice_data {
 	int state;
 };
 
+struct sdhci_msm_debug_data {
+	struct mmc_host copy_mmc;
+	struct mmc_card copy_card;
+	struct sdhci_host copy_host;
+};
+
 struct sdhci_msm_host {
 	struct platform_device	*pdev;
 	void __iomem *core_mem;    /* MSM SDCC mapped address */
+	void __iomem *cryptoio;    /* ICE HCI mapped address */
+	bool ice_hci_support;
 	int	pwr_irq;	/* power irq */
 	struct clk	 *clk;     /* main SD/MMC bus clock */
 	struct clk	 *pclk;    /* SDHC peripheral bus clock */
@@ -185,6 +193,7 @@ struct sdhci_msm_host {
 	atomic_t clks_on; /* Set if clocks are enabled */
 	struct sdhci_msm_pltfm_data *pdata;
 	struct mmc_host  *mmc;
+	struct sdhci_msm_debug_data cached_data;
 	struct sdhci_pltfm_data sdhci_msm_pdata;
 	u32 curr_pwr_state;
 	u32 curr_io_level;
@@ -212,11 +221,16 @@ struct sdhci_msm_host {
 	int pm_qos_prev_cpu;
 	struct device_attribute pm_qos_group_enable_attr;
 	struct device_attribute pm_qos_group_status_attr;
+#ifdef CONFIG_SEC_FACTORY
+	struct device_attribute vector_screen_attr;
+#endif
 	bool pm_qos_group_enable;
 	struct sdhci_msm_pm_qos_irq pm_qos_irq;
 	bool tuning_in_progress;
 	bool mci_removed;
 	const struct sdhci_msm_offset *offset;
+	bool core_3_0v_support;
+	bool pltfm_init_done;
 };
 
 extern char *saved_command_line;

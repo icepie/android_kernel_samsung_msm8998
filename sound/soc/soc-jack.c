@@ -115,9 +115,6 @@ void snd_soc_jack_report(struct snd_soc_jack *jack, int status, int mask)
 	jack->status |= status & mask;
 
 #ifdef CONFIG_SND_SOC_WCD_MBHC
-	dev_info(jack->card->dev,
-		"ASoC: mask = 0x%x status = 0x%x\n", mask, status);
-
 	if (mask & WCD_MBHC_JACK_MASK) {
 		if (status == SEC_JACK_NO_DEVICE)
 			switch_set_state(&android_switch, SEC_JACK_NO_DEVICE);
@@ -125,6 +122,9 @@ void snd_soc_jack_report(struct snd_soc_jack *jack, int status, int mask)
 			switch_set_state(&android_switch, SEC_HEADSET_3POLE);
 		else if (status == (SND_JACK_HEADSET | SND_JACK_MECHANICAL))
 			switch_set_state(&android_switch, SEC_HEADSET_4POLE);
+
+		dev_info(jack->card->dev,
+			"ASoC: mask = 0x%x status = 0x%x\n", mask, status);
 	}
 #endif
 	trace_snd_soc_jack_notify(jack, status);

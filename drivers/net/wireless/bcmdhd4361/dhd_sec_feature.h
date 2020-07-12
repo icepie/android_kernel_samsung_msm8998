@@ -1,7 +1,7 @@
 /*
  * Customer HW 4 dependant file
  *
- * Copyright (C) 1999-2017, Broadcom Corporation
+ * Copyright (C) 1999-2018, Broadcom Corporation
  * 
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -87,9 +87,10 @@
 	* CONFIG_ARCH_MSM8996 || CONFIG_SOC_EXYNOS8890
 	*/
 
-#if defined(CONFIG_ARCH_MSM8996) || defined(CONFIG_SOC_EXYNOS8890)
+#if defined(CONFIG_ARCH_MSM8996) || defined(CONFIG_SOC_EXYNOS8890) || \
+	defined(CONFIG_ARCH_MSM8998)
 #define SUPPORT_BCM4359_MIXED_MODULES
-#endif /* CONFIG_ARCH_MSM8996 || CONFIG_SOC_EXYNOS8890 */
+#endif /* MSM8996 || EXYNOS8890 || MSM8998 */
 
 #ifdef BCMPCIE
 /* For EXYNOS PCIe RC Control */
@@ -106,6 +107,9 @@
 #if defined(CONFIG_SPLIT_ARGOS_SET)
 #define ARGOS_IRQ_WIFI_TABLE_LABEL "WIFI TX"
 #define ARGOS_WIFI_TABLE_LABEL "WIFI RX"
+#if defined(DYNAMIC_MUMIMO_CONTROL)
+#define ARGOS_WIFI_TABLE_FOR_MIMO_LABEL "WIFI"
+#endif /* DYNAMIC_MUMIMO_CONTROL */
 #else /* CONFIG_SPLIT_ARGOS_SET */
 #define ARGOS_IRQ_WIFI_TABLE_LABEL "WIFI"
 #define ARGOS_WIFI_TABLE_LABEL "WIFI"
@@ -113,13 +117,13 @@
 #define ARGOS_P2P_TABLE_LABEL "P2P"
 #endif /* CONFIG_ARGOS */
 
-#ifndef DHD_LB_IRQSET
 #if defined(CONFIG_ARCH_MSM8998)
+#ifndef DHD_LB_IRQSET
 #define SET_PCIE_IRQ_CPU_CORE
 #define PCIE_IRQ_BIG_CORE 6
 #define PCIE_IRQ_LITTLE_CORE 0
-#endif /* CONFIG_ARCH_MSM8998 */
 #endif /* DHD_LB_IRQSET */
+#endif /* CONFIG_ARCH_MSM8998 */
 
 /* PROJECTS START */
 
@@ -134,7 +138,8 @@
 #define DPC_CPUCORE 4
 #define RXF_CPUCORE 7
 #define ARGOS_CPU_SCHEDULER
-#elif defined(CONFIG_MACH_UNIVERSAL5430) && defined(CONFIG_BCM43455)
+#elif (defined(CONFIG_MACH_UNIVERSAL5430) || defined(CONFIG_MACH_UNIVERSAL5433)) && \
+	defined(CONFIG_BCM43455)
 #define CUSTOM_SET_CPUCORE
 #define PRIMARY_CPUCORE 0
 #define MAX_RETRY_SET_CPUCORE 5
@@ -147,6 +152,13 @@
 #define DPC_CPUCORE 1
 #define RXF_CPUCORE 2
 #elif defined(CONFIG_SOC_EXYNOS7870) && defined(CONFIG_BCM43455)
+#define CUSTOM_SET_CPUCORE
+#define PRIMARY_CPUCORE 0
+#define MAX_RETRY_SET_CPUCORE 5
+#define DPC_CPUCORE 1
+#define RXF_CPUCORE 2
+#define ARGOS_CPU_SCHEDULER
+#elif defined(CONFIG_SOC_EXYNOS7870) && defined(CONFIG_BCM43456)
 #define CUSTOM_SET_CPUCORE
 #define PRIMARY_CPUCORE 0
 #define MAX_RETRY_SET_CPUCORE 5
@@ -283,6 +295,9 @@
 
 #if (CONFIG_WLAN_REGION_CODE >= 200) && (CONFIG_WLAN_REGION_CODE < 300) /* KOR */
 #undef USE_INITIAL_2G_SCAN
+#if defined(CONFIG_WLAN_GREAT)
+#undef DHDTCPACK_SUPPRESS
+#endif /* CONFIG_WLAN_GREAT */
 #ifndef ROAM_ENABLE
 #define ROAM_ENABLE
 #endif /* ROAM_ENABLE */

@@ -66,11 +66,49 @@ dtb-y = msm8998-sec-dream2q-jpn-r07.dtb \
 					msm8998-sec-dream2q-jpn-r12.dtb
 endif
 
+dtb-$(CONFIG_SEC_GREATQLTE_PROJECT) += msm8998-sec-greatq-r00.dtb \
+					 msm8998-sec-greatq-r01.dtb \
+					 msm8998-sec-greatq-r02.dtb \
+					 msm8998-sec-greatq-r03.dtb \
+					 msm8998-sec-greatq-r04.dtb \
+					 msm8998-sec-greatq-r05.dtb \
+					 msm8998-sec-greatq-r06.dtb \
+					 msm8998-sec-greatq-r07.dtb \
+					 msm8998-sec-greatq-r08.dtb
 
-dtb-$(CONFIG_SEC_BAIKALQLTE_PROJECT) += msm8998-sec-baikalq-r00.dtb \
-					 msm8998-sec-baikalq-r01.dtb
+ifeq ($(filter y,$(CONFIG_MACH_GREATQLTE_CHNZC) $(CONFIG_MACH_GREATQLTE_CHN_LDU) $(CONFIG_MACH_GREATQLTE_CHNZM)),y)
+dtb-y = msm8998-sec-greatq-chn-r04.dtb \
+				msm8998-sec-greatq-chn-r05.dtb \
+				msm8998-sec-greatq-chn-r07.dtb \
+				msm8998-sec-greatq-chn-r08.dtb
+endif
+
+ifeq ($(filter y,$(CONFIG_MACH_GREATQLTE_CHNHK)),y)
+dtb-y = msm8998-sec-greatq-chnhk-r04.dtb \
+				msm8998-sec-greatq-chnhk-r05.dtb \
+				msm8998-sec-greatq-chnhk-r07.dtb \
+				msm8998-sec-greatq-chnhk-r08.dtb
+endif
+
+ifeq ($(filter y,$(CONFIG_MACH_GREATQLTE_DCM) $(CONFIG_MACH_GREATQLTE_KDI)),y)
+dtb-y = msm8998-sec-greatq-jpn-r06.dtb \
+				msm8998-sec-greatq-jpn-r08.dtb \
+				msm8998-sec-greatq-jpn-r11.dtb \
+				msm8998-sec-greatq-jpn-r12.dtb
+endif
 
 dtb-$(CONFIG_SEC_CRUISERLTE_PROJECT) += msm8998-sec-cruiser-r00.dtb 
+
+dtb-$(CONFIG_SEC_KELLYLTE_PROJECT) += msm8998-sec-kelly-r00.dtb \
+				msm8998-sec-kelly-r01.dtb \
+				msm8998-sec-kelly-r02.dtb \
+				msm8998-sec-kelly-r03.dtb \
+				msm8998-sec-kelly-r04.dtb
+
+dtb-$(CONFIG_SEC_GTS4LLTE_PROJECT) += msm8998-sec-gts4llte-r00.dtb \
+				msm8998-sec-gts4llte-r01.dtb \
+				msm8998-sec-gts4llte-r02.dtb \
+				msm8998-sec-gts4llte-r03.dtb
 
 ifeq ($(CONFIG_ARM64),y)
 always          := $(dtb-y)

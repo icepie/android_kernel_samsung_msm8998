@@ -25,11 +25,13 @@
 #include <soc/qcom/camera2.h>
 #include <linux/debugfs.h>
 #include <linux/gpio.h>
+#include <linux/of_gpio.h>
 
 extern struct class *camera_class; /*sys/class/camera*/
 struct device *s2mpb02_led_dev;
 struct s2mpb02_led_data **global_led_datas;
 static bool sysfs_flash_op;
+bool flash_config_factory;
 
 struct msm_pinctrl_info g_led_pinctrl_info;
 
@@ -200,40 +202,79 @@ static void s2mpb02_led_set(struct led_classdev *led_cdev,
 	schedule_work(&led_data->work);
 }
 
-static void led_set(struct s2mpb02_led_data *led_data)
+static void led_set(struct s2mpb02_led_data *led_data, enum s2mpb02_led_turn_way turn_way)
 {
 	int ret;
 	struct s2mpb02_led *data = led_data->data;
 	int id = data->id;
-	int value;
+	int value = 0, i = 0;
 
-	if (led_data->test_brightness == LED_OFF) {
+	if (turn_way == S2MPB02_LED_TURN_WAY_GPIO) {
+		/* Turn way LED by GPIO */
 		value = s2mpb02_led_get_en_value(led_data, 0);
 		ret = s2mpb02_set_bits(led_data->i2c,
-					S2MPB02_REG_FLED_CTRL1, S2MPB02_FLED_ENABLE_MODE_MASK, value);
+				S2MPB02_REG_FLED_CTRL1, S2MPB02_FLED_ENABLE_MODE_MASK, value);
 		if (unlikely(ret))
 			goto error_set_bits;
 
-		/* set current */
-		ret = s2mpb02_set_bits(led_data->i2c, S2MPB02_REG_FLED_CUR1,
+		if (led_data->test_brightness == LED_OFF) {
+			/* set current */
+			ret = s2mpb02_set_bits(led_data->i2c, S2MPB02_REG_FLED_CUR1,
 					  leds_mask[id], data->brightness << leds_shift[id]);
-		if (unlikely(ret))
-			goto error_set_bits;
-		s2mpb02_led_pinctrl_config(0);
+			if (unlikely(ret))
+				goto error_set_bits;
+
+			for (i = 0; i < S2MPB02_LED_MAX; i++) {
+				if (global_led_datas[i] && global_led_datas[i]->data) {
+					gpio_request(global_led_datas[i]->data->gpio, NULL);
+					gpio_direction_output(global_led_datas[i]->data->gpio, 0);
+					gpio_free(global_led_datas[i]->data->gpio);
+				}
+			}
+			s2mpb02_led_pinctrl_config(0);
+		} else {
+			s2mpb02_led_pinctrl_config(1);
+			/* set current */
+			ret = s2mpb02_set_bits(led_data->i2c, S2MPB02_REG_FLED_CUR1,
+					  leds_mask[id], data->brightness << leds_shift[id]);
+			if (unlikely(ret))
+				goto error_set_bits;
+
+			if (global_led_datas[id] && global_led_datas[id]->data) {
+				gpio_request(global_led_datas[id]->data->gpio, NULL);
+				gpio_direction_output(global_led_datas[id]->data->gpio, 1);
+				gpio_free(global_led_datas[id]->data->gpio);
+			}
+		}
 	} else {
-		s2mpb02_led_pinctrl_config(1);
-		/* set current */
-		ret = s2mpb02_set_bits(led_data->i2c, S2MPB02_REG_FLED_CUR1,
-					  leds_mask[id], data->brightness << leds_shift[id]);
-		if (unlikely(ret))
-			goto error_set_bits;
+		if (led_data->test_brightness == LED_OFF) {
+			value = s2mpb02_led_get_en_value(led_data, 0);
+			ret = s2mpb02_set_bits(led_data->i2c,
+						S2MPB02_REG_FLED_CTRL1, S2MPB02_FLED_ENABLE_MODE_MASK, value);
+			if (unlikely(ret))
+				goto error_set_bits;
 
-		/* Turn on LED by I2C */
-		value = s2mpb02_led_get_en_value(led_data, 1);
-		ret = s2mpb02_set_bits(led_data->i2c,
-					S2MPB02_REG_FLED_CTRL1, S2MPB02_FLED_ENABLE_MODE_MASK, value);
-		if (unlikely(ret))
-			goto error_set_bits;
+			/* set current */
+			ret = s2mpb02_set_bits(led_data->i2c, S2MPB02_REG_FLED_CUR1,
+						  leds_mask[id], data->brightness << leds_shift[id]);
+			if (unlikely(ret))
+				goto error_set_bits;
+			s2mpb02_led_pinctrl_config(0);
+		} else {
+			s2mpb02_led_pinctrl_config(1);
+			/* set current */
+			ret = s2mpb02_set_bits(led_data->i2c, S2MPB02_REG_FLED_CUR1,
+						  leds_mask[id], data->brightness << leds_shift[id]);
+			if (unlikely(ret))
+				goto error_set_bits;
+
+			/* Turn on LED by I2C */
+			value = s2mpb02_led_get_en_value(led_data, 1);
+			ret = s2mpb02_set_bits(led_data->i2c,
+						S2MPB02_REG_FLED_CTRL1, S2MPB02_FLED_ENABLE_MODE_MASK, value);
+			if (unlikely(ret))
+				goto error_set_bits;
+		}
 	}
 
 	return;
@@ -252,7 +293,7 @@ static void s2mpb02_led_work(struct work_struct *work)
 	pr_debug("[LED] %s\n", __func__);
 
 	mutex_lock(&led_data->lock);
-	led_set(led_data);
+	led_set(led_data, S2MPB02_LED_TURN_WAY_I2C);
 	mutex_unlock(&led_data->lock);
 }
 
@@ -306,7 +347,7 @@ void s2mpb02_led_get_status(struct led_classdev *led_cdev, bool status, bool ono
 		__func__, status, onoff, value[0], value[1], value[2], value[3], value[4], value[5]);
 }
 
-int s2mpb02_led_en(int mode, int onoff)
+int s2mpb02_led_en(int mode, int onoff, enum s2mpb02_led_turn_way turn_way)
 {
 	int ret = 0;
 	int i=0;
@@ -348,7 +389,7 @@ int s2mpb02_led_en(int mode, int onoff)
 		global_led_datas[mode]->test_brightness = LED_OFF;
 	}
 
-	led_set(global_led_datas[mode]);
+	led_set(global_led_datas[mode], turn_way);
 
 	return ret;
 }
@@ -494,7 +535,7 @@ ssize_t s2mpb02_store(struct device *dev,
 			struct device_attribute *attr, const char *buf,
 			size_t count)
 {
-	int i = 0;
+	int i = 0, ret = 0;
 	int onoff = -1;
 	sysfs_flash_op = 0;
 
@@ -523,18 +564,36 @@ ssize_t s2mpb02_store(struct device *dev,
 	} else if (onoff == 100) {
 		// Factory Torch ON
 		onoff = S2MPB02_TORCH_OUT_I_240MA;
+	} else if (onoff == 200) {
+		pr_info("<%s> sysfs flash value %d\n", __func__, onoff);
+
+		/* Factory mode Turn on Flash */
+		/* set reserved reg. 0x63 for continuous flash on */
+		flash_config_factory = true;
+		ret = s2mpb02_write_reg(global_led_datas[S2MPB02_FLASH_LED_1]->i2c, 0x63, 0x5F);
+		if (ret < 0)
+			pr_info("[LED]%s , failed set flash register setting\n", __func__);
+		onoff = S2MPB02_FLASH_OUT_I_300MA;
 	} else if (onoff == 1001) {
 		// level 1 (Flashlight level 1)
 		onoff = S2MPB02_TORCH_OUT_I_40MA;
 	} else if (onoff == 1002) {
 		// level 2 (Flashlight level 2)
+#if defined(CONFIG_SEC_GREATQLTE_PROJECT)
+		onoff = S2MPB02_TORCH_OUT_I_80MA;
+#else
 		onoff = S2MPB02_TORCH_OUT_I_60MA;
+#endif
 	} else if (onoff == 1003) {
 		// level 3
 		onoff = S2MPB02_TORCH_OUT_I_80MA;
 	} else if (onoff == 1004) {
 		// level 4 (Flashlight level 3)
+#if defined(CONFIG_SEC_GREATQLTE_PROJECT)
+		onoff = S2MPB02_TORCH_OUT_I_100MA;
+#else
 		onoff = S2MPB02_TORCH_OUT_I_80MA;
+#endif
 	} else if (onoff == 1005) {
 		// level 5
 		onoff = S2MPB02_TORCH_OUT_I_120MA;
@@ -562,7 +621,15 @@ ssize_t s2mpb02_store(struct device *dev,
 		onoff = 0;
 	}
 
-	s2mpb02_led_en(S2MPB02_TORCH_LED_1, onoff);
+	if (flash_config_factory) {
+		if (onoff == 0) {
+			s2mpb02_write_reg(global_led_datas[S2MPB02_FLASH_LED_1]->i2c, 0x63, 0x7F);
+			flash_config_factory = false;
+		}
+		s2mpb02_led_en(S2MPB02_FLASH_LED_1, onoff, S2MPB02_LED_TURN_WAY_GPIO);
+	} else
+		s2mpb02_led_en(S2MPB02_TORCH_LED_1, onoff, S2MPB02_LED_TURN_WAY_GPIO);
+
 	if (onoff)
 		sysfs_flash_op = 1;
 
@@ -651,6 +718,11 @@ static int of_s2mpb02_led_dt(struct s2mpb02_dev *iodev,
 		if (ret < 0)
 			goto dt_err;
 		pdata->leds[index].default_trigger= temp_str;
+
+		temp = of_gpio_count(c_np);
+		if (temp > 0) {
+			pdata->leds[index].gpio = of_get_gpio(c_np, 0);
+		}
 	}
 	of_node_put(led_np);
 
@@ -785,6 +857,7 @@ static int s2mpb02_led_probe(struct platform_device *pdev)
 #endif
 
 	s2mpb02_led_dev = device_create(camera_class, NULL, 0, NULL, "flash");
+
 	if (IS_ERR(s2mpb02_led_dev)) {
 		pr_err("<%s> Failed to create device(flash)!\n", __func__);
 		return -ENODEV;

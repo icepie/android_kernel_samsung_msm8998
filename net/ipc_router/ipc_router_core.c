@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,6 +31,9 @@
 #include <linux/ipc_router.h>
 #include <linux/ipc_router_xprt.h>
 #include <linux/kref.h>
+#ifdef IPC_ROUTER_WS_DEBUG
+#include <linux/suspend.h>
+#endif
 #include <soc/qcom/subsystem_notif.h>
 #include <soc/qcom/subsystem_restart.h>
 
@@ -149,6 +152,7 @@ struct msm_ipc_router_xprt_info {
 	void *log_ctx;
 	struct kref ref;
 	struct completion ref_complete;
+	bool dynamic_ws;
 };
 
 #define RT_HASH_SIZE 4
@@ -216,6 +220,13 @@ enum {
 	UP,
 };
 
+static bool is_wakeup_source_allowed;
+
+void msm_ipc_router_set_ws_allowed(bool flag)
+{
+	is_wakeup_source_allowed = flag;
+}
+
 static void init_routing_table(void)
 {
 	int i;
@@ -269,7 +280,7 @@ static uint32_t ipc_router_calc_checksum(union rr_control_msg *msg)
  */
 static void skb_copy_to_log_buf(struct sk_buff_head *skb_head,
 				unsigned int pl_len, unsigned int hdr_offset,
-				uint64_t *log_buf)
+				unsigned char *log_buf)
 {
 	struct sk_buff *temp_skb;
 	unsigned int copied_len = 0, copy_len = 0;
@@ -349,13 +360,16 @@ static void ipc_router_log_msg(void *log_ctx, uint32_t xchng_type,
 			else if (hdr->version == IPC_ROUTER_V2)
 				hdr_offset = sizeof(struct rr_header_v2);
 		}
-		skb_copy_to_log_buf(skb_head, buf_len, hdr_offset, &pl_buf);
+		skb_copy_to_log_buf(skb_head, buf_len, hdr_offset,
+				    (unsigned char *)&pl_buf);
 
 		if (port_ptr && rport_ptr && (port_ptr->type == CLIENT_PORT)
 				&& (rport_ptr->server != NULL)) {
 			svcId = rport_ptr->server->name.service;
 			svcIns = rport_ptr->server->name.instance;
 			port_type = CLIENT_PORT;
+			port_ptr->last_served_svc_id =
+					rport_ptr->server->name.service;
 		} else if (port_ptr && (port_ptr->type == SERVER_PORT)) {
 			svcId = port_ptr->port_name.service;
 			svcIns = port_ptr->port_name.instance;
@@ -398,10 +412,12 @@ static void ipc_router_log_msg(void *log_ctx, uint32_t xchng_type,
 			(xchng_type == IPC_ROUTER_LOG_EVENT_TX ? "TX" : "ERR")),
 			msg->cmd, msg->cli.node_id, msg->cli.port_id);
 		else if (msg->cmd == IPC_ROUTER_CTRL_CMD_HELLO && hdr)
-			IPC_RTR_INFO(log_ctx, "CTL MSG %s cmd:0x%x ADDR:0x%x",
+			IPC_RTR_INFO(log_ctx, "CTL MSG %s cmd:0x%x src_node_id:0x%x v:0x%x t:0x%x src_port:0x%x "
+			"cf:0x%x size:0x%x dst_node:0x%x dst_port:0x%x",
 			(xchng_type == IPC_ROUTER_LOG_EVENT_RX ? "RX" :
 			(xchng_type == IPC_ROUTER_LOG_EVENT_TX ? "TX" : "ERR")),
-			msg->cmd, hdr->src_node_id);
+			msg->cmd, hdr->src_node_id, hdr->version, hdr->type, hdr->src_port_id,
+			hdr->control_flag, hdr->size, hdr->dst_node_id, hdr->dst_port_id);
 		else
 			IPC_RTR_INFO(log_ctx, "%s UNKNOWN cmd:0x%x",
 			(xchng_type == IPC_ROUTER_LOG_EVENT_RX ? "RX" :
@@ -581,6 +597,7 @@ struct rr_packet *clone_pkt(struct rr_packet *pkt)
 	}
 	cloned_pkt->pkt_fragment_q = pkt_fragment_q;
 	cloned_pkt->length = pkt->length;
+	cloned_pkt->ws_need = pkt->ws_need;
 	return cloned_pkt;
 
 fail_clone:
@@ -1164,7 +1181,8 @@ static int post_pkt_to_port(struct msm_ipc_port *port_ptr,
 	}
 
 	mutex_lock(&port_ptr->port_rx_q_lock_lhc3);
-	__pm_stay_awake(port_ptr->port_rx_ws);
+	if (pkt->ws_need)
+		__pm_stay_awake(port_ptr->port_rx_ws);
 	list_add_tail(&temp_pkt->list, &port_ptr->port_rx_q);
 	wake_up(&port_ptr->port_rx_wait_q);
 	notify = port_ptr->notify;
@@ -1319,8 +1337,9 @@ struct msm_ipc_port *msm_ipc_router_create_raw_port(void *endpoint,
 	mutex_init(&port_ptr->port_rx_q_lock_lhc3);
 	init_waitqueue_head(&port_ptr->port_rx_wait_q);
 	snprintf(port_ptr->rx_ws_name, MAX_WS_NAME_SZ,
-		 "ipc%08x_%s",
+		 "ipc%08x_%d_%s",
 		 port_ptr->this_port.port_id,
+		 task_pid_nr(current),
 		 current->comm);
 	port_ptr->port_rx_ws = wakeup_source_register(port_ptr->rx_ws_name);
 	if (!port_ptr->port_rx_ws) {
@@ -1333,6 +1352,11 @@ struct msm_ipc_port *msm_ipc_router_create_raw_port(void *endpoint,
 	port_ptr->endpoint = endpoint;
 	port_ptr->notify = notify;
 	port_ptr->priv = priv;
+
+#ifdef IPC_ROUTER_WS_DEBUG
+	port_ptr->rport_addr.node_id = 0;
+	port_ptr->rport_addr.port_id = 0;
+#endif
 
 	msm_ipc_router_add_local_port(port_ptr);
 	if (endpoint)
@@ -2786,6 +2810,11 @@ static void do_read_data(struct work_struct *work)
 			}
 		}
 
+#ifdef IPC_ROUTER_WS_DEBUG
+		port_ptr->rport_addr.node_id = hdr->src_node_id;
+		port_ptr->rport_addr.port_id = hdr->src_port_id;
+#endif
+
 		ipc_router_log_msg(xprt_info->log_ctx, IPC_ROUTER_LOG_EVENT_RX,
 				pkt, hdr, port_ptr, rport_ptr);
 		kref_put(&rport_ptr->ref, ipc_router_release_rport);
@@ -2808,7 +2837,7 @@ int msm_ipc_router_register_server(struct msm_ipc_port *port_ptr,
 
 	if (!port_ptr || !name)
 		return -EINVAL;
-	
+
 
 	if (port_ptr->type != CLIENT_PORT)
 		return -EINVAL;
@@ -2924,6 +2953,10 @@ static int loopback_data(struct msm_ipc_port *src,
 	}
 
 	temp_skb = skb_peek_tail(pkt->pkt_fragment_q);
+	if (!temp_skb) {
+		IPC_RTR_ERR("%s: Empty skb\n", __func__);
+		return -EINVAL;
+	}
 	align_size = ALIGN_SIZE(pkt->length);
 	skb_put(temp_skb, align_size);
 	pkt->length += align_size;
@@ -3085,6 +3118,11 @@ static int msm_ipc_router_write_pkt(struct msm_ipc_port *src,
 	}
 
 	temp_skb = skb_peek_tail(pkt->pkt_fragment_q);
+	if (!temp_skb) {
+		IPC_RTR_ERR("%s: Abort invalid pkt\n", __func__);
+		ret = -EINVAL;
+		goto out_write_pkt;
+	}
 	align_size = ALIGN_SIZE(pkt->length);
 	skb_put(temp_skb, align_size);
 	pkt->length += align_size;
@@ -3412,7 +3450,8 @@ int msm_ipc_router_recv_from(struct msm_ipc_port *port_ptr,
 	align_size = ALIGN_SIZE(data_len);
 	if (align_size) {
 		temp_skb = skb_peek_tail((*pkt)->pkt_fragment_q);
-		skb_trim(temp_skb, (temp_skb->len - align_size));
+		if (temp_skb)
+			skb_trim(temp_skb, (temp_skb->len - align_size));
 	}
 	return data_len;
 }
@@ -3858,16 +3897,18 @@ static void dump_local_ports(struct seq_file *s)
 	int j;
 	struct msm_ipc_port *port_ptr;
 
-	seq_printf(s, "%-11s|%-11s|\n",
-			"Node_id", "Port_id");
+	seq_printf(s, "%-11s|%-11s|%-32s|%-11s|\n",
+		   "Node_id", "Port_id", "Wakelock", "Last SVCID");
 	seq_puts(s, "------------------------------------------------------------\n");
 	down_read(&local_ports_lock_lhc2);
 	for (j = 0; j < LP_HASH_SIZE; j++) {
 		list_for_each_entry(port_ptr, &local_ports[j], list) {
 			mutex_lock(&port_ptr->port_lock_lhc3);
-			seq_printf(s, "0x%08x |0x%08x |\n",
-				       port_ptr->this_port.node_id,
-				       port_ptr->this_port.port_id);
+			seq_printf(s, "0x%08x |0x%08x |%-32s|0x%08x |\n",
+				   port_ptr->this_port.node_id,
+				   port_ptr->this_port.port_id,
+				   port_ptr->rx_ws_name,
+				   port_ptr->last_served_svc_id);
 			mutex_unlock(&port_ptr->port_lock_lhc3);
 		}
 	}
@@ -4065,6 +4106,9 @@ static int msm_ipc_router_add_xprt(struct msm_ipc_router_xprt *xprt)
 	INIT_LIST_HEAD(&xprt_info->list);
 	kref_init(&xprt_info->ref);
 	init_completion(&xprt_info->ref_complete);
+	xprt_info->dynamic_ws = 0;
+	if (xprt->get_ws_info)
+		xprt_info->dynamic_ws = xprt->get_ws_info(xprt);
 
 	xprt_info->workqueue = create_singlethread_workqueue(xprt->name);
 	if (!xprt_info->workqueue) {
@@ -4219,9 +4263,18 @@ void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
 	if (!pkt)
 		return;
 
+	pkt->ws_need = false;
 	mutex_lock(&xprt_info->rx_lock_lhb2);
 	list_add_tail(&pkt->list, &xprt_info->pkt_list);
-	__pm_stay_awake(&xprt_info->ws);
+	if (!xprt_info->dynamic_ws) {
+		__pm_stay_awake(&xprt_info->ws);
+		pkt->ws_need = true;
+	} else {
+		if (is_wakeup_source_allowed) {
+			__pm_stay_awake(&xprt_info->ws);
+			pkt->ws_need = true;
+		}
+	}
 	mutex_unlock(&xprt_info->rx_lock_lhb2);
 	queue_work(xprt_info->workqueue, &xprt_info->read_data);
 }
@@ -4337,6 +4390,94 @@ static int ipc_router_core_init(void)
 	return ret;
 }
 
+#ifdef IPC_ROUTER_WS_DEBUG
+static inline void msm_ipc_router_port_pkt_debug(struct msm_ipc_port *port_ptr)
+{
+	struct rr_packet *pkt;
+	struct sk_buff_head *skb_head;
+	struct sk_buff *skb;
+
+	pkt = list_first_entry_or_null(&port_ptr->port_rx_q,
+					struct rr_packet, list);
+	if (pkt) {
+		skb_head = pkt->pkt_fragment_q;
+		skb = skb_peek(skb_head);
+		if (skb && skb->data) {
+			print_hex_dump(KERN_WARNING, "ipc_rtr: ",
+				       DUMP_PREFIX_NONE, 16, 1, skb->data,
+				       skb->len > 16 ? 16 : skb->len, true);
+		}
+	}
+}
+
+static inline void msm_ipc_router_port_info(struct msm_ipc_port *port_ptr)
+{
+	uint32_t svcId = 0;
+	uint32_t svcIns = 0;
+	uint32_t port_type = 0;
+	struct msm_ipc_server *server;
+	struct msm_ipc_router_remote_port *rport_ptr;
+
+	port_type = port_ptr->type;
+	svcId = port_ptr->port_name.service;
+	svcIns = port_ptr->port_name.instance;
+
+	if (port_type == CLIENT_PORT) {
+		rport_ptr = ipc_router_get_rport_ref(
+						port_ptr->rport_addr.node_id,
+						port_ptr->rport_addr.port_id);
+
+		if (rport_ptr && rport_ptr->server) {
+			server = rport_ptr->server;
+			svcId = server->name.service;
+			svcIns = server->name.instance;
+		}
+	}
+
+	pr_warn("ipc_rtr: %s, type: %d, "
+		"svc <0x%x:0x%x>, local <0x%x:0x%x>, remote <0x%x:0x%x>\n",
+		port_ptr->rx_ws_name, port_type, svcId, svcIns,
+		port_ptr->this_port.node_id, port_ptr->this_port.port_id,
+		port_ptr->rport_addr.node_id, port_ptr->rport_addr.port_id);
+}
+
+static int msm_ipc_router_pm_notifier(struct notifier_block *nb,
+				      unsigned long mode, void *p)
+{
+	int j;
+	struct msm_ipc_port *port_ptr;
+
+	switch (mode) {
+	case PM_SUSPEND_PREPARE:
+		down_read(&local_ports_lock_lhc2);
+		for (j = 0; j < LP_HASH_SIZE; j++) {
+			list_for_each_entry(port_ptr, &local_ports[j], list) {
+				if (!port_ptr->port_rx_ws->active)
+					continue;
+
+				msm_ipc_router_port_info(port_ptr);
+#if 0
+				mutex_lock(&port_ptr->port_lock_lhc3);
+				msm_ipc_router_port_pkt_debug(port_ptr);
+				// TODO: do something
+				wake_up(&port_ptr->port_rx_wait_q);
+				mutex_unlock(&port_ptr->port_lock_lhc3);
+#endif
+			}
+		}
+		up_read(&local_ports_lock_lhc2);
+	default:
+		break;
+	}
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block msm_ipc_router_pm_nb = {
+	.notifier_call = msm_ipc_router_pm_notifier,
+};
+#endif
+
 static int msm_ipc_router_init(void)
 {
 	int ret;
@@ -4355,6 +4496,14 @@ static int msm_ipc_router_init(void)
 		IPC_RTR_ERR("%s: Init sockets failed\n", __func__);
 
 	ipc_router_log_ctx_init();
+
+#ifdef IPC_ROUTER_WS_DEBUG
+	ret = register_pm_notifier(&msm_ipc_router_pm_nb);
+	if (ret)
+		IPC_RTR_ERR(
+		"%s: ipc_router pm notifier register fail %d\n", __func__, ret);
+#endif
+
 	return ret;
 }
 

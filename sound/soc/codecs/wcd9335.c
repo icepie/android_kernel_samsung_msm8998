@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -110,7 +110,7 @@
 /* Convert from vout ctl to micbias voltage in mV */
 #define WCD_VOUT_CTL_TO_MICB(v) (1000 + v * 50)
 
-#define TASHA_ZDET_NUM_MEASUREMENTS 150
+#define TASHA_ZDET_NUM_MEASUREMENTS 900
 #define TASHA_MBHC_GET_C1(c)  ((c & 0xC000) >> 14)
 #define TASHA_MBHC_GET_X1(x)  (x & 0x3FFF)
 /* z value compared in milliOhm */
@@ -192,7 +192,7 @@ module_param(sido_buck_svs_voltage, int,
 MODULE_PARM_DESC(sido_buck_svs_voltage,
 			"setting for SVS voltage for SIDO BUCK");
 
-#define TASHA_TX_UNMUTE_DELAY_MS	25
+#define TASHA_TX_UNMUTE_DELAY_MS	40
 
 static int tx_unmute_delay = TASHA_TX_UNMUTE_DELAY_MS;
 module_param(tx_unmute_delay, int,
@@ -352,7 +352,6 @@ enum {
 	AUDIO_NOMINAL,
 	CPE_NOMINAL,
 	HPH_PA_DELAY,
-	SB_CLK_GEAR,
 	ANC_MIC_AMIC1,
 	ANC_MIC_AMIC2,
 	ANC_MIC_AMIC3,
@@ -854,7 +853,10 @@ struct tasha_priv {
 	int rx_8_count;
 	bool clk_mode;
 	bool clk_internal;
-
+	/* Lock to prevent multiple functions voting at same time */
+	struct mutex sb_clk_gear_lock;
+	/* Count for functions voting or un-voting */
+	u32 ref_count;
 	/* Lock to protect mclk enablement */
 	struct mutex mclk_lock;
 };
@@ -2202,7 +2204,7 @@ static void tasha_mbhc_moisture_config(struct wcd_mbhc *mbhc)
 {
 	struct snd_soc_codec *codec = mbhc->codec;
 
-	if (TASHA_MBHC_MOISTURE_VREF == V_OFF)
+	if (mbhc->moist_vref == V_OFF)
 		return;
 
 	/* Donot enable moisture detection if jack type is NC */
@@ -2213,8 +2215,34 @@ static void tasha_mbhc_moisture_config(struct wcd_mbhc *mbhc)
 	}
 
 	snd_soc_update_bits(codec, WCD9335_MBHC_CTL_2,
-			    0x0C, TASHA_MBHC_MOISTURE_VREF << 2);
-	tasha_mbhc_hph_l_pull_up_control(codec, TASHA_MBHC_MOISTURE_IREF);
+			    0x0C, mbhc->moist_vref << 2);
+	tasha_mbhc_hph_l_pull_up_control(codec, mbhc->moist_iref);
+}
+
+static void tasha_update_anc_state(struct snd_soc_codec *codec, bool enable,
+				   int anc_num)
+{
+	if (enable)
+		snd_soc_update_bits(codec, WCD9335_CDC_RX1_RX_PATH_CFG0 +
+				(20 * anc_num), 0x10, 0x10);
+	else
+		snd_soc_update_bits(codec, WCD9335_CDC_RX1_RX_PATH_CFG0 +
+				(20 * anc_num), 0x10, 0x00);
+}
+
+static bool tasha_is_anc_on(struct wcd_mbhc *mbhc)
+{
+	bool anc_on = false;
+	u16 ancl, ancr;
+
+	ancl =
+	(snd_soc_read(mbhc->codec, WCD9335_CDC_RX1_RX_PATH_CFG0)) & 0x10;
+	ancr =
+	(snd_soc_read(mbhc->codec, WCD9335_CDC_RX2_RX_PATH_CFG0)) & 0x10;
+
+	anc_on = !!(ancl | ancr);
+
+	return anc_on;
 }
 
 static const struct wcd_mbhc_cb mbhc_cb = {
@@ -2239,6 +2267,8 @@ static const struct wcd_mbhc_cb mbhc_cb = {
 	.mbhc_gnd_det_ctrl = tasha_mbhc_gnd_det_ctrl,
 	.hph_pull_down_ctrl = tasha_mbhc_hph_pull_down_ctrl,
 	.mbhc_moisture_config = tasha_mbhc_moisture_config,
+	.update_anc_state = tasha_update_anc_state,
+	.is_anc_on = tasha_is_anc_on,
 };
 
 static int tasha_get_anc_slot(struct snd_kcontrol *kcontrol,
@@ -3153,10 +3183,7 @@ static int tasha_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
 					      &dai->grph);
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
-		if (!test_bit(SB_CLK_GEAR, &tasha_p->status_mask)) {
-			tasha_codec_vote_max_bw(codec, true);
-			set_bit(SB_CLK_GEAR, &tasha_p->status_mask);
-		}
+		tasha_codec_vote_max_bw(codec, true);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		ret = wcd9xxx_disconnect_port(core, &dai->wcd9xxx_ch_list,
@@ -4945,7 +4972,7 @@ static int tasha_codec_enable_spline_src(struct snd_soc_codec *codec,
 					 int src_num,
 					 int event)
 {
-	u16 src_paired_reg;
+	u16 src_paired_reg = 0;
 	struct tasha_priv *tasha;
 	u16 rx_path_cfg_reg = WCD9335_CDC_RX1_RX_PATH_CFG0;
 	u16 rx_path_ctl_reg = WCD9335_CDC_RX1_RX_PATH_CTL;
@@ -5468,10 +5495,7 @@ static int tasha_codec_enable_interpolator(struct snd_soc_dapm_widget *w,
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		if (!test_bit(SB_CLK_GEAR, &tasha->status_mask)) {
-			tasha_codec_vote_max_bw(codec, true);
-			set_bit(SB_CLK_GEAR, &tasha->status_mask);
-		}
+		tasha_codec_vote_max_bw(codec, true);
 		/* Reset if needed */
 		tasha_codec_enable_prim_interpolator(codec, reg, event);
 		break;
@@ -5906,8 +5930,6 @@ static int tasha_codec_enable_dec(struct snd_soc_dapm_widget *w,
 					    CF_MIN_3DB_150HZ << 5);
 		/* Enable TX PGA Mute */
 		snd_soc_update_bits(codec, tx_vol_ctl_reg, 0x10, 0x10);
-		/* Enable APC */
-		snd_soc_update_bits(codec, dec_cfg_reg, 0x08, 0x08);
 		break;
 	case SND_SOC_DAPM_POST_PMU:
 		snd_soc_update_bits(codec, hpf_gate_reg, 0x01, 0x00);
@@ -5934,7 +5956,6 @@ static int tasha_codec_enable_dec(struct snd_soc_dapm_widget *w,
 		hpf_cut_off_freq =
 			tasha->tx_hpf_work[decimator].hpf_cut_off_freq;
 		snd_soc_update_bits(codec, tx_vol_ctl_reg, 0x10, 0x10);
-		snd_soc_update_bits(codec, dec_cfg_reg, 0x08, 0x00);
 		if (cancel_delayed_work_sync(
 		    &tasha->tx_hpf_work[decimator].dwork)) {
 			if (hpf_cut_off_freq != CF_MIN_3DB_150HZ) {
@@ -7930,6 +7951,13 @@ static int tasha_mad_input_put(struct snd_kcontrol *kcontrol,
 	char *mad_input;
 
 	tasha_mad_input = ucontrol->value.integer.value[0];
+
+	if (tasha_mad_input >= ARRAY_SIZE(tasha_conn_mad_text)) {
+		dev_err(codec->dev,
+			"%s: tasha_mad_input = %d out of bounds\n",
+			__func__, tasha_mad_input);
+		return -EINVAL;
+	}
 
 	if (!strcmp(tasha_conn_mad_text[tasha_mad_input], "NOTUSED1") ||
 	    !strcmp(tasha_conn_mad_text[tasha_mad_input], "NOTUSED2") ||
@@ -11328,11 +11356,8 @@ static void tasha_shutdown(struct snd_pcm_substream *substream,
 	if (tasha->intf_type == WCD9XXX_INTERFACE_TYPE_I2C)
 		return;
 
-	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK) &&
-	    test_bit(SB_CLK_GEAR, &tasha->status_mask)) {
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		tasha_codec_vote_max_bw(dai->codec, false);
-		clear_bit(SB_CLK_GEAR, &tasha->status_mask);
-	}
 }
 
 static int tasha_set_decimator_rate(struct snd_soc_dai *dai,
@@ -11567,15 +11592,11 @@ prim_rate:
 static int tasha_prepare(struct snd_pcm_substream *substream,
 			 struct snd_soc_dai *dai)
 {
-	struct tasha_priv *tasha = snd_soc_codec_get_drvdata(dai->codec);
-
 	pr_debug("%s(): substream = %s  stream = %d\n" , __func__,
 		 substream->name, substream->stream);
-	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK) &&
-	    test_bit(SB_CLK_GEAR, &tasha->status_mask)) {
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		tasha_codec_vote_max_bw(dai->codec, false);
-		clear_bit(SB_CLK_GEAR, &tasha->status_mask);
-	}
 	return 0;
 }
 
@@ -12106,8 +12127,10 @@ static int tasha_dig_core_power_collapse(struct tasha_priv *tasha,
 		goto unlock_mutex;
 
 	if (tasha->power_active_ref < 0) {
-		dev_dbg(tasha->dev, "%s: power_active_ref is negative\n",
+		dev_info(tasha->dev,
+			"%s: power_active_ref is negative, resetting it\n",
 			__func__);
+		tasha->power_active_ref = 0;
 		goto unlock_mutex;
 	}
 
@@ -13283,13 +13306,29 @@ static int tasha_codec_vote_max_bw(struct snd_soc_codec *codec,
 	if (tasha->intf_type == WCD9XXX_INTERFACE_TYPE_I2C)
 		return 0;
 
-	if (vote)
-		bw_ops = SLIM_BW_CLK_GEAR_9;
-	else
-		bw_ops = SLIM_BW_UNVOTE;
+	mutex_lock(&tasha->sb_clk_gear_lock);
+	if (vote) {
+		tasha->ref_count++;
+		if (tasha->ref_count == 1) {
+			bw_ops = SLIM_BW_CLK_GEAR_9;
+			tasha_codec_slim_reserve_bw(codec,
+				bw_ops, true);
+		}
+	} else if (!vote && tasha->ref_count > 0) {
+		tasha->ref_count--;
+		if (tasha->ref_count == 0) {
+			bw_ops = SLIM_BW_UNVOTE;
+			tasha_codec_slim_reserve_bw(codec,
+				bw_ops, true);
+		}
+	};
 
-	return tasha_codec_slim_reserve_bw(codec,
-			bw_ops, true);
+	dev_dbg(codec->dev, "%s Value of counter after vote or un-vote is %d\n",
+		__func__, tasha->ref_count);
+
+	mutex_unlock(&tasha->sb_clk_gear_lock);
+
+	return 0;
 }
 
 static int tasha_cpe_err_irq_control(struct snd_soc_codec *codec,
@@ -13441,8 +13480,6 @@ static int tasha_post_reset_cb(struct wcd9xxx *wcd9xxx)
 
 	/* Class-H Init*/
 	wcd_clsh_init(&tasha->clsh_d);
-	/* Default HPH Mode to Class-H HiFi */
-	tasha->hph_mode = CLS_H_HIFI;
 
 	for (i = 0; i < TASHA_MAX_MICBIAS; i++)
 		tasha->micb_ref[i] = 0;
@@ -13450,8 +13487,6 @@ static int tasha_post_reset_cb(struct wcd9xxx *wcd9xxx)
 	tasha_update_reg_defaults(tasha);
 
 	tasha->codec = codec;
-	for (i = 0; i < COMPANDER_MAX; i++)
-		tasha->comp_enabled[i] = 0;
 
 	dev_dbg(codec->dev, "%s: MCLK Rate = %x\n",
 		__func__, control->mclk_rate);
@@ -13476,6 +13511,8 @@ static int tasha_post_reset_cb(struct wcd9xxx *wcd9xxx)
 	if (IS_ERR_VALUE(ret))
 		dev_err(codec->dev, "%s: invalid pdata\n", __func__);
 
+	/* Reset reference counter for voting for max bw */
+	tasha->ref_count = 0;
 	/* MBHC Init */
 	wcd_mbhc_deinit(&tasha->mbhc);
 	tasha->mbhc_started = false;
@@ -14262,6 +14299,7 @@ static int tasha_probe(struct platform_device *pdev)
 	mutex_init(&tasha->swr_read_lock);
 	mutex_init(&tasha->swr_write_lock);
 	mutex_init(&tasha->swr_clk_lock);
+	mutex_init(&tasha->sb_clk_gear_lock);
 	mutex_init(&tasha->mclk_lock);
 
 	cdc_pwr = devm_kzalloc(&pdev->dev, sizeof(struct wcd9xxx_power_region),
@@ -14366,6 +14404,7 @@ static int tasha_remove(struct platform_device *pdev)
 	mutex_destroy(&tasha->mclk_lock);
 	devm_kfree(&pdev->dev, tasha);
 	snd_soc_unregister_codec(&pdev->dev);
+	mutex_destroy(&tasha->sb_clk_gear_lock);
 	return 0;
 }
 

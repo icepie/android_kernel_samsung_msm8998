@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -225,7 +225,7 @@ void msm_dcvs_init_load(struct msm_vidc_inst *inst)
 	core = inst->core;
 	dcvs = &inst->dcvs;
 	res = &core->resources;
-	dcvs->load = msm_comm_get_inst_load(inst, LOAD_CALC_NO_QUIRKS);
+	dcvs->load = msm_comm_get_inst_load(inst, LOAD_CALC_IGNORE_TURBO_LOAD);
 
 	num_rows = res->dcvs_tbl_size;
 	table = res->dcvs_tbl;
@@ -407,8 +407,10 @@ static int msm_dcvs_enc_scale_clocks(struct msm_vidc_inst *inst)
 
 	if (dcvs->etb_counter < total_input_buf) {
 		dcvs->etb_counter++;
-		if (dcvs->etb_counter != total_input_buf)
-			return rc;
+		if (dcvs->etb_counter != total_input_buf) {
+			return msm_comm_scale_clocks_load(core, dcvs->load,
+					LOAD_CALC_NO_QUIRKS);
+		}
 	}
 
 	dprintk(VIDC_PROF,
@@ -425,7 +427,7 @@ static int msm_dcvs_enc_scale_clocks(struct msm_vidc_inst *inst)
 	}
 
 	if (fw_pending_bufs >= DCVS_ENC_HIGH_THR &&
-		dcvs->load <= dcvs->load_low) {
+		dcvs->load < dcvs->load_high) {
 		dcvs->load = dcvs->load_high;
 		dcvs->prev_freq_increased = true;
 	} else {
@@ -570,7 +572,8 @@ static bool msm_dcvs_check_supported(struct msm_vidc_inst *inst)
 	inst->dcvs.extra_buffer_count = 0;
 
 	if (!IS_VALID_DCVS_SESSION(num_mbs_per_frame,
-				res->dcvs_limit[inst->session_type].min_mbpf)) {
+		res->dcvs_limit[inst->session_type].min_mbpf) ||
+		(inst->flags & VIDC_THUMBNAIL)) {
 		inst->dcvs.extra_buffer_count = 0;
 		is_dcvs_supported = false;
 		goto dcvs_decision_done;

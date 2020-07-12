@@ -130,12 +130,19 @@ enum s2mpb02_torch_timeout {
 	S2MPB02_TORCH_TIMEOUT_MAX,
 };
 
+enum s2mpb02_led_turn_way {
+	S2MPB02_LED_TURN_WAY_I2C,
+	S2MPB02_LED_TURN_WAY_GPIO,
+	S2MPB02_LED_TURN_WAY_MAX,
+};
+
 struct s2mpb02_led {
 	const char *name;
 	int id;
 	int brightness;
 	int timeout;
 	const char *default_trigger; /* Trigger to use */
+	uint32_t gpio;
 };
 
 struct s2mpb02_led_platform_data {
@@ -143,7 +150,7 @@ struct s2mpb02_led_platform_data {
 	struct s2mpb02_led leds[S2MPB02_LED_MAX];
 };
 
-extern int s2mpb02_led_en(int mode, int onoff);
+extern int s2mpb02_led_en(int mode, int onoff, enum s2mpb02_led_turn_way turn_way);
 #if defined(CONFIG_SAMSUNG_SECURE_CAMERA)
 extern int s2mpb02_ir_led_init(void);
 extern int s2mpb02_ir_led_current(int32_t current_value);

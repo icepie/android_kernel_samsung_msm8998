@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -90,7 +90,7 @@
 
 #define XIN_HALT_TIMEOUT_US	0x4000
 
-#define MAX_LAYER_COUNT		0xC
+#define MAX_LAYER_COUNT		0xD
 
 /* For SRC QSEED3, when user space does not send the scaler information,
  * this flag allows pixel _extension to be programmed when scaler is disabled
@@ -128,6 +128,7 @@
 #define DS_ENHANCER_UPDATE  BIT(5)
 #define DS_VALIDATE         BIT(6)
 #define DS_DIRTY_UPDATE     BIT(7)
+#define DS_PU_ENABLE        BIT(8)
 
 /**
  * Destination Scaler DUAL mode overfetch pixel count
@@ -144,6 +145,25 @@
 	(((mdata)->max_target_zorder + MDSS_MDP_STAGE_0) - 1)
 
 #define BITS_TO_BYTES(x) DIV_ROUND_UP(x, BITS_PER_BYTE)
+
+#define PP_PROGRAM_PA		0x1
+#define PP_PROGRAM_PCC		0x2
+#define PP_PROGRAM_IGC		0x4
+#define PP_PROGRAM_ARGC	0x8
+#define PP_PROGRAM_HIST	0x10
+#define PP_PROGRAM_DITHER	0x20
+#define PP_PROGRAM_GAMUT	0x40
+#define PP_PROGRAM_PGC		0x100
+#define PP_PROGRAM_PA_DITHER	0x400
+#define PP_PROGRAM_AD		0x800
+
+#define PP_NORMAL_PROGRAM_MASK	(PP_PROGRAM_AD | PP_PROGRAM_PCC | \
+				PP_PROGRAM_HIST)
+#define PP_DEFER_PROGRAM_MASK	(PP_PROGRAM_IGC | PP_PROGRAM_PGC | \
+				PP_PROGRAM_ARGC | PP_PROGRAM_GAMUT | \
+				PP_PROGRAM_PA | PP_PROGRAM_DITHER | \
+						PP_PROGRAM_PA_DITHER)
+#define PP_PROGRAM_ALL	(PP_NORMAL_PROGRAM_MASK | PP_DEFER_PROGRAM_MASK)
 
 enum mdss_mdp_perf_state_type {
 	PERF_SW_COMMIT_STATE = 0,
@@ -165,6 +185,14 @@ enum mdss_mdp_mixer_mux {
 	MDSS_MDP_MIXER_MUX_DEFAULT,
 	MDSS_MDP_MIXER_MUX_LEFT,
 	MDSS_MDP_MIXER_MUX_RIGHT,
+};
+
+enum mdss_secure_transition {
+	SECURE_TRANSITION_NONE,
+	SD_NON_SECURE_TO_SECURE,
+	SD_SECURE_TO_NON_SECURE,
+	SC_NON_SECURE_TO_SECURE,
+	SC_SECURE_TO_NON_SECURE,
 };
 
 static inline enum mdss_mdp_sspp_index get_pipe_num_from_ndx(u32 ndx)
@@ -392,6 +420,7 @@ struct mdss_mdp_destination_scaler {
 	u16 last_mixer_height;
 	u32 flags;
 	struct mdp_scale_data_v2 scaler;
+	struct mdss_rect panel_roi;
 };
 
 
@@ -425,6 +454,10 @@ struct mdss_mdp_ctl_intfs_ops {
 	/* to update lineptr, [1..yres] - enable, 0 - disable */
 	int (*update_lineptr)(struct mdss_mdp_ctl *ctl, bool enable);
 	int (*avr_ctrl_fnc)(struct mdss_mdp_ctl *, bool enable);
+
+	/* to wait for vsync */
+	int (*wait_for_vsync_fnc)(struct mdss_mdp_ctl *ctl);
+
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 	int (*wait_video_pingpong) (struct mdss_mdp_ctl *ctl, void *arg);
 #endif
@@ -433,6 +466,7 @@ struct mdss_mdp_ctl_intfs_ops {
 struct mdss_mdp_cwb {
 	struct mutex queue_lock;
 	struct list_head data_queue;
+	struct list_head cleanup_queue;
 	int valid;
 	u32 wb_idx;
 	struct mdp_output_layer layer;
@@ -561,6 +595,7 @@ struct mdss_mdp_ctl {
 	bool switch_with_handoff;
 	struct mdss_mdp_avr_info avr_info;
 	bool commit_in_progress;
+	struct mutex ds_lock;
 	bool need_vsync_on;
 };
 
@@ -656,6 +691,7 @@ struct mdss_mdp_img_data {
 	struct dma_buf *srcp_dma_buf;
 	struct dma_buf_attachment *srcp_attachment;
 	struct sg_table *srcp_table;
+	struct ion_handle *ihandle;
 };
 
 enum mdss_mdp_data_state {
@@ -697,6 +733,8 @@ struct pp_hist_col_info {
 	char __iomem *base;
 	u32 intr_shift;
 	u32 disp_num;
+	u32 expect_sum;
+	u32 next_sum;
 	struct mdss_mdp_ctl *ctl;
 };
 
@@ -763,6 +801,12 @@ struct mdss_pipe_pp_res {
 	void *pcc_cfg_payload;
 	void *igc_cfg_payload;
 	void *hist_lut_cfg_payload;
+};
+
+struct mdss_mdp_pp_program_info {
+	u32 pp_program_mask;
+	u32 pp_opmode_left;
+	u32 pp_opmode_right;
 };
 
 struct mdss_mdp_pipe_smp_map {
@@ -959,6 +1003,10 @@ struct mdss_overlay_private {
 	struct kthread_worker worker;
 	struct kthread_work vsync_work;
 	struct task_struct *thread;
+
+	u8 secure_transition_state;
+
+	bool cache_null_commit; /* Cache if preceding commit was NULL */
 };
 
 struct mdss_mdp_set_ot_params {
@@ -1178,6 +1226,14 @@ static inline int is_dest_scaling_enable(struct mdss_mdp_mixer *mixer)
 			mixer && mixer->ds && (mixer->ds->flags & DS_ENABLE));
 }
 
+static inline int is_dest_scaling_pu_enable(struct mdss_mdp_mixer *mixer)
+{
+	if (is_dest_scaling_enable(mixer))
+		return (mixer->ds->flags & DS_PU_ENABLE);
+
+	return 0;
+}
+
 static inline u32 get_ds_input_width(struct mdss_mdp_mixer *mixer)
 {
 	struct mdss_mdp_destination_scaler *ds;
@@ -1249,6 +1305,8 @@ static inline u32 get_panel_width(struct mdss_mdp_ctl *ctl)
 	width = get_panel_xres(&ctl->panel_data->panel_info);
 	if (ctl->panel_data->next && is_pingpong_split(ctl->mfd))
 		width += get_panel_xres(&ctl->panel_data->next->panel_info);
+	else if (is_panel_split_link(ctl->mfd))
+		width *= (ctl->panel_data->panel_info.mipi.num_of_sublinks);
 
 	return width;
 }
@@ -1295,7 +1353,11 @@ static inline int mdss_mdp_panic_signal_support_mode(
 		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
 				MDSS_MDP_HW_REV_116) ||
 		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
-				MDSS_MDP_HW_REV_300))
+				MDSS_MDP_HW_REV_300) ||
+		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_320) ||
+		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_330))
 		signal_mode = MDSS_MDP_PANIC_PER_PIPE_CFG;
 
 	return signal_mode;
@@ -1311,10 +1373,13 @@ static inline struct clk *mdss_mdp_get_clk(u32 clk_idx)
 static inline void mdss_update_sd_client(struct mdss_data_type *mdata,
 							bool status)
 {
-	if (status)
+	if (status) {
 		atomic_inc(&mdata->sd_client_count);
-	else
+	} else {
 		atomic_add_unless(&mdss_res->sd_client_count, -1, 0);
+		if (!atomic_read(&mdss_res->sd_client_count))
+			wake_up_all(&mdata->secure_waitq);
+	}
 }
 
 static inline void mdss_update_sc_client(struct mdss_data_type *mdata,
@@ -1330,12 +1395,21 @@ static inline int mdss_mdp_get_wb_ctl_support(struct mdss_data_type *mdata,
 							bool rotator_session)
 {
 	/*
-	 * Initial control paths are used for primary and external
-	 * interfaces and remaining control paths are used for WB
-	 * interfaces.
+	 * Any control path can be routed to any of the hardware datapaths.
+	 * But there is a HW restriction for 3D Mux block. As the 3D Mux
+	 * settings in the CTL registers are double buffered, if an interface
+	 * uses it and disconnects, then the subsequent interface which gets
+	 * connected should use the same control path in order to clear the
+	 * 3D MUX settings.
+	 * To handle this restriction, we are allowing WB also, to loop through
+	 * all the avialable control paths, so that it can reuse the control
+	 * path left by the external interface, thereby clearing the 3D Mux
+	 * settings.
+	 * The initial control paths can be used by Primary, External and WB.
+	 * The rotator can use the remaining available control paths.
 	 */
 	return rotator_session ? (mdata->nctl - mdata->nmixers_wb) :
-				(mdata->nctl - mdata->nwb);
+		MDSS_MDP_CTL0;
 }
 
 static inline bool mdss_mdp_is_nrt_vbif_client(struct mdss_data_type *mdata,
@@ -1608,6 +1682,7 @@ int mdss_mdp_set_intr_callback_nosync(u32 intr_type, u32 intf_num,
 			       void (*fnc_ptr)(void *), void *arg);
 u32 mdss_mdp_get_irq_mask(u32 intr_type, u32 intf_num);
 
+void mdss_mdp_footswitch_ctrl(struct mdss_data_type *mdata, int on);
 void mdss_mdp_footswitch_ctrl_splash(int on);
 void mdss_mdp_batfet_ctrl(struct mdss_data_type *mdata, int enable);
 void mdss_mdp_set_clk_rate(unsigned long min_clk_rate, bool locked);
@@ -1727,7 +1802,7 @@ void mdss_mdp_ctl_notifier_register(struct mdss_mdp_ctl *ctl,
 void mdss_mdp_ctl_notifier_unregister(struct mdss_mdp_ctl *ctl,
 	struct notifier_block *notifier);
 u32 mdss_mdp_ctl_perf_get_transaction_status(struct mdss_mdp_ctl *ctl);
-u32 apply_comp_ratio_factor(u32 quota, struct mdss_mdp_format_params *fmt,
+u64 apply_comp_ratio_factor(u64 quota, struct mdss_mdp_format_params *fmt,
 	struct mult_factor *factor);
 
 int mdss_mdp_scan_pipes(void);
@@ -1770,7 +1845,8 @@ int mdss_mdp_pp_resume(struct msm_fb_data_type *mfd);
 void mdss_mdp_pp_dest_scaler_resume(struct mdss_mdp_ctl *ctl);
 
 int mdss_mdp_pp_setup(struct mdss_mdp_ctl *ctl);
-int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl);
+int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl,
+				struct mdss_mdp_pp_program_info *info);
 int mdss_mdp_pipe_pp_setup(struct mdss_mdp_pipe *pipe, u32 *op);
 void mdss_mdp_pipe_pp_clear(struct mdss_mdp_pipe *pipe);
 int mdss_mdp_pipe_sspp_setup(struct mdss_mdp_pipe *pipe, u32 *op);
@@ -1828,7 +1904,7 @@ int mdss_mdp_calib_mode(struct msm_fb_data_type *mfd,
 int mdss_mdp_pipe_handoff(struct mdss_mdp_pipe *pipe);
 int mdss_mdp_smp_handoff(struct mdss_data_type *mdata);
 struct mdss_mdp_pipe *mdss_mdp_pipe_alloc(struct mdss_mdp_mixer *mixer,
-	u32 type, struct mdss_mdp_pipe *left_blend_pipe);
+	u32 off, u32 type, struct mdss_mdp_pipe *left_blend_pipe);
 struct mdss_mdp_pipe *mdss_mdp_pipe_get(u32 ndx,
 	enum mdss_mdp_pipe_rect rect_num);
 struct mdss_mdp_pipe *mdss_mdp_pipe_search(struct mdss_data_type *mdata,
@@ -1965,6 +2041,10 @@ void mdss_mdp_enable_hw_irq(struct mdss_data_type *mdata);
 void mdss_mdp_disable_hw_irq(struct mdss_data_type *mdata);
 
 void mdss_mdp_set_supported_formats(struct mdss_data_type *mdata);
+int mdss_mdp_dest_scaler_setup_locked(struct mdss_mdp_mixer *mixer);
+void *mdss_mdp_intf_get_ctx_base(struct mdss_mdp_ctl *ctl, int intf_num);
+
+int mdss_mdp_mixer_get_hw_num(struct mdss_mdp_mixer *mixer);
 
 #ifdef CONFIG_FB_MSM_MDP_NONE
 struct mdss_data_type *mdss_mdp_get_mdata(void)

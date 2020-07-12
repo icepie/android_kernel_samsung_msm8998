@@ -571,7 +571,7 @@ extern void force_watchdog_bark(void);
 enum extra_info_dbg_type {
 	DBG_0_GLAD_ERR = 0,
 	DBG_1_UFS_ERR,
-	DBG_2_RESERVED,
+	DBG_2_DISPLAY_ERR,
 	DBG_3_RESERVED,
 	DBG_4_RESERVED,
 	DBG_5_RESERVED,
@@ -580,10 +580,11 @@ enum extra_info_dbg_type {
 
 #define EXINFO_KERNEL_DEFAULT_SIZE              2048
 #define EXINFO_KERNEL_SPARE_SIZE                1024
-#define EXINFO_RPM_DEFAULT_SIZE			456
+#define EXINFO_RPM_DEFAULT_SIZE			448
 #define EXINFO_TZ_DEFAULT_SIZE                  40
-#define EXINFO_HYP_DEFAULT_SIZE			400
-#define EXINFO_SUBSYS_DEFAULT_SIZE              1024// 456 + 40 + 400 + spare
+#define EXINFO_PIMEM_DEFAULT_SIZE               8
+#define EXINFO_HYP_DEFAULT_SIZE			460
+#define EXINFO_SUBSYS_DEFAULT_SIZE              1024// 456 + 40 + 8 + 460 + spare
 
 typedef struct {
 	unsigned int esr;
@@ -596,12 +597,12 @@ typedef struct {
 extern ex_info_fault_t ex_info_fault[NR_CPUS];
 
 typedef struct {
-	char dev_name[16];
+	char dev_name[24];
 	u32 fsr;
 	u32 fsynr;	
 	unsigned long iova;
 	unsigned long far;
-	char mas_name[16];
+	char mas_name[24];
 	u8 cbndx;
 	phys_addr_t phys_soft;
 	phys_addr_t phys_atos;
@@ -617,6 +618,7 @@ typedef struct {
 
 typedef struct {
 	u64 ktime;
+	u32 extc_idx;
 	int cpu;
 	char task_name[TASK_COMM_LEN];
 	char bug_buf[64];
@@ -626,11 +628,13 @@ typedef struct {
 	ex_info_badmode_t badmode;
 	char pc[64];
 	char lr[64];
-	char dbg0[96];
-	char ufs_err[16];
+	char dbg0[97];
+	char ufs_err[17];
+	char display_err[257];
 	u32 lpm_state[1+2+NR_CPUS];
 	u64 lr_val[NR_CPUS];
 	u64 pc_val[NR_CPUS];
+	u32 pko;
 	char backtrace[0];
 } _kern_ex_info_t;
 
@@ -642,7 +646,7 @@ typedef union {
 typedef struct {
 	u64 nsec;
 	u32 arg[4];
-	char msg[50];	
+	char msg[50];
 } __rpm_log_t;
 
 typedef struct {
@@ -653,13 +657,18 @@ typedef struct {
 } _rpm_ex_info_t;
 
 typedef union {
-	_rpm_ex_info_t info; 
+	_rpm_ex_info_t info;
 	char rsize[EXINFO_RPM_DEFAULT_SIZE];
-} rpm_exinfo_t ;
+} rpm_exinfo_t;
 
 typedef struct {
 	char msg[EXINFO_TZ_DEFAULT_SIZE];
-} tz_exinfo_t ;
+} tz_exinfo_t;
+
+typedef struct {
+	u32 esr;
+	u32 ear0;
+} pimem_exinfo_t;
 
 typedef struct {
 	char msg[EXINFO_HYP_DEFAULT_SIZE];
@@ -671,6 +680,7 @@ typedef struct {
 	kern_exinfo_t kern_ex_info;
 	rpm_exinfo_t rpm_ex_info;
 	tz_exinfo_t tz_ex_info;
+	pimem_exinfo_t pimem_info;
 	hyp_exinfo_t hyp_ex_info;
 } rst_exinfo_t;
 
@@ -697,9 +707,11 @@ struct debug_reset_header {
 extern rst_exinfo_t *sec_debug_reset_ex_info;
 extern int sec_debug_get_cp_crash_log(char *str);
 extern void _sec_debug_store_backtrace(unsigned long where);
+extern void sec_debug_store_extc_idx(bool prefix);
 extern void sec_debug_store_bug_string(const char *fmt, ...);
 extern void sec_debug_store_additional_dbg(enum extra_info_dbg_type type, unsigned int value, const char *fmt, ...);
 extern struct debug_reset_header *get_debug_reset_header(void);
+extern void sec_debug_summary_modem_print(void);
 
 static inline void sec_debug_store_pte(unsigned long addr, int idx)
 {
@@ -770,11 +782,11 @@ static inline void sec_debug_save_smmu_info(ex_info_smmu_t *smmu_info)
 			p_ex_info->smmu.fsr = smmu_info->fsr;
 			p_ex_info->smmu.fsynr = smmu_info->fsynr;
 			p_ex_info->smmu.iova = smmu_info->iova;
-			p_ex_info->smmu.far = smmu_info->fsr;
+			p_ex_info->smmu.far = smmu_info->far;
 			snprintf(p_ex_info->smmu.mas_name,
 				sizeof(p_ex_info->smmu.mas_name),
 				"%s", smmu_info->mas_name);
-			p_ex_info->smmu.cbndx= smmu_info->cbndx;
+			p_ex_info->smmu.cbndx = smmu_info->cbndx;
 			p_ex_info->smmu.phys_soft = smmu_info->phys_soft;
 			p_ex_info->smmu.phys_atos = smmu_info->phys_atos;
 			p_ex_info->smmu.sid = smmu_info->sid;
@@ -798,6 +810,7 @@ static inline void sec_debug_save_badmode_info(int reason, const char *handler_s
 static inline void sec_debug_save_smmu_info(ex_info_smmu_t *smmu_info)
 {
 }
+static inline void sec_debug_summary_modem_print(void) { }
 #endif // CONFIG_USER_RESET_DEBUG
 
 #ifdef CONFIG_TOUCHSCREEN_DUMP_MODE
@@ -808,4 +821,6 @@ struct tsp_dump_callbacks {
 #ifdef CONFIG_SEC_ISDBT_FORCE_OFF
 extern void (*isdbt_force_off_callback)(void);
 #endif
+
+extern unsigned int lpcharge;
 #endif	/* SEC_DEBUG_H */

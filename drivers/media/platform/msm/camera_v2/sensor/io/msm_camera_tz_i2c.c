@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016, 2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -190,7 +190,7 @@ static int32_t msm_camera_tz_i2c_ta_power_up(
 		cmd->sensor_id = sensor_id;
 #if defined (CONFIG_SEC_DREAMQLTE_PROJECT) // SS iris
 		cmd->model = 1;
-#elif defined (CONFIG_SEC_DREAM2QLTE_PROJECT) || defined (CONFIG_SEC_CRUISERLTE_PROJECT)
+#elif defined (CONFIG_SEC_DREAM2QLTE_PROJECT) || defined (CONFIG_SEC_CRUISERLTE_PROJECT) || defined (CONFIG_SEC_GREATQLTE_PROJECT)
 		cmd->model = 2;
 #else
 		cmd->model = 0;

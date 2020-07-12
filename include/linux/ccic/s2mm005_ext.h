@@ -44,6 +44,9 @@ extern int s2mm005_write_byte_16(const struct i2c_client *i2c, u16 reg, u8 val);
 extern void s2mm005_rprd_mode_change(struct s2mm005_data *usbpd_data, u8 mode);
 extern void s2mm005_manual_JIGON(struct s2mm005_data *usbpd_data, int mode);
 extern void s2mm005_manual_LPM(struct s2mm005_data *usbpd_data, int cmd);
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+extern void s2mm005_manual_ACC_LPM(struct s2mm005_data *usbpd_data);
+#endif
 extern void s2mm005_control_option_command(struct s2mm005_data *usbpd_data, int cmd);
 extern void s2mm005_set_upsm_mode(void);
 extern void s2mm005_set_cabletype_as_TA(void);

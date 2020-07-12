@@ -20,3 +20,4 @@ obj-$(CONFIG_NFC_NQ)		+= nq-nci.o
 obj-$(CONFIG_NFC_PN547_ESE_SUPPORT)        += p61.o
 obj-$(CONFIG_NFC_PN547)		+= pn547.o
 obj-$(CONFIG_SEC_NFC)		+= sec_nfc.o
+obj-y		+= nfc_logger/

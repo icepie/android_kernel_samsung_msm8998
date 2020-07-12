@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -75,10 +75,22 @@
 
 		qcom,gpu-qdss-stm = <0x161c0000 0x40000>; // base addr, size
 
+		qcom,gpu-qtimer = <0x17921000 0x1000>; // base addr, size
+
 		qcom,tsens-name = "tsens_tz_sensor12";
+
+		/* Avoid L2PC on big cluster CPUs (CPU 4,5,6,7) */
+		qcom,l2pc-cpu-mask = <0x000000f0>;
 
 		/* Quirks */
 		qcom,gpu-quirk-lmloadkill-disable;
+
+		/* DRM settings */
+		qcom,gpmu-tsens = <0x000c000d>;
+		qcom,max-power = <5448>;
+		qcom,gpmu-firmware = "a540_gpmu.fw2";
+		qcom,gpmu-version = <3 0>;
+		qcom,zap-shader = "a540_zap";
 
 		clocks = <&clock_gfx clk_gpucc_gfx3d_clk>,
 			<&clock_gcc clk_gcc_gpu_cfg_ahb_clk>,
@@ -98,6 +110,7 @@
 		qcom,gpubw-dev = <&gpubw>;
 		qcom,bus-control;
 		qcom,msm-bus,name = "grp3d";
+		qcom,bus-width = <32>;
 		qcom,msm-bus,num-cases = <13>;
 		qcom,msm-bus,num-paths = <1>;
 		qcom,msm-bus,vectors-KBps =
@@ -121,6 +134,15 @@
 		/* GDSC oxili regulators */
 		vddcx-supply = <&gdsc_gpu_cx>;
 		vdd-supply = <&gdsc_gpu_gx>;
+
+		/* Trace bus */
+		coresight-name = "coresight-gfx";
+		coresight-atid = <3>;
+		port {
+			gfx_out_funnel_in1: endpoint {
+				remote-endpoint = <&funnel_in1_in_gfx>;
+			};
+		};
 
 		/* GPU Mempools */
 		qcom,gpu-mempools {

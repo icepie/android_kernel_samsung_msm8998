@@ -26,4 +26,9 @@ config FPGA_MGR_ZYNQ_FPGA
 
 endif # FPGA
 
+config SPI_TO_I2C_FPGA
+	tristate "spi to i2c fpga"
+	help
+	  FPGA manager driver support for spi to i2c fpga.
+
 endmenu

@@ -5,20 +5,20 @@ config QPNP_REVID
 	tristate "QPNP Revision ID Peripheral"
 	depends on SPMI
 	help
-	  Say 'y' here to include support for the Qualcomm QPNP REVID
-	  peripheral. REVID prints out the PMIC type and revision numbers
-	  in the kernel log along with the PMIC option status. The PMIC
-	  type is mapped to a Qualcomm chip part number and logged as well.
+	  Say 'y' here to include support for the Qualcomm Technologies, Inc.
+	  QPNP REVID peripheral. REVID prints out the PMIC type and revision
+	  numbers in the kernel log along with the PMIC option status. The PMIC
+	  type is mapped to a QTI chip part number and logged as well.
 
 config QPNP_COINCELL
-	tristate "Qualcomm QPNP coincell charger support"
+	tristate "QPNP coincell charger support"
 	depends on SPMI
 	help
 	  This driver supports the QPNP coincell peripheral found inside of
-	  Qualcomm QPNP PMIC devices.  The coincell charger provides a means to
-	  charge a coincell battery or backup capacitor which is used to
-	  maintain PMIC register state when the main battery is removed from the
-	  mobile device.
+	  Qualcomm Technologies, Inc. QPNP PMIC devices.  The coincell charger
+	  provides a means to charge a coincell battery or backup capacitor
+	  which is used to maintain PMIC register state when the main battery is
+	  removed from the mobile device.
 
 config SPS
 	bool "SPS support"
@@ -133,16 +133,6 @@ config IPA_UT
 	  The user interface to run and control the tests is debugfs file
 	  system.
 
-config SSM
-	tristate "QTI Secure Service Module"
-	depends on QSEECOM
-	depends on MSM_SMD
-	help
-	  Provides an interface for OEM driver to communicate with Trustzone
-	  and modem for key exchange and mode change.
-	  This driver uses Secure Channel Manager interface for trustzone
-	  communication and communicates with modem over SMD channel.
-
 config GPIO_USB_DETECT
 	tristate "GPIO-based USB VBUS Detection"
 	depends on POWER_SUPPLY
@@ -194,7 +184,7 @@ config MSM_11AD
 	tristate "Platform driver for 11ad chip"
 	depends on PCI
 	depends on PCI_MSM
-	default y
+	default m
 	---help---
 	  This module adds required platform support for wireless adapter based on
 	  Qualcomm Technologies, Inc. 11ad chip, integrated into MSM platform
@@ -217,4 +207,11 @@ config USB_BAM
 	  Enabling this option adds USB BAM Driver.
 	  USB BAM driver was added to supports SPS Peripheral-to-Peripheral
 	  transfers between the USB and other peripheral.
+
+config MSM_EXT_DISPLAY
+	bool "MSM External Display Driver"
+	help
+	  Enabling this option adds MSM External Display Driver.
+	  External Display driver was added to support the communication
+	  between external display driver and its couterparts.
 endmenu

@@ -67,6 +67,7 @@ ssize_t send_uart_cmd_va(struct dbmdx_private *p, u32 command,
 int send_uart_cmd_boot(struct dbmdx_private *p, u32 command);
 int uart_verify_boot_checksum(struct dbmdx_private *p,
 	const void *checksum, size_t chksum_len);
+int uart_verify_chip_id(struct dbmdx_private *p);
 int uart_wait_for_ok(struct dbmdx_private *p);
 int uart_wait_till_alive(struct dbmdx_private *p);
 int uart_set_speed_host_only(struct dbmdx_private *p, int index);

@@ -1,7 +1,7 @@
 /*
  * Linux DHD Bus Module for PCIE
  *
- * Copyright (C) 1999-2017, Broadcom Corporation
+ * Copyright (C) 1999-2018, Broadcom Corporation
  * 
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_pcie.h 714138 2017-08-03 08:55:55Z $
+ * $Id: dhd_pcie.h 727682 2017-10-23 04:45:57Z $
  */
 
 
@@ -385,6 +385,7 @@ typedef struct dhd_bus {
 	ulong dpc_return_busdown_count;
 	bool  idma_enabled;
 	bool  ifrm_enabled;
+	uint32 dmaxfer_complete;
 #if defined(PCIE_OOB) || defined(PCIE_INB_DW)
 	bool  ds_enabled;
 #endif

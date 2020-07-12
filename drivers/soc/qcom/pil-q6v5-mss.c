@@ -39,7 +39,7 @@
 
 #define MAX_VDD_MSS_UV		1150000
 #define PROXY_TIMEOUT_MS	10000
-#define MAX_SSR_REASON_LEN	81U
+#define MAX_SSR_REASON_LEN	130U
 #define STOP_ACK_TIMEOUT_MS	1000
 
 #define subsys_to_drv(d) container_of(d, struct modem_data, subsys_desc)
@@ -83,7 +83,7 @@ static irqreturn_t modem_err_fatal_intr_handler(int irq, void *dev_id)
 		return IRQ_HANDLED;
 
 	pr_err("Fatal error on the modem.\n");
-	subsys_set_crash_status(drv->subsys, true);
+	subsys_set_crash_status(drv->subsys, CRASH_STATUS_ERR_FATAL);
 	restart_modem(drv);
 	return IRQ_HANDLED;
 }
@@ -171,7 +171,8 @@ static int modem_ramdump(int enable, const struct subsys_desc *subsys)
 	if (ret)
 		return ret;
 
-	ret = pil_do_ramdump(&drv->q6->desc, drv->ramdump_dev);
+	ret = pil_do_ramdump(&drv->q6->desc,
+			drv->ramdump_dev, drv->minidump_dev);
 	if (ret < 0)
 		pr_err("Unable to dump modem fw memory (rc = %d).\n", ret);
 
@@ -194,7 +195,7 @@ static irqreturn_t modem_wdog_bite_intr_handler(int irq, void *dev_id)
 			!gpio_get_value(drv->subsys_desc.err_fatal_gpio))
 		panic("%s: System ramdump requested. Triggering device restart!\n",
 							__func__);
-	subsys_set_crash_status(drv->subsys, true);
+	subsys_set_crash_status(drv->subsys, CRASH_STATUS_WDOG_BITE);
 	restart_modem(drv);
 	return IRQ_HANDLED;
 }
@@ -222,6 +223,7 @@ static int pil_subsys_init(struct modem_data *drv,
 		goto err_subsys;
 	}
 
+	drv->q6->desc.subsys_dev = drv->subsys;
 	drv->ramdump_dev = create_ramdump_device("modem", &pdev->dev);
 	if (!drv->ramdump_dev) {
 		pr_err("%s: Unable to create a modem ramdump device.\n",
@@ -229,9 +231,18 @@ static int pil_subsys_init(struct modem_data *drv,
 		ret = -ENOMEM;
 		goto err_ramdump;
 	}
+	drv->minidump_dev = create_ramdump_device("md_modem", &pdev->dev);
+	if (!drv->minidump_dev) {
+		pr_err("%s: Unable to create a modem minidump device.\n",
+			__func__);
+		ret = -ENOMEM;
+		goto err_minidump;
+	}
 
 	return 0;
 
+err_minidump:
+	destroy_ramdump_device(drv->ramdump_dev);
 err_ramdump:
 	subsys_unregister(drv->subsys);
 err_subsys:
@@ -271,10 +282,30 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 		q6_desc->ops = &pil_msa_mss_ops_selfauth;
 	}
 
+	q6->cx_ipeak_vote = of_property_read_bool(pdev->dev.of_node,
+							"qcom,cx-ipeak-vote");
+	if (q6->cx_ipeak_vote) {
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						    "cxip_lm_vote_clear");
+		if (!res) {
+			dev_err(&pdev->dev, "Failed to get resource for ipeak reg\n");
+			return -EINVAL;
+		}
+		q6->cxip_lm_vote_clear = devm_ioremap(&pdev->dev,
+						res->start, resource_size(res));
+		if (!q6->cxip_lm_vote_clear)
+			return -ENOMEM;
+	}
+
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "restart_reg");
 	if (!res) {
 		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 							"restart_reg_sec");
+		if (!res) {
+			dev_err(&pdev->dev, "Failed to get resource for restart reg\n");
+			return -EINVAL;
+		}
+
 		q6->restart_reg_sec = true;
 	}
 
@@ -393,6 +424,7 @@ static int pil_mss_driver_exit(struct platform_device *pdev)
 
 	subsys_unregister(drv->subsys);
 	destroy_ramdump_device(drv->ramdump_dev);
+	destroy_ramdump_device(drv->minidump_dev);
 	pil_desc_release(&drv->q6->desc);
 	return 0;
 }

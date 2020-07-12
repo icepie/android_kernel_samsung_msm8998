@@ -195,11 +195,35 @@ int32_t msm_camera_tz_load_ta(void)
 			('\0' != msm_camera_tz_ctrl.ta_name[0])) {
 			uint32_t if_version_maj = 0;
 			uint32_t if_version_min = 0;
-
+//case02938093 (ion memory alloc fail when qsapp_start())
+//The suggested WA from our internal team is to modify the kernel mode QSEECom client(probably "CAM_sensor") to retry "qseecom_start_app()" 
+//if it gets return value *-ENOMEM(-12)*, 
+//because it is not easy for qseecom to synchronize the ION allocation for client and user space clients. 
+#if 0 
 			rc = qseecom_start_app(
 				&msm_camera_tz_ctrl.ta_qseecom_handle,
 				(char *)msm_camera_tz_ctrl.ta_name,
 				QSEECOM_SBUFF_SIZE);
+#else
+            uint32_t retry_count = 0;
+
+			do {
+				rc = qseecom_start_app(
+				&msm_camera_tz_ctrl.ta_qseecom_handle,
+				(char *)msm_camera_tz_ctrl.ta_name,
+				QSEECOM_SBUFF_SIZE);
+
+				if (rc == -ENOMEM) {
+					pr_err("retry qseecom_app_start. (rc = %d) , (count = %d)\n",
+						rc,
+						retry_count);	
+						
+					msleep(10);						
+				}
+					
+			} while((rc == -ENOMEM) && (++retry_count < 30));
+
+#endif
 			if (!rc)
 				rc = msm_camera_tz_i2c_ta_get_if_version(
 					msm_camera_tz_ctrl.ta_qseecom_handle,

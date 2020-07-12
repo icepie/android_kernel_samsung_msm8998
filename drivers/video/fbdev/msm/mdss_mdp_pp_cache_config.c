@@ -1410,7 +1410,6 @@ exit:
 		ret = -EFAULT;
 		kfree(cfg_payload);
 		cfg_payload = NULL;
-		goto exit;
 	}
 	pp_info->igc_cfg.cfg_payload = cfg_payload;
 	return ret;

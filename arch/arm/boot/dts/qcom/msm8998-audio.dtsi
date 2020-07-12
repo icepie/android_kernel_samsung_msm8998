@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,7 +31,7 @@
 		qcom,clk-div = <27>;
 	};
 
-	sound-9335 {
+	snd_9335: sound-9335 {
 		compatible = "qcom,msm8998-asoc-snd-tasha";
 		qcom,model = "msm8998-tasha-snd-card";
 		qcom,ext-disp-audio-rx;
@@ -53,6 +53,8 @@
 			"AIF4 VI", "MCLK",
 			"RX_BIAS", "MCLK",
 			"MADINPUT", "MCLK",
+			"hifi amp", "LINEOUT1",
+			"hifi amp", "LINEOUT2",
 			"AMIC2", "MIC BIAS2",
 			"MIC BIAS2", "Headset Mic",
 			"AMIC3", "MIC BIAS2",
@@ -81,11 +83,13 @@
 		qcom,msm-mbhc-hphl-swh = <0>;
 		qcom,msm-mbhc-gnd-swh = <0>;
 		qcom,us-euro-gpios = <&wcd_us_euro_gpio>;
+		qcom,hph-en0-gpio = <&hph_en0_gpio>;
+		qcom,hph-en1-gpio = <&hph_en1_gpio>;
 		qcom,tasha-mclk-clk-freq = <9600000>;
 		asoc-platform = <&pcm0>, <&pcm1>, <&pcm2>, <&voip>, <&voice>,
 				<&loopback>, <&compress>, <&hostless>,
 				<&afe>, <&lsm>, <&routing>, <&cpe>, <&compr>,
-				<&pcm_noirq>, <&cpe3>;
+				<&pcm_noirq>, <&cpe3>, <&trans_loopback>;
 		asoc-platform-names = "msm-pcm-dsp.0", "msm-pcm-dsp.1",
 				"msm-pcm-dsp.2", "msm-voip-dsp",
 				"msm-pcm-voice", "msm-pcm-loopback",
@@ -93,7 +97,7 @@
 				"msm-pcm-afe", "msm-lsm-client",
 				"msm-pcm-routing", "msm-cpe-lsm",
 				"msm-compr-dsp", "msm-pcm-dsp-noirq",
-				"msm-cpe-lsm.3";
+				"msm-cpe-lsm.3", "msm-transcode-loopback";
 		asoc-cpu = <&dai_hdmi>, <&dai_dp>,
 				<&dai_mi2s0>, <&dai_mi2s1>,
 				<&dai_mi2s2>, <&dai_mi2s3>,
@@ -142,9 +146,23 @@
 				<&wsa881x_213>, <&wsa881x_214>;
 		qcom,wsa-aux-dev-prefix = "SpkrLeft", "SpkrRight",
 					  "SpkrLeft", "SpkrRight";
+
+		hph_en0_gpio: msm_cdc_pinctrl@67 {
+			compatible = "qcom,msm-cdc-pinctrl";
+			pinctrl-names = "aud_active", "aud_sleep";
+			pinctrl-0 = <&hph_en0_active>;
+			pinctrl-1 = <&hph_en0_idle>;
+		};
+
+		hph_en1_gpio: msm_cdc_pinctrl@68 {
+			compatible = "qcom,msm-cdc-pinctrl";
+			pinctrl-names = "aud_active", "aud_sleep";
+			pinctrl-0 = <&hph_en1_active>;
+			pinctrl-1 = <&hph_en1_idle>;
+		};
 	};
 
-	sound-tavil {
+	snd_934x: sound-tavil {
 		compatible = "qcom,msm8998-asoc-snd-tavil";
 		qcom,model = "msm8998-tavil-snd-card";
 		qcom,ext-disp-audio-rx;
@@ -163,8 +181,11 @@
 			    "lpaif_quat_mode_muxsel";
 
 		qcom,audio-routing =
+			"AIF4 VI", "MCLK",
 			"RX_BIAS", "MCLK",
 			"MADINPUT", "MCLK",
+			"hifi amp", "LINEOUT1",
+			"hifi amp", "LINEOUT2",
 			"AMIC2", "MIC BIAS2",
 			"MIC BIAS2", "Headset Mic",
 			"AMIC3", "MIC BIAS2",
@@ -194,17 +215,22 @@
 		qcom,hph-en0-gpio = <&tavil_hph_en0>;
 		qcom,hph-en1-gpio = <&tavil_hph_en1>;
 		qcom,tavil-mclk-clk-freq = <9600000>;
+
+		qcom,usbc-analog-en1_gpio = <&wcd_usbc_analog_en1_gpio>;
+		qcom,usbc-analog-en2_n_gpio = <&wcd_usbc_analog_en2n_gpio>;
+
 		asoc-platform = <&pcm0>, <&pcm1>, <&pcm2>, <&voip>, <&voice>,
 				<&loopback>, <&compress>, <&hostless>,
 				<&afe>, <&lsm>, <&routing>, <&cpe>, <&compr>,
-				<&pcm_noirq>;
+				<&pcm_noirq>, <&trans_loopback>;
 		asoc-platform-names = "msm-pcm-dsp.0", "msm-pcm-dsp.1",
 				"msm-pcm-dsp.2", "msm-voip-dsp",
 				"msm-pcm-voice", "msm-pcm-loopback",
 				"msm-compress-dsp", "msm-pcm-hostless",
 				"msm-pcm-afe", "msm-lsm-client",
 				"msm-pcm-routing", "msm-cpe-lsm",
-				"msm-compr-dsp", "msm-pcm-dsp-noirq";
+				"msm-compr-dsp", "msm-pcm-dsp-noirq",
+				"msm-transcode-loopback";
 		asoc-cpu = <&dai_hdmi>, <&dai_dp>,
 				<&dai_mi2s0>, <&dai_mi2s1>,
 				<&dai_mi2s2>, <&dai_mi2s3>,
@@ -278,6 +304,20 @@
 		pinctrl-names = "aud_active", "aud_sleep";
 		pinctrl-0 = <&wcd_gnd_mic_swap_active>;
 		pinctrl-1 = <&wcd_gnd_mic_swap_idle>;
+	};
+
+	wcd_usbc_analog_en1_gpio: msm_cdc_pinctrl@59 {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&wcd_usbc_analog_en1_active>;
+		pinctrl-1 = <&wcd_usbc_analog_en1_idle>;
+	};
+
+	wcd_usbc_analog_en2n_gpio: msm_cdc_pinctrl@60 {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&wcd_usbc_analog_en2n_active>;
+		pinctrl-1 = <&wcd_usbc_analog_en2n_idle>;
 	};
 
 	wcd9xxx_intc: wcd9xxx-irq {

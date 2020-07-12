@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,6 +14,7 @@
 
 #include <linux/wait.h>
 #include <linux/stringify.h>
+#include <linux/power_supply.h>
 #include <linux/wakelock.h>
 #include "wcdcal-hwdep.h"
 
@@ -88,6 +89,11 @@ enum wcd_mbhc_plug_type {
 enum pa_dac_ack_flags {
 	WCD_MBHC_HPHL_PA_OFF_ACK = 0,
 	WCD_MBHC_HPHR_PA_OFF_ACK,
+};
+
+enum anc_ack_flags {
+	WCD_MBHC_ANC0_OFF_ACK = 0,
+	WCD_MBHC_ANC1_OFF_ACK,
 };
 
 enum wcd_mbhc_btn_det_mem {
@@ -251,6 +257,15 @@ enum mbhc_moisture_rref {
 	R_184_KOHM,
 };
 
+struct usbc_ana_audio_config {
+	int usbc_en1_gpio;
+	int usbc_en2n_gpio;
+	int usbc_force_gpio;
+	struct device_node *usbc_en1_gpio_p; /* used by pinctrl API */
+	struct device_node *usbc_en2n_gpio_p; /* used by pinctrl API */
+	struct device_node *usbc_force_gpio_p; /* used by pinctrl API */
+};
+
 struct wcd_mbhc_config {
 	bool read_fw_bin;
 	void *calibration;
@@ -265,6 +280,8 @@ struct wcd_mbhc_config {
 	int mbhc_micbias;
 	int anc_micbias;
 	bool enable_anc_mic_detect;
+	u32 enable_usbc_analog;
+	struct usbc_ana_audio_config usbc_analog_cfg;
 };
 
 struct wcd_mbhc_intr {
@@ -376,6 +393,9 @@ struct wcd_mbhc_cb {
 	void (*hph_pull_down_ctrl)(struct snd_soc_codec *, bool);
 	void (*mbhc_moisture_config)(struct wcd_mbhc *);
 	bool (*hph_register_recovery)(struct wcd_mbhc *);
+	void (*update_anc_state)(struct snd_soc_codec *codec,
+				 bool enable, int anc_num);
+	bool (*is_anc_on)(struct wcd_mbhc *mbhc);
 };
 
 #ifdef CONFIG_SND_SOC_WCD_MBHC_ADC
@@ -402,6 +422,9 @@ struct wcd_mbhc {
 	bool in_swch_irq_handler;
 	bool hphl_swh; /*track HPHL switch NC / NO */
 	bool gnd_swh; /*track GND switch NC / NO */
+	u32 moist_vref;
+	u32 moist_iref;
+	u32 moist_rref;
 	u8 micbias1_cap_mode; /* track ext cap setting */
 	u8 micbias2_cap_mode; /* track ext cap setting */
 	bool hs_detect_work_stop;
@@ -420,6 +443,7 @@ struct wcd_mbhc {
 
 	/* track PA/DAC state to sync with userspace */
 	unsigned long hph_pa_dac_state;
+	unsigned long hph_anc_state;
 	unsigned long event_state;
 	unsigned long jiffies_atreport;
 
@@ -450,6 +474,10 @@ struct wcd_mbhc {
 	unsigned long intr_status;
 	bool is_hph_ocp_pending;
 
+	int usbc_mode;
+	struct notifier_block psy_nb;
+	struct power_supply *usb_psy;
+	struct work_struct usbc_analog_work;
 	bool pullup_enable;
 	bool button_click_suppressor;
 	int impedance_offset;

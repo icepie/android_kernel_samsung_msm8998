@@ -35,7 +35,7 @@
 /*#define SECDP_PHY_AUTO_TEST*/			/* for PHY AUTOMATION TEST */
 #define SECDP_LIMIT_REAUTH				/* limit max HDCP reauth */
 #define SECDP_MAX_REAUTH_COUNT	100
-#define SECDP_BLOCK_DFP_VGA				/* block VGA dongle support */
+/*#define SECDP_BLOCK_DFP_VGA*/			/* block VGA dongle support */
 #define SECDP_AUX_RETRY					/* aux retry */
 
 #define DPCD_BRANCH_HW_REVISION    0x509
@@ -49,6 +49,8 @@
 #define AUX_CMD_FIFO_LEN	144
 #define AUX_CMD_MAX		16
 #define AUX_CMD_I2C_MAX		128
+
+#define AUX_CFG_LEN	10
 
 #define EDP_PORT_MAX		1
 #define EDP_SINK_CAP_LEN	16
@@ -122,6 +124,8 @@ struct edp_buf {
 	int len;	/* dara length */
 	char trans_num;	/* transaction number */
 	char i2c;	/* 1 == i2c cmd, 0 == native cmd */
+	bool no_send_addr;
+	bool no_send_stop;
 };
 
 /* USBPD-TypeC specific Macros */
@@ -246,14 +250,38 @@ struct dp_alt_mode {
 #define DP_LINK_RATE_MULTIPLIER	27000000
 #define DP_KHZ_TO_HZ            1000
 #define DP_MAX_PIXEL_CLK_KHZ	675000
+
+enum downstream_port_type {
+	DSP_TYPE_DP = 0x00,
+	DSP_TYPE_VGA,
+	DSP_TYPE_DVI_HDMI_DPPP,
+	DSP_TYPE_OTHER,
+};
+
+static inline char *mdss_dp_dsp_type_to_string(u32 dsp_type)
+{
+	switch (dsp_type) {
+	case DSP_TYPE_DP:
+		return DP_ENUM_STR(DSP_TYPE_DP);
+	case DSP_TYPE_VGA:
+		return DP_ENUM_STR(DSP_TYPE_VGA);
+	case DSP_TYPE_DVI_HDMI_DPPP:
+		return DP_ENUM_STR(DSP_TYPE_DVI_HDMI_DPPP);
+	case DSP_TYPE_OTHER:
+		return DP_ENUM_STR(DSP_TYPE_OTHER);
+	default:
+		return "unknown";
+	}
+}
+
 struct downstream_port_config {
 	/* Byte 02205h */
-	bool dfp_present;
-	u32 dfp_type;
+	bool dsp_present;
+	enum downstream_port_type dsp_type;
 	bool format_conversion;
 	bool detailed_cap_info_available;
 	/* Byte 02207h */
-	u32 dfp_count;
+	u32 dsp_count;
 	bool msa_timing_par_ignored;
 	bool oui_support;
 };
@@ -281,7 +309,6 @@ struct dpcd_cap {
 	u32 max_link_rate;  /* 162, 270 and 540 Mb, divided by 10 */
 	u32 flags;
 	u32 rx_port_buf_size[DP_MAX_DS_PORT_COUNT];
-	u32 rx_port0_buf_size;
 	u32 training_read_interval;/* us */
 	struct downstream_port_config downstream_port;
 };
@@ -376,6 +403,10 @@ struct edp_edid {
 	char hsync_pol;		/* 0 = negative, 1 = positive */
 	char ext_block_cnt;
 	struct display_timing_desc timing[4];
+
+#ifdef CONFIG_SEC_DISPLAYPORT
+	u32 id_serial_number;
+#endif
 };
 
 struct dp_statistic {
@@ -458,6 +489,102 @@ struct mdss_dp_crc_data {
 	u32 b_cb;
 };
 
+#define MDSS_DP_MAX_PHY_CFG_VALUE_CNT 3
+struct mdss_dp_phy_cfg {
+	u32 cfg_cnt;
+	u32 current_index;
+	u32 offset;
+	u32 lut[MDSS_DP_MAX_PHY_CFG_VALUE_CNT];
+};
+
+/* PHY AUX config registers */
+enum dp_phy_aux_config_type {
+	PHY_AUX_CFG0,
+	PHY_AUX_CFG1,
+	PHY_AUX_CFG2,
+	PHY_AUX_CFG3,
+	PHY_AUX_CFG4,
+	PHY_AUX_CFG5,
+	PHY_AUX_CFG6,
+	PHY_AUX_CFG7,
+	PHY_AUX_CFG8,
+	PHY_AUX_CFG9,
+	PHY_AUX_CFG_MAX,
+};
+
+static inline const char *mdss_dp_get_phy_aux_config_property(u32 cfg_type)
+{
+	switch (cfg_type) {
+	case PHY_AUX_CFG0:
+		return "qcom,aux-cfg0-settings";
+	case PHY_AUX_CFG1:
+		return "qcom,aux-cfg1-settings";
+	case PHY_AUX_CFG2:
+		return "qcom,aux-cfg2-settings";
+	case PHY_AUX_CFG3:
+		return "qcom,aux-cfg3-settings";
+	case PHY_AUX_CFG4:
+		return "qcom,aux-cfg4-settings";
+	case PHY_AUX_CFG5:
+		return "qcom,aux-cfg5-settings";
+	case PHY_AUX_CFG6:
+		return "qcom,aux-cfg6-settings";
+	case PHY_AUX_CFG7:
+		return "qcom,aux-cfg7-settings";
+	case PHY_AUX_CFG8:
+		return "qcom,aux-cfg8-settings";
+	case PHY_AUX_CFG9:
+		return "qcom,aux-cfg9-settings";
+	default:
+		return "unknown";
+	}
+}
+
+static inline char *mdss_dp_phy_aux_config_type_to_string(u32 cfg_type)
+{
+	switch (cfg_type) {
+	case PHY_AUX_CFG0:
+		return DP_ENUM_STR(PHY_AUX_CFG0);
+	case PHY_AUX_CFG1:
+		return DP_ENUM_STR(PHY_AUX_CFG1);
+	case PHY_AUX_CFG2:
+		return DP_ENUM_STR(PHY_AUX_CFG2);
+	case PHY_AUX_CFG3:
+		return DP_ENUM_STR(PHY_AUX_CFG3);
+	case PHY_AUX_CFG4:
+		return DP_ENUM_STR(PHY_AUX_CFG4);
+	case PHY_AUX_CFG5:
+		return DP_ENUM_STR(PHY_AUX_CFG5);
+	case PHY_AUX_CFG6:
+		return DP_ENUM_STR(PHY_AUX_CFG6);
+	case PHY_AUX_CFG7:
+		return DP_ENUM_STR(PHY_AUX_CFG7);
+	case PHY_AUX_CFG8:
+		return DP_ENUM_STR(PHY_AUX_CFG8);
+	case PHY_AUX_CFG9:
+		return DP_ENUM_STR(PHY_AUX_CFG9);
+	default:
+		return "unknown";
+	}
+}
+
+enum dp_aux_transaction {
+	DP_AUX_WRITE,
+	DP_AUX_READ
+};
+
+static inline char *mdss_dp_aux_transaction_to_string(u32 transaction)
+{
+	switch (transaction) {
+	case DP_AUX_WRITE:
+		return DP_ENUM_STR(DP_AUX_WRITE);
+	case DP_AUX_READ:
+		return DP_ENUM_STR(DP_AUX_READ);
+	default:
+		return "unknown";
+	}
+}
+
 struct mdss_dp_drv_pdata {
 	/* device driver */
 	int (*on) (struct mdss_panel_data *pdata);
@@ -503,9 +630,11 @@ struct mdss_dp_drv_pdata {
 	bool core_clks_on;
 	bool link_clks_on;
 	bool power_on;
+	u32 suspend_vic;
 	bool hpd;
 	bool psm_enabled;
 	bool audio_test_req;
+	bool dpcd_read_required;
 
 	/* dp specific */
 	unsigned char *base;
@@ -515,6 +644,7 @@ struct mdss_dp_drv_pdata {
 	struct dss_io_data dp_cc_io;
 	struct dss_io_data qfprom_io;
 	struct dss_io_data hdcp_io;
+	u32 phy_reg_offset;
 	int base_size;
 	unsigned char *mmss_cc_base;
 	bool override_config;
@@ -541,6 +671,12 @@ struct mdss_dp_drv_pdata {
 	struct edp_edid edid;
 	struct dpcd_cap dpcd;
 
+	/* DP Pixel clock RCG and PLL parent */
+	struct clk *pixel_clk_rcg;
+	struct clk *pixel_parent;
+	struct clk *pixel_clk_two_div;
+	struct clk *pixel_clk_four_div;
+
 	/* regulators */
 	struct dss_module_power power_data[DP_MAX_PM];
 	struct dp_pinctrl_res pin_res;
@@ -560,14 +696,17 @@ struct mdss_dp_drv_pdata {
 	struct completion aux_comp;
 	struct completion idle_comp;
 	struct completion video_comp;
+	struct completion notification_comp;
 	struct completion irq_comp;
 #ifdef CONFIG_SEC_DISPLAYPORT
 	struct completion dp_off_comp;
 #endif
 	struct mutex aux_mutex;
 	struct mutex train_mutex;
-	struct mutex pd_msg_mutex;
 	struct mutex attention_lock;
+#ifdef CONFIG_SEC_DISPLAYPORT
+	struct mutex pd_msg_mutex;
+#endif
 	struct mutex hdcp_mutex;
 	bool cable_connected;			/* hpd, see "dp_get_cable_status()" */
 #ifdef CONFIG_SEC_DISPLAYPORT
@@ -601,9 +740,14 @@ struct mdss_dp_drv_pdata {
 	struct dp_statistic dp_stat;
 	bool hpd_irq_on;
 	u32 hpd_notification_status;
+	atomic_t notification_pending;
 
 	struct mdss_dp_event_data dp_event;
 	struct task_struct *ev_thread;
+
+	/* dt settings */
+	char l_map[4];
+	struct mdss_dp_phy_cfg aux_cfg[PHY_AUX_CFG_MAX];
 
 	struct workqueue_struct *workq;
 	struct delayed_work hdcp_cb_work;
@@ -626,6 +770,21 @@ struct mdss_dp_drv_pdata {
 	struct dpcd_sink_count prev_sink_count;
 
 	struct list_head attention_head;
+};
+
+enum dp_phy_lane_num {
+	DP_PHY_LN0 = 0,
+	DP_PHY_LN1 = 1,
+	DP_PHY_LN2 = 2,
+	DP_PHY_LN3 = 3,
+	DP_MAX_PHY_LN = 4,
+};
+
+enum dp_mainlink_lane_num {
+	DP_ML0 = 0,
+	DP_ML1 = 1,
+	DP_ML2 = 2,
+	DP_ML3 = 3,
 };
 
 enum dp_lane_count {
@@ -713,31 +872,9 @@ static inline char *mdss_dp_get_phy_test_pattern(u32 phy_test_pattern_sel)
 }
 
 #ifdef CONFIG_SEC_DISPLAYPORT
-enum dp_dfp_type {
-	DFP_TYPE_DP     = 0,
-	DFP_TYPE_VGA    = 1,
-	DFP_TYPE_HDMI   = 2,		/* DVI, HDMI, DP++ */
-	DFP_TYPE_OTHERS = 3,
-};
-
-static inline char *secdp_get_dfp_type_name(u32 type)
-{
-	switch (type) {
-	case DFP_TYPE_DP:
-		return DP_ENUM_STR(DFP_TYPE_DP);
-	case DFP_TYPE_VGA:
-		return DP_ENUM_STR(DFP_TYPE_VGA);
-	case DFP_TYPE_HDMI:
-		return DP_ENUM_STR(DFP_TYPE_HDMI);
-	case DFP_TYPE_OTHERS:
-		return DP_ENUM_STR(DFP_TYPE_OTHERS);
-	default:
-		return "unknown";
-	}
-}
-
 #define SAMSUNG_VENDOR_ID		0x04E8
 #define DEXDOCK_PRODUCT_ID		0xA020
+/* #define NOT_SUPPORT_DEX_RES_CHANGE */
 #endif
 
 static inline bool mdss_dp_is_phy_test_pattern_supported(
@@ -1112,9 +1249,15 @@ static inline void mdss_dp_reset_frame_crc_data(struct mdss_dp_crc_data *crc)
 	crc->en = false;
 }
 
+static inline bool mdss_dp_is_dsp_type_vga(struct mdss_dp_drv_pdata *dp)
+{
+	return (dp->dpcd.downstream_port.dsp_present &&
+		(dp->dpcd.downstream_port.dsp_type == DSP_TYPE_VGA));
+}
+
 void mdss_dp_phy_initialize(struct mdss_dp_drv_pdata *dp);
 
-void mdss_dp_dpcd_cap_read(struct mdss_dp_drv_pdata *dp);
+int mdss_dp_dpcd_cap_read(struct mdss_dp_drv_pdata *dp);
 int mdss_dp_dpcd_status_read(struct mdss_dp_drv_pdata *dp);
 void mdss_dp_aux_parse_sink_status_field(struct mdss_dp_drv_pdata *dp);
 int mdss_dp_edid_read(struct mdss_dp_drv_pdata *dp);
@@ -1146,6 +1289,8 @@ int mdss_dp_aux_config_sink_frame_crc(struct mdss_dp_drv_pdata *dp,
 int mdss_dp_aux_parse_vx_px(struct mdss_dp_drv_pdata *ep);
 #ifdef CONFIG_SEC_DISPLAYPORT
 int secdp_check_aux_status(struct mdss_dp_drv_pdata *dp);
+void secdp_init_aux_control(struct mdss_dp_drv_pdata *dp);
+int secdp_read_link_status(struct mdss_dp_drv_pdata *ep);
 #endif
 
 #endif /* MDSS_DP_H */

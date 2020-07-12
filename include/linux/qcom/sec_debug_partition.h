@@ -28,6 +28,8 @@ enum debug_partition_index {
 	debug_index_reset_tzlog,
 	debug_index_ap_health,
 	debug_index_reset_extrc_info,
+	debug_index_lcd_debug_info,
+	debug_index_modem_info,
 	debug_index_max,
 };
 
@@ -97,7 +99,7 @@ typedef struct {
 } rpm_dcvs_t;
 
 typedef struct {
-	uint64_t ktime;	
+	uint64_t ktime;
 	int32_t cap;
 	int32_t volt;
 	int32_t temp;
@@ -133,6 +135,17 @@ typedef struct {
 	uint64_t spare_magic3;
 } ap_health_t;
 
+/* Synchronize with Fence Name Length */
+#define MAX_FTOUT_NAME 64
+
+struct lcd_debug_ftout {
+	uint32_t count;
+	char name[MAX_FTOUT_NAME];
+};
+
+struct lcd_debug_t {
+	struct lcd_debug_ftout ftout;
+};
 
 #define DEBUG_PARTITION_NAME	"/dev/block/bootdevice/by-name/debug"	/* debug block */
 
@@ -149,19 +162,23 @@ typedef struct {
 #define SEC_DEBUG_RESET_HEADER_SIZE		(SECTOR_UNIT_SIZE)
 #define SEC_DEBUG_AP_HEALTH_OFFSET 		(8*1024)
 #define SEC_DEBUG_AP_HEALTH_SIZE		(sizeof(ap_health_t))
+#define SEC_DEBUG_LCD_DEBUG_OFFSET              (12*1024)
+#define SEC_DEBUG_LCD_DEBUG_SIZE		(4*1024) // MAX 4KB, if you want to reduce size, do it.
 #define SEC_DEBUG_EXTRA_INFO_OFFSET 		(SEC_DEBUG_RESET_HEADER_OFFSET + SEC_DEBUG_RESET_HEADER_SIZE)
 #define SEC_DEBUG_EXTRA_INFO_SIZE		(ALIGN(SEC_DEBUG_EX_INFO_SIZE, SECTOR_UNIT_SIZE))
+#define SEC_DEBUG_RESET_MODEM_OFFSET		(1*1024*1024 - 8*1024)
+#define SEC_DEBUG_RESET_MODEM_SIZE		(8*1024) /* roundup(sizeof(struct sec_debug_summary_data_modem), SECTOR_UNIT_SIZE) */
 #define SEC_DEBUG_RESET_KLOG_OFFSET		(1*1024*1024)
 #define SEC_DEBUG_RESET_KLOG_SIZE		(0x200000-0xC)		/* 2MB */
 #define SEC_DEBUG_RESET_SUMMARY_OFFSET		(SEC_DEBUG_RESET_KLOG_OFFSET +\
-							ALIGN(SEC_DEBUG_RESET_KLOG_SIZE, SECTOR_UNIT_SIZE)) /* 3*1024*1024*/
+		ALIGN(SEC_DEBUG_RESET_KLOG_SIZE, SECTOR_UNIT_SIZE)) /* 3*1024*1024*/
 #define SEC_DEBUG_RESET_SUMMARY_SIZE		(0x200000)		/* 2MB */
 #define SEC_DEBUG_RESET_TZLOG_OFFSET		(SEC_DEBUG_RESET_SUMMARY_OFFSET +\
-							ALIGN(SEC_DEBUG_RESET_SUMMARY_SIZE, SECTOR_UNIT_SIZE)) /* 5*1024*1024*/
+		ALIGN(SEC_DEBUG_RESET_SUMMARY_SIZE, SECTOR_UNIT_SIZE)) /* 5*1024*1024*/
 #define SEC_DEBUG_RESET_TZLOG_SIZE		(0x40000)		/* 256KB */
 #define SEC_DEBUG_RESET_EXTRC_OFFSET		(SEC_DEBUG_RESET_TZLOG_OFFSET +\
-							ALIGN(SEC_DEBUG_RESET_TZLOG_SIZE, SECTOR_UNIT_SIZE)) /* 5*1024*1024 + 256*1024*/
-#define SEC_DEBUG_RESET_EXTRC_SIZE		(1*1024)		/* 1KB */
+		ALIGN(SEC_DEBUG_RESET_TZLOG_SIZE, SECTOR_UNIT_SIZE)) /* 5*1024*1024 + 256*1024*/
+#define SEC_DEBUG_RESET_EXTRC_SIZE		(1*1024)		/* 4KB */
 
 ap_health_t* ap_health_data_read(void);
 int ap_health_data_write(ap_health_t *data);

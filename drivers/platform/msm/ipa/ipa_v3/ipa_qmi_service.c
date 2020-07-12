@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,6 +36,8 @@
 
 #define QMI_SEND_STATS_REQ_TIMEOUT_MS 5000
 #define QMI_SEND_REQ_TIMEOUT_MS 60000
+
+#define QMI_IPA_FORCE_CLEAR_DATAPATH_TIMEOUT_MS 1000
 
 static struct qmi_handle *ipa3_svc_handle;
 static void ipa3_a5_svc_recv_msg(struct work_struct *work);
@@ -725,7 +727,8 @@ int ipa3_qmi_enable_force_clear_datapath_send(
 			&req_desc,
 			req,
 			sizeof(*req),
-			&resp_desc, &resp, sizeof(resp), 0);
+			&resp_desc, &resp, sizeof(resp),
+			QMI_IPA_FORCE_CLEAR_DATAPATH_TIMEOUT_MS);
 	if (rc < 0) {
 		IPAWANERR("send req failed %d\n", rc);
 		return rc;
@@ -770,7 +773,8 @@ int ipa3_qmi_disable_force_clear_datapath_send(
 			&req_desc,
 			req,
 			sizeof(*req),
-			&resp_desc, &resp, sizeof(resp), 0);
+			&resp_desc, &resp, sizeof(resp),
+			QMI_IPA_FORCE_CLEAR_DATAPATH_TIMEOUT_MS);
 	if (rc < 0) {
 		IPAWANERR("send req failed %d\n", rc);
 		return rc;
@@ -794,13 +798,17 @@ int ipa3_qmi_filter_notify_send(
 
 	/* check if the filter rules from IPACM is valid */
 	if (req->rule_id_len == 0) {
-		IPAWANERR(" delete UL filter rule for pipe %d\n",
+		IPAWANDBG(" delete UL filter rule for pipe %d\n",
 		req->source_pipe_index);
-		return -EINVAL;
 	} else if (req->rule_id_len > QMI_IPA_MAX_FILTERS_V01) {
 		IPAWANERR(" UL filter rule for pipe %d exceed max (%u)\n",
 		req->source_pipe_index,
 		req->rule_id_len);
+		return -EINVAL;
+	}
+
+	if (req->source_pipe_index == -1) {
+		IPAWANERR("Source pipe index invalid\n");
 		return -EINVAL;
 	}
 
@@ -897,7 +905,8 @@ static void ipa3_q6_clnt_ind_cb(struct qmi_handle *handle, unsigned int msg_id,
 		IPAWANDBG("Quota reached indication on qmux(%d) Mbytes(%lu)\n",
 			  qmi_ind.apn.mux_id,
 			  (unsigned long int) qmi_ind.apn.num_Mbytes);
-		ipa3_broadcast_quota_reach_ind(qmi_ind.apn.mux_id);
+		ipa3_broadcast_quota_reach_ind(qmi_ind.apn.mux_id,
+			IPA_UPSTEAM_MODEM);
 	}
 }
 
@@ -1173,10 +1182,13 @@ void ipa3_qmi_service_exit(void)
 	}
 
 	/* clean the QMI msg cache */
+	mutex_lock(&ipa3_qmi_lock);
 	if (ipa3_qmi_ctx != NULL) {
 		vfree(ipa3_qmi_ctx);
 		ipa3_qmi_ctx = NULL;
 	}
+	mutex_unlock(&ipa3_qmi_lock);
+
 	ipa3_svc_handle = 0;
 	ipa3_qmi_modem_init_fin = false;
 	ipa3_qmi_indication_fin = false;

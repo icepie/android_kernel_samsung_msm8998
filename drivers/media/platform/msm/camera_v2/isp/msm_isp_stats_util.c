@@ -226,6 +226,11 @@ static int32_t msm_isp_stats_buf_divert(struct vfe_device *vfe_dev,
 	stats_event->stats_buf_idxs
 		[stream_info->stats_type] =
 		done_buf->buf_idx;
+
+	stats_event->pd_stats_idx = 0xF;
+	if (stream_info->stats_type == MSM_ISP_STATS_BF)
+		stats_event->pd_stats_idx = vfe_dev->pd_buf_idx;
+
 	if (comp_stats_type_mask == NULL) {
 		stats_event->stats_mask =
 			1 << stream_info->stats_type;
@@ -237,9 +242,9 @@ static int32_t msm_isp_stats_buf_divert(struct vfe_device *vfe_dev,
 			stream_info->stats_type,
 			buf_event);
 	} else {
-		ISP_DBG("%s : stats frameid: 0x%x %d bufq %x\n", 
-          __func__, buf_event->frame_id, 
-          stream_info->stats_type, done_buf->bufq_handle); 
+		ISP_DBG("%s : stats frameid: 0x%x %d bufq %x\n",
+			__func__, buf_event->frame_id,
+		stream_info->stats_type, done_buf->bufq_handle);
 		*comp_stats_type_mask |=
 			1 << stream_info->stats_type;
 	}
@@ -542,10 +547,10 @@ int msm_isp_release_stats_stream(struct vfe_device *vfe_dev, void *arg)
 		stream_info->buffer_offset[i] = stream_info->buffer_offset[k];
 	}
 
+	stream_info->num_isp--;
 	stream_info->vfe_dev[stream_info->num_isp] = 0;
 	stream_info->stream_handle[stream_info->num_isp] = 0;
 	stream_info->buffer_offset[stream_info->num_isp] = 0;
-	stream_info->num_isp--;
 	stream_info->vfe_mask &= ~(1 << vfe_dev->pdev->id);
 	if (stream_info->num_isp == 0)
 		stream_info->state = STATS_AVAILABLE;

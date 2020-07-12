@@ -32,6 +32,26 @@ module_param(fail_request, charp, 0);
 #endif /* CONFIG_FAIL_MMC_REQUEST */
 
 /* The debugfs functions are optimized away when CONFIG_DEBUG_FS isn't set. */
+static int mmc_ring_buffer_show(struct seq_file *s, void *data)
+{
+	struct mmc_host *mmc = s->private;
+
+	mmc_dump_trace_buffer(mmc, s);
+	return 0;
+}
+
+static int mmc_ring_buffer_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mmc_ring_buffer_show, inode->i_private);
+}
+
+static const struct file_operations mmc_ring_buffer_fops = {
+	.open		= mmc_ring_buffer_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 static int mmc_ios_show(struct seq_file *s, void *data)
 {
 	static const char *vdd_str[] = {
@@ -317,16 +337,48 @@ static int mmc_force_err_set(void *data, u64 val)
 {
 	struct mmc_host *host = data;
 
-	if (host && host->ops && host->ops->force_err_irq) {
-		mmc_host_clk_hold(host);
+	if (host && host->card && host->ops &&
+			host->ops->force_err_irq) {
+		/*
+		 * To access the force error irq reg, we need to make
+		 * sure the host is powered up and host clock is ticking.
+		 */
+		mmc_get_card(host->card);
 		host->ops->force_err_irq(host, val);
-		mmc_host_clk_release(host);
+		mmc_put_card(host->card);
 	}
 
 	return 0;
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(mmc_force_err_fops, NULL, mmc_force_err_set, "%llu\n");
+
+static int mmc_err_state_get(void *data, u64 *val)
+{
+	struct mmc_host *host = data;
+
+	if (!host)
+		return -EINVAL;
+
+	*val = host->err_occurred ? 1 : 0;
+
+	return 0;
+}
+
+static int mmc_err_state_clear(void *data, u64 val)
+{
+	struct mmc_host *host = data;
+
+	if (!host)
+		return -EINVAL;
+
+	host->err_occurred = false;
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(mmc_err_state, mmc_err_state_get,
+		mmc_err_state_clear, "%llu\n");
 
 void mmc_add_host_debugfs(struct mmc_host *host)
 {
@@ -366,6 +418,15 @@ void mmc_add_host_debugfs(struct mmc_host *host)
 	if (!debugfs_create_bool("cmdq_task_history",
 		S_IRUSR | S_IWUSR, root,
 		&host->cmdq_thist_enabled))
+		goto err_node;
+
+#ifdef CONFIG_MMC_RING_BUFFER
+	if (!debugfs_create_file("ring_buffer", S_IRUSR,
+				root, host, &mmc_ring_buffer_fops))
+		goto err_node;
+#endif
+	if (!debugfs_create_file("err_state", S_IRUSR | S_IWUSR, root, host,
+		&mmc_err_state))
 		goto err_node;
 
 #ifdef CONFIG_MMC_CLKGATE

@@ -1,47 +1,45 @@
-/*! @file vfs8xxx.h
-*******************************************************************************
-**  SPI Driver Interface Functions
-**
-**  This file contains the SPI driver interface functions.
-**
-**  Copyright (C) 2011-2013 Validity Sensors, Inc.
-**  This program is free software; you can redistribute it and/or
-**  modify it under the terms of the GNU General Public License
-**  as published by the Free Software Foundation; either version 2
-**  of the License, or (at your option) any later version.
-**
-**  This program is distributed in the hope that it will be useful,
-**  but WITHOUT ANY WARRANTY; without even the implied warranty of
-**  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-**  GNU General Public License for more details.
-**
-**  You should have received a copy of the GNU General Public License
-**  along with this program; if not, write to the Free Software
-**  Foundation, Inc., 51 Franklin Street,
-**  Fifth Floor, Boston, MA  02110-1301, USA.
-*/
+/*
+ *  SPI Driver Interface Functions
+ *
+ *  This file contains the SPI driver interface functions.
+ *
+ *  Copyright (C) 2011-2013 Validity Sensors, Inc.
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  as published by the Free Software Foundation; either version 2
+ *  of the License, or (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ */
 
 #ifndef VFS8XXX_H_
 #define VFS8XXX_H_
 
-#define SLOW_BAUD_RATE     9600000
-#define MAX_BAUD_RATE      9600000
+#define VENDOR			"SYNAPTICS"
+#define VALIDITY_PART_NAME	"validity_fingerprint"
 
-#define BAUD_RATE_COEF      1000
-#define DRDY_TIMEOUT_MS     40
-#define DRDY_ACTIVE_STATUS  1
-#define BITS_PER_WORD       8
-#define DRDY_IRQ_FLAG       IRQF_TRIGGER_RISING
-#define DEFAULT_BUFFER_SIZE (4096 * 16)
-#define DRDY_IRQ_ENABLE			1
-#define DRDY_IRQ_DISABLE		0
+#define SLOW_BAUD_RATE		9600000
+#define MAX_BAUD_RATE		9600000
+
+#define BAUD_RATE_COEF		1000
+#define DRDY_TIMEOUT_MS		40
+#define DRDY_ACTIVE_STATUS	1
+#define BITS_PER_WORD		8
+#define DRDY_IRQ_FLAG		IRQF_TRIGGER_RISING
+#define DEFAULT_BUFFER_SIZE	(4096 * 16)
+#define DRDY_IRQ_ENABLE		1
+#define DRDY_IRQ_DISABLE	0
 
 /* IOCTL commands definitions */
 
 /*
  * Magic number of IOCTL command
  */
-#define VFSSPI_IOCTL_MAGIC    'k'
+#define VFSSPI_IOCTL_MAGIC	'k'
 
 #ifndef ENABLE_SENSORS_FPRINT_SECURE
 /*
@@ -156,13 +154,70 @@ struct vfsspi_ioctl_transfer {
  * Used by IOCTL command:
  *         VFSSPI_IOCTL_REGISTER_DRDY_SIGNAL
  *
- * @user_pid:Process ID to which SPI driver sends signal indicating that DRDY
- *			is asserted
+ * @user_pid:Process ID to which SPI driver sends signal indicating that
+ *			DRDY is asserted
  * @signal_id:signal_id
-*/
+ */
 struct vfsspi_ioctl_register_signal {
 	int user_pid;
 	int signal_id;
 };
+
+static LIST_HEAD(device_list);
+static DEFINE_MUTEX(device_list_mutex);
+static struct class *vfsspi_device_class;
+static int gpio_irq;
+
+struct vfsspi_device_data {
+	dev_t devt;
+	struct cdev cdev;
+	spinlock_t vfs_spi_lock;
+	struct spi_device *spi;
+	struct list_head device_entry;
+	struct mutex buffer_mutex;
+	unsigned int is_opened;
+	unsigned char *buffer;
+	unsigned char *null_buffer;
+	unsigned char *stream_buffer;
+	size_t stream_buffer_size;
+	unsigned int drdy_pin;
+	unsigned int sleep_pin;
+	unsigned int ldo_pin;
+	const char *btp_vdd;
+	struct regulator *regulator_3p3;
+	int cnt_irq;
+	const char *chipid;
+	struct task_struct *t;
+	int user_pid;
+	int signal_id;
+	unsigned int current_spi_speed;
+	atomic_t irq_enabled;
+	struct mutex kernel_lock;
+	bool ldo_onoff;
+	spinlock_t irq_lock;
+	unsigned short drdy_irq_flag;
+	unsigned int ldocontrol;
+	unsigned int min_cpufreq_limit;
+	const char *chopid;
+	int detect_mode;
+
+	struct work_struct work_debug;
+	struct workqueue_struct *wq_dbg;
+	struct timer_list dbg_timer;
+	struct pinctrl *p;
+	struct pinctrl_state *pins_sleep;
+	struct pinctrl_state *pins_idle;
+	bool tz_mode;
+	struct device *fp_device;
+#ifdef ENABLE_SENSORS_FPRINT_SECURE
+	bool enabled_clk;
+	struct wake_lock fp_spi_lock;
+#endif
+	struct wake_lock fp_signal_lock;
+	int sensortype;
+	unsigned int orient;
+};
+
+static struct vfsspi_device_data *g_data;
 
 #endif /* VFS8XXX_H_ */

@@ -127,7 +127,7 @@ int rtc6213n_set_register(struct rtc6213n_device *radio, int regnr)
 	for (i = 0; i < WRITE_REG_NUM; i++)
 		buf[i] = __cpu_to_be16(radio->registers[WRITE_INDEX(i)]);
 
-	if (i2c_transfer(radio->client->adapter, msgs, 1) != 1) {		
+	if (i2c_transfer(radio->client->adapter, msgs, 1) != 1) {
 		for (i = 0; i < WRITE_REG_NUM; i++) {
 			dev_err(&radio->videodev->dev, " rtc6213n_set_register buf[%d] = %d\n",
 						i, buf[i]);

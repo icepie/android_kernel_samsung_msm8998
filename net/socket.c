@@ -533,9 +533,23 @@ static ssize_t sockfs_listxattr(struct dentry *dentry, char *buffer,
 	return used;
 }
 
+static int sockfs_setattr(struct dentry *dentry, struct iattr *iattr)
+{
+	int err = simple_setattr(dentry, iattr);
+
+	if (!err && (iattr->ia_valid & ATTR_UID)) {
+		struct socket *sock = SOCKET_I(d_inode(dentry));
+
+		sock->sk->sk_uid = iattr->ia_uid;
+	}
+
+	return err;
+}
+
 static const struct inode_operations sockfs_inode_ops = {
 	.getxattr = sockfs_getxattr,
 	.listxattr = sockfs_listxattr,
+	.setattr = sockfs_setattr,
 };
 
 /**
@@ -550,6 +564,9 @@ static struct socket *sock_alloc(void)
 {
 	struct inode *inode;
 	struct socket *sock;
+    /* START_OF_KNOX_VPN */
+    struct timespec open_timespec;
+    /* END_OF_KNOX_VPN */
 
 	inode = new_inode_pseudo(sock_mnt->mnt_sb);
 	if (!inode)
@@ -561,6 +578,8 @@ static struct socket *sock_alloc(void)
     if(sock) {
         sock->knox_sent = 0;
         sock->knox_recv = 0;
+        open_timespec = current_kernel_time();
+        sock->open_time = open_timespec.tv_sec;
     }
     /* END_OF_KNOX_VPN */
 
@@ -606,6 +625,7 @@ void sock_release(struct socket *sock)
 	/* START_OF_KNOX_VPN */
     sock->knox_sent = 0;
     sock->knox_recv = 0;
+    sock->open_time = 0;
     /* END_OF_KNOX_VPN */
 
 	sock->file = NULL;
@@ -1677,6 +1697,8 @@ SYSCALL_DEFINE6(sendto, int, fd, void __user *, buff, size_t, len,
 
 	if (len > INT_MAX)
 		len = INT_MAX;
+	if (unlikely(!access_ok(VERIFY_READ, buff, len)))
+		return -EFAULT;
 
 	err = import_single_range(WRITE, buff, len, &iov, &msg.msg_iter);
 	if (unlikely(err))
@@ -1736,6 +1758,8 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 
 	if (size > INT_MAX)
 		size = INT_MAX;
+	if (unlikely(!access_ok(VERIFY_WRITE, ubuf, size)))
+		return -EFAULT;
 	err = import_single_range(READ, ubuf, size, &iov, &msg.msg_iter);
 	if (unlikely(err))
 		return err;
@@ -2096,6 +2120,8 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		if (err)
 			break;
 		++datagrams;
+		if (msg_data_left(&msg_sys))
+			break;
 	}
 
 	fput_light(sock->file, fput_needed);
@@ -2238,8 +2264,10 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		return err;
 
 	err = sock_error(sock->sk);
-	if (err)
+	if (err) {
+		datagrams = err;
 		goto out_put;
+	}
 
 	entry = mmsg;
 	compat_entry = (struct compat_mmsghdr __user *)mmsg;
@@ -3349,46 +3377,6 @@ int kernel_sock_shutdown(struct socket *sock, enum sock_shutdown_cmd how)
 	return sock->ops->shutdown(sock, how);
 }
 EXPORT_SYMBOL(kernel_sock_shutdown);
-
-/*	This routine returns the IP overhead imposed by a socket i.e.
- *	the length of the underlying IP header, depending on whether
- *	this is an IPv4 or IPv6 socket and the length from IP options turned
- *	on at the socket.
- */
-u32 kernel_sock_ip_overhead(struct sock *sk)
-{
-	struct inet_sock *inet;
-	struct ipv6_pinfo *np;
-	struct ip_options_rcu *opt = NULL;
-	struct ipv6_txoptions *optv6 = NULL;
-	u32 overhead = 0;
-
-	if (!sk)
-		return overhead;
-	switch (sk->sk_family) {
-	case AF_INET:
-		inet = inet_sk(sk);
-		overhead += sizeof(struct iphdr);
-		if (inet)
-			opt = rcu_dereference_protected(inet->inet_opt,
-							sock_owned_by_user(sk));
-		if (opt)
-			overhead += opt->opt.optlen;
-		return overhead;
-	case AF_INET6:
-		np = inet6_sk(sk);
-		overhead += sizeof(struct ipv6hdr);
-		if (np)
-			optv6 = rcu_dereference_protected(np->opt,
-							  sock_owned_by_user(sk));
-		if (optv6)
-			overhead += (optv6->opt_flen + optv6->opt_nflen);
-		return overhead;
-	default: /* Returns 0 overhead if the socket is not ipv4 or ipv6 */
-		return overhead;
-	}
-}
-EXPORT_SYMBOL(kernel_sock_ip_overhead);
 
 int sockev_register_notify(struct notifier_block *nb)
 {

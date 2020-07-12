@@ -2,7 +2,15 @@
 # Makefile for muic devices
 #
 
-obj-y					+= muic-core.o
+ifeq ($(CONFIG_MUIC_S2MU004),y)
+	obj-y					+= muic_core.o s2mu004-muic.o s2mu004-muic-sysfs.o
+	obj-$(CONFIG_CCIC_NOTIFIER)		+= muic_manager.o
+	obj-$(CONFIG_HV_MUIC_S2MU004_AFC)	+= s2mu004-muic-afc.o
+else
+	obj-y				+= muic-core.o
+	obj-$(CONFIG_MUIC_SUPPORT_CCIC)	+= universal/muic_ccic.o
+endif
+
 obj-$(CONFIG_MUIC_NOTIFIER)		+= muic_notifier.o
 obj-$(CONFIG_MUIC_MAX77804)		+= max77804-muic.o
 obj-$(CONFIG_MUIC_MAX77804K)		+= max77804k-muic.o
@@ -18,7 +26,6 @@ obj-$(CONFIG_MUIC_FSA9480)		+= fsa9480.o
 obj-$(CONFIG_MUIC_S2MM001)		+= s2mm001.o
 
 # MUIC_UNIVERSAL
-obj-$(CONFIG_MUIC_SUPPORT_CCIC)	+= universal/muic_ccic.o
 obj-$(CONFIG_MUIC_UNIVERSAL)	+= universal/muic_usb.o
 obj-$(CONFIG_MUIC_UNIVERSAL)	+= universal/muic_coagent.o
 obj-$(CONFIG_MUIC_UNIVERSAL)	+= universal/muic_task.o

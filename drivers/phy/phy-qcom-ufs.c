@@ -15,8 +15,8 @@
 #include "phy-qcom-ufs-i.h"
 
 #define MAX_PROP_NAME              32
-#define VDDA_PHY_MIN_UV            1000000
-#define VDDA_PHY_MAX_UV            1000000
+#define VDDA_PHY_MIN_UV            800000
+#define VDDA_PHY_MAX_UV            925000
 #define VDDA_PLL_MIN_UV            1200000
 #define VDDA_PLL_MAX_UV            1800000
 #define VDDP_REF_CLK_MIN_UV        1200000
@@ -112,6 +112,14 @@ struct phy *ufs_qcom_phy_generic_probe(struct platform_device *pdev,
 		generic_phy = NULL;
 		goto out;
 	}
+
+	/*
+	 * UFS PHY power management is managed by its parent (UFS host
+	 * controller) hence set the no the no runtime PM callbacks flag
+	 * on UFS PHY device to avoid any accidental attempt to call the
+	 * PM callbacks for PHY device.
+	 */
+	pm_runtime_no_callbacks(&generic_phy->dev);
 
 	common_cfg->phy_spec_ops = phy_spec_ops;
 	common_cfg->dev = dev;
@@ -239,7 +247,6 @@ ufs_qcom_phy_init_vregulators(struct phy *generic_phy,
 			      struct ufs_qcom_phy *phy_common)
 {
 	int err;
-	int vdda_phy_uV;
 
 	err = ufs_qcom_phy_init_vreg(generic_phy, &phy_common->vdda_pll,
 		"vdda-pll");
@@ -250,10 +257,6 @@ ufs_qcom_phy_init_vregulators(struct phy *generic_phy,
 		"vdda-phy");
 	if (err)
 		goto out;
-
-	vdda_phy_uV = regulator_get_voltage(phy_common->vdda_phy.reg);
-	phy_common->vdda_phy.max_uV = vdda_phy_uV;
-	phy_common->vdda_phy.min_uV = vdda_phy_uV;
 
 	/* vddp-ref-clk-* properties are optional */
 	__ufs_qcom_phy_init_vreg(generic_phy, &phy_common->vddp_ref_clk,
@@ -271,6 +274,14 @@ static int __ufs_qcom_phy_init_vreg(struct phy *phy,
 	struct device *dev = ufs_qcom_phy->dev;
 
 	char prop_name[MAX_PROP_NAME];
+
+	if (dev->of_node) {
+		snprintf(prop_name, MAX_PROP_NAME, "%s-supply", name);
+		if (!of_parse_phandle(dev->of_node, prop_name, 0)) {
+			dev_dbg(dev, "No vreg data found for %s\n", prop_name);
+			return optional ? err : -ENODATA;
+		}
+	}
 
 	vreg->name = kstrdup(name, GFP_KERNEL);
 	if (!vreg->name) {

@@ -329,6 +329,13 @@ config SAMSUNG_SECURE_CAMERA
         ---help---
         Enables support for flash for secure camera
 
+config USE_ACTUATOR_FPGA
+        tristate "i2c communication through FPGA"
+        depends on MSMB_CAMERA
+        default n
+        ---help---
+        Enables support for i2c through FPGA
+
 config S5K5E3YX
 	bool "Sensor S5K5E3YX (BAYER 5MP)"
 	depends on MSMB_CAMERA

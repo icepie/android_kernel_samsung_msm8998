@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -125,6 +125,48 @@ static inline void mdp_wb_write(struct mdss_mdp_writeback_ctx *ctx,
 	writel_relaxed(val, ctx->base + reg);
 }
 
+static void mdss_mdp_qos_vbif_remapper_setup_wb(struct mdss_mdp_ctl *ctl,
+			struct mdss_mdp_writeback_ctx *ctx)
+{
+	u32 mask, reg_val, reg_val_lvl, reg_high, i, vbif_qos;
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+	bool is_nrt_vbif = (ctl->mixer_left && ctl->mixer_left->rotator_mode);
+
+	if (!mdata->vbif_nrt_qos)
+		return;
+
+	if (test_bit(MDSS_QOS_REMAPPER, mdata->mdss_qos_map)) {
+		mutex_lock(&mdata->reg_lock);
+		for (i = 0; i < mdata->npriority_lvl; i++) {
+			reg_high = ((ctx->xin_id & 0x8) >> 3) * 4 + (i * 8);
+
+			reg_val = MDSS_VBIF_READ(mdata,
+				MDSS_VBIF_QOS_RP_REMAP_BASE +
+				reg_high, is_nrt_vbif);
+			reg_val_lvl = MDSS_VBIF_READ(mdata,
+				MDSS_VBIF_QOS_LVL_REMAP_BASE + reg_high,
+				is_nrt_vbif);
+
+			mask = 0x3 << (ctx->xin_id * 4);
+			vbif_qos =  mdata->vbif_nrt_qos[i];
+
+			reg_val &= ~(mask);
+			reg_val |= vbif_qos << (ctx->xin_id * 4);
+
+			reg_val_lvl &= ~(mask);
+			reg_val_lvl |= vbif_qos << (ctx->xin_id * 4);
+
+			pr_debug("idx:%d xin:%d reg:0x%x val:0x%x lvl:0x%x\n",
+			   i, ctx->xin_id, reg_high, reg_val, reg_val_lvl);
+			MDSS_VBIF_WRITE(mdata, MDSS_VBIF_QOS_RP_REMAP_BASE +
+				reg_high, reg_val, is_nrt_vbif);
+			MDSS_VBIF_WRITE(mdata, MDSS_VBIF_QOS_LVL_REMAP_BASE +
+				reg_high, reg_val_lvl, is_nrt_vbif);
+		}
+		mutex_unlock(&mdata->reg_lock);
+	}
+}
+
 static void mdss_mdp_set_qos_wb(struct mdss_mdp_ctl *ctl,
 	struct mdss_mdp_writeback_ctx *ctx)
 {
@@ -133,11 +175,14 @@ static void mdss_mdp_set_qos_wb(struct mdss_mdp_ctl *ctl,
 	struct mdss_overlay_private *mdp5_data;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 
-	if (false == test_bit(MDSS_QOS_WB_QOS, mdata->mdss_qos_map))
-		return;
-
 	mdp5_data = mfd_to_mdp5_data(ctl->mfd);
 	cwb = &mdp5_data->cwb;
+
+	if (!cwb->valid)
+		mdss_mdp_qos_vbif_remapper_setup_wb(ctl, ctx);
+
+	if (false == test_bit(MDSS_QOS_WB_QOS, mdata->mdss_qos_map))
+		return;
 
 	if (cwb->valid)
 		wb_qos_setup = QOS_LUT_CWB_READ;
@@ -262,7 +307,7 @@ static void mdss_mdp_writeback_cwb_overflow(void *arg)
 	mdss_mdp_set_intr_callback_nosync(MDSS_MDP_IRQ_TYPE_CWB_OVERFLOW,
 			CWB_PPB_0, NULL, NULL);
 
-	if (mdss_mdp_get_split_ctl(ctl)) {
+	if (ctl->mixer_right) {
 		mdss_mdp_irq_disable_nosync(MDSS_MDP_IRQ_TYPE_CWB_OVERFLOW,
 			CWB_PPB_1);
 		mdss_mdp_set_intr_callback_nosync(
@@ -297,7 +342,7 @@ static void mdss_mdp_writeback_cwb_intr_done(void *arg)
 	mdss_mdp_set_intr_callback_nosync(MDSS_MDP_IRQ_TYPE_CWB_OVERFLOW,
 			CWB_PPB_0, NULL, NULL);
 
-	if (mdss_mdp_get_split_ctl(ctl)) {
+	if (ctl->mixer_right) {
 		mdss_mdp_irq_disable_nosync(MDSS_MDP_IRQ_TYPE_CWB_OVERFLOW,
 			CWB_PPB_1);
 		mdss_mdp_set_intr_callback_nosync(
@@ -477,21 +522,34 @@ int mdss_mdp_writeback_prepare_cwb(struct mdss_mdp_ctl *ctl,
 	struct mdss_mdp_writeback_ctx *ctx = NULL;
 	struct mdp_layer_buffer *buffer = NULL;
 	struct mdss_mdp_cwb *cwb = NULL;
-	struct mdss_mdp_ctl *sctl = NULL;
-	int ret = 0;
+	int i, ret = 0;
+	unsigned long total_buf_len = 0;
+	struct mdss_mdp_data *data = NULL;
+	struct mdss_mdp_plane_sizes ps;
+	struct mdss_mdp_format_params *fmt;
+
+	if (!wb_arg->data)
+		return -EINVAL;
 
 	mdp5_data = mfd_to_mdp5_data(ctl->mfd);
 	cwb = &mdp5_data->cwb;
 	ctx = (struct mdss_mdp_writeback_ctx *)cwb->priv_data;
 
+	data = wb_arg->data;
 	buffer = &cwb->layer.buffer;
 
-	ctx->opmode = 0;
-	ctx->img_width = buffer->width;
+	/*
+	 * client can program CWB output dimensions as only primary
+	 * resolution, but output buffer allocated can be with bigger stride
+	 * aligned for platform specific reasons & can interpret the output
+	 * buffer in same stride. Program output stride based on client request
+	 */
+	ctx->img_width = buffer->planes[0].stride;
 	ctx->img_height = buffer->height;
 	ctx->width = buffer->width;
 	ctx->height = buffer->height;
 	ctx->frame_rate = ctl->frame_rate;
+	ctx->opmode = 0;
 	ctx->dst_rect.x = 0;
 	ctx->dst_rect.y = 0;
 	ctx->dst_rect.w = ctx->width;
@@ -501,6 +559,27 @@ int mdss_mdp_writeback_prepare_cwb(struct mdss_mdp_ctl *ctl,
 	if (ret) {
 		pr_err("format setup failed for cwb\n");
 		return ret;
+	}
+
+	/*
+	 * Need additional buffer size validation as we are
+	 * updating img_width with buffer->planes[0].stride
+	 */
+	fmt = mdss_mdp_get_format_params(buffer->format);
+	if (!fmt) {
+		pr_err("invalid format for cwb\n");
+		return -EINVAL;
+	}
+	mdss_mdp_get_plane_sizes(fmt, ctx->img_width,
+			buffer->height, &ps, 0, 0);
+
+	for (i = 0; i < buffer->plane_count ; i++)
+		total_buf_len += data->p[i].len;
+
+	if (total_buf_len < ps.total_size) {
+		pr_err("Buffer size=%lu, expected size=%d\n", total_buf_len,
+				ps.total_size);
+		return -EINVAL;
 	}
 
 	ret = mdss_mdp_writeback_addr_setup(ctx, wb_arg->data);
@@ -516,17 +595,21 @@ int mdss_mdp_writeback_prepare_cwb(struct mdss_mdp_ctl *ctl,
 			CWB_PPB_0, mdss_mdp_writeback_cwb_overflow, ctl);
 	mdss_mdp_irq_enable(MDSS_MDP_IRQ_TYPE_CWB_OVERFLOW, CWB_PPB_0);
 
-	sctl = mdss_mdp_get_split_ctl(ctl);
-	if (sctl) {
+	if (ctl->mixer_right) {
 		mdss_mdp_set_intr_callback(MDSS_MDP_IRQ_TYPE_CWB_OVERFLOW,
 				CWB_PPB_1, mdss_mdp_writeback_cwb_overflow,
-				sctl);
+				ctl);
 		mdss_mdp_irq_enable(MDSS_MDP_IRQ_TYPE_CWB_OVERFLOW, CWB_PPB_1);
 	}
 
-	if (test_bit(MDSS_QOS_WB2_WRITE_GATHER_EN, ctl->mdata->mdss_qos_map))
+	if (test_bit(MDSS_QOS_WB2_WRITE_GATHER_EN, ctl->mdata->mdss_qos_map)) {
+		u32 reg = 0;
+
+		reg = MDSS_VBIF_READ(ctl->mdata,
+				MDSS_VBIF_WRITE_GATHER_EN, false);
 		MDSS_VBIF_WRITE(ctl->mdata, MDSS_VBIF_WRITE_GATHER_EN,
-			BIT(6), false);
+			reg | BIT(6), false);
+	}
 
 	if (ctl->mdata->default_ot_wr_limit || ctl->mdata->default_ot_rd_limit)
 		mdss_mdp_set_ot_limit_wb(ctx, false);
@@ -709,7 +792,9 @@ static int mdss_mdp_writeback_stop(struct mdss_mdp_ctl *ctl,
 	}
 
 	if (ctl->cdm) {
-		mdss_mdp_cdm_destroy(ctl->cdm);
+		if (!mdss_mdp_cdm_destroy(ctl->cdm))
+			mdss_mdp_ctl_write(ctl,
+				MDSS_MDP_REG_CTL_FLUSH, BIT(26));
 		ctl->cdm = NULL;
 	}
 	return 0;
@@ -952,9 +1037,14 @@ static int mdss_mdp_writeback_display(struct mdss_mdp_ctl *ctl, void *arg)
 		return ret;
 	}
 
-	if (test_bit(MDSS_QOS_WB2_WRITE_GATHER_EN, ctl->mdata->mdss_qos_map))
+	if (test_bit(MDSS_QOS_WB2_WRITE_GATHER_EN, ctl->mdata->mdss_qos_map)) {
+		u32 reg = 0;
+
+		reg = MDSS_VBIF_READ(ctl->mdata,
+				MDSS_VBIF_WRITE_GATHER_EN, false);
 		MDSS_VBIF_WRITE(ctl->mdata, MDSS_VBIF_WRITE_GATHER_EN,
-			BIT(6), false);
+			reg | BIT(6), false);
+	}
 
 	mdss_mdp_set_intr_callback(ctx->intr_type, ctx->intf_num,
 		   mdss_mdp_writeback_intr_done, ctl);

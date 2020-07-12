@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1203,22 +1203,30 @@ int cpr3_parse_common_ctrl_data(struct cpr3_controller *ctrl)
 	if (rc)
 		return rc;
 
-	ctrl->vdd_regulator = devm_regulator_get(ctrl->dev, "vdd");
-	if (IS_ERR(ctrl->vdd_regulator)) {
-		rc = PTR_ERR(ctrl->vdd_regulator);
-		if (rc != -EPROBE_DEFER) {
-			/* vdd-supply is optional for CPRh controllers. */
-			if (ctrl->ctrl_type == CPR_CTRL_TYPE_CPRH) {
-				cpr3_debug(ctrl, "unable to request vdd regulator, rc=%d\n",
-					rc);
-				ctrl->vdd_regulator = NULL;
-				return 0;
-			}
-			cpr3_err(ctrl, "unable to request vdd regulator, rc=%d\n",
-				 rc);
+	if (of_find_property(ctrl->dev->of_node, "vdd-supply", NULL)) {
+		ctrl->vdd_regulator = devm_regulator_get(ctrl->dev, "vdd");
+		if (IS_ERR(ctrl->vdd_regulator)) {
+			rc = PTR_ERR(ctrl->vdd_regulator);
+			if (rc != -EPROBE_DEFER)
+				cpr3_err(ctrl, "unable to request vdd regulator, rc=%d\n",
+					 rc);
+			return rc;
 		}
-		return rc;
+	} else if (ctrl->ctrl_type == CPR_CTRL_TYPE_CPRH) {
+		/* vdd-supply is optional for CPRh controllers. */
+		ctrl->vdd_regulator = NULL;
+	} else {
+		cpr3_err(ctrl, "vdd supply is not defined\n");
+		return -ENODEV;
 	}
+
+	/*
+	 * Reset step_quot to default on each loop_en = 0 transition is
+	 * optional.
+	 */
+	ctrl->reset_step_quot_loop_en
+		= of_property_read_bool(ctrl->dev->of_node,
+					"qcom,cpr-reset-step-quot-loop-en");
 
 	/*
 	 * Regulator device handles are not necessary for CPRh controllers
@@ -1851,7 +1859,7 @@ static int cpr4_load_core_and_temp_adj(struct cpr3_regulator *vreg,
 	for (i = 0; i < sdelta->max_core_count; i++) {
 		for (j = 0, pos = 0; j < sdelta->temp_band_count; j++)
 			pos += scnprintf(buf + pos, buflen - pos, " %u",
-			 sdelta->table[i * sdelta->max_core_count + j]);
+			 sdelta->table[i * sdelta->temp_band_count + j]);
 		cpr3_debug(vreg, "sdelta[%d]:%s\n", i, buf);
 	}
 
@@ -2148,6 +2156,262 @@ void cprh_adjust_voltages_for_mem_acc(struct cpr3_regulator *vreg)
 	}
 }
 
+/**
+ * cpr3_apply_closed_loop_offset_voltages() - modify the closed-loop voltage
+ *		adjustments by the amounts that are needed for this
+ *		fuse combo
+ * @vreg:		Pointer to the CPR3 regulator
+ * @volt_adjust:	Array of closed-loop voltage adjustment values of length
+ *			vreg->corner_count which is further adjusted based upon
+ *			offset voltage fuse values.
+ * @fuse_volt_adjust:	Fused closed-loop voltage adjustment values of length
+ *			vreg->fuse_corner_count.
+ *
+ * Return: 0 on success, errno on failure
+ */
+static int cpr3_apply_closed_loop_offset_voltages(struct cpr3_regulator *vreg,
+			int *volt_adjust, int *fuse_volt_adjust)
+{
+	u32 *corner_map;
+	int rc = 0, i;
+
+	if (!of_find_property(vreg->of_node,
+		"qcom,cpr-fused-closed-loop-voltage-adjustment-map", NULL)) {
+		/* No closed-loop offset required. */
+		return 0;
+	}
+
+	corner_map = kcalloc(vreg->corner_count, sizeof(*corner_map),
+				GFP_KERNEL);
+	if (!corner_map)
+		return -ENOMEM;
+
+	rc = cpr3_parse_corner_array_property(vreg,
+		"qcom,cpr-fused-closed-loop-voltage-adjustment-map",
+		1, corner_map);
+	if (rc)
+		goto done;
+
+	for (i = 0; i < vreg->corner_count; i++) {
+		if (corner_map[i] == 0) {
+			continue;
+		} else if (corner_map[i] > vreg->fuse_corner_count) {
+			cpr3_err(vreg, "corner %d mapped to invalid fuse corner: %u\n",
+				i, corner_map[i]);
+			rc = -EINVAL;
+			goto done;
+		}
+
+		volt_adjust[i] += fuse_volt_adjust[corner_map[i] - 1];
+	}
+
+done:
+	kfree(corner_map);
+	return rc;
+}
+
+/**
+ * cpr3_enforce_inc_quotient_monotonicity() - Ensure that target quotients
+ *		increase monotonically from lower to higher corners
+ * @vreg:		Pointer to the CPR3 regulator
+ *
+ * Return: 0 on success, errno on failure
+ */
+static void cpr3_enforce_inc_quotient_monotonicity(struct cpr3_regulator *vreg)
+{
+	int i, j;
+
+	for (i = 1; i < vreg->corner_count; i++) {
+		for (j = 0; j < CPR3_RO_COUNT; j++) {
+			if (vreg->corner[i].target_quot[j]
+			    && vreg->corner[i].target_quot[j]
+					< vreg->corner[i - 1].target_quot[j]) {
+				cpr3_debug(vreg, "corner %d RO%u target quot=%u < corner %d RO%u target quot=%u; overriding: corner %d RO%u target quot=%u\n",
+					i, j,
+					vreg->corner[i].target_quot[j],
+					i - 1, j,
+					vreg->corner[i - 1].target_quot[j],
+					i, j,
+					vreg->corner[i - 1].target_quot[j]);
+				vreg->corner[i].target_quot[j]
+					= vreg->corner[i - 1].target_quot[j];
+			}
+		}
+	}
+}
+
+/**
+ * cpr3_enforce_dec_quotient_monotonicity() - Ensure that target quotients
+ *		decrease monotonically from higher to lower corners
+ * @vreg:		Pointer to the CPR3 regulator
+ *
+ * Return: 0 on success, errno on failure
+ */
+static void cpr3_enforce_dec_quotient_monotonicity(struct cpr3_regulator *vreg)
+{
+	int i, j;
+
+	for (i = vreg->corner_count - 2; i >= 0; i--) {
+		for (j = 0; j < CPR3_RO_COUNT; j++) {
+			if (vreg->corner[i + 1].target_quot[j]
+			    && vreg->corner[i].target_quot[j]
+					> vreg->corner[i + 1].target_quot[j]) {
+				cpr3_debug(vreg, "corner %d RO%u target quot=%u > corner %d RO%u target quot=%u; overriding: corner %d RO%u target quot=%u\n",
+					i, j,
+					vreg->corner[i].target_quot[j],
+					i + 1, j,
+					vreg->corner[i + 1].target_quot[j],
+					i, j,
+					vreg->corner[i + 1].target_quot[j]);
+				vreg->corner[i].target_quot[j]
+					= vreg->corner[i + 1].target_quot[j];
+			}
+		}
+	}
+}
+
+/**
+ * _cpr3_adjust_target_quotients() - adjust the target quotients for each
+ *		corner of the regulator according to input adjustment and
+ *		scaling arrays
+ * @vreg:		Pointer to the CPR3 regulator
+ * @volt_adjust:	Pointer to an array of closed-loop voltage adjustments
+ *			with units of microvolts.  The array must have
+ *			vreg->corner_count number of elements.
+ * @ro_scale:		Pointer to a flattened 2D array of RO scaling factors.
+ *			The array must have an inner dimension of CPR3_RO_COUNT
+ *			and an outer dimension of vreg->corner_count
+ * @label:		Null terminated string providing a label for the type
+ *			of adjustment.
+ *
+ * Return: true if any corners received a positive voltage adjustment (> 0),
+ *	   else false
+ */
+static bool _cpr3_adjust_target_quotients(struct cpr3_regulator *vreg,
+		const int *volt_adjust, const int *ro_scale, const char *label)
+{
+	int i, j, quot_adjust;
+	bool is_increasing = false;
+	u32 prev_quot;
+
+	for (i = 0; i < vreg->corner_count; i++) {
+		for (j = 0; j < CPR3_RO_COUNT; j++) {
+			if (vreg->corner[i].target_quot[j]) {
+				quot_adjust = cpr3_quot_adjustment(
+					ro_scale[i * CPR3_RO_COUNT + j],
+					volt_adjust[i]);
+				if (quot_adjust) {
+					prev_quot = vreg->corner[i].
+							target_quot[j];
+					vreg->corner[i].target_quot[j]
+						+= quot_adjust;
+					cpr3_debug(vreg, "adjusted corner %d RO%d target quot %s: %u --> %u (%d uV)\n",
+						i, j, label, prev_quot,
+						vreg->corner[i].target_quot[j],
+						volt_adjust[i]);
+				}
+			}
+		}
+		if (volt_adjust[i] > 0)
+			is_increasing = true;
+	}
+
+	return is_increasing;
+}
+
+/**
+ * cpr3_adjust_target_quotients() - adjust the target quotients for each
+ *			corner according to device tree values and fuse values
+ * @vreg:		Pointer to the CPR3 regulator
+ * @fuse_volt_adjust:	Fused closed-loop voltage adjustment values of length
+ *			vreg->fuse_corner_count. This parameter could be null
+ *			pointer when no fused adjustments are needed.
+ *
+ * Return: 0 on success, errno on failure
+ */
+int cpr3_adjust_target_quotients(struct cpr3_regulator *vreg,
+			int *fuse_volt_adjust)
+{
+	int i, rc;
+	int *volt_adjust, *ro_scale;
+	bool explicit_adjustment, fused_adjustment, is_increasing;
+
+	explicit_adjustment = of_find_property(vreg->of_node,
+		"qcom,cpr-closed-loop-voltage-adjustment", NULL);
+	fused_adjustment = of_find_property(vreg->of_node,
+		"qcom,cpr-fused-closed-loop-voltage-adjustment-map", NULL);
+
+	if (!explicit_adjustment && !fused_adjustment && !vreg->aging_allowed) {
+		/* No adjustment required. */
+		return 0;
+	} else if (!of_find_property(vreg->of_node,
+			"qcom,cpr-ro-scaling-factor", NULL)) {
+		cpr3_err(vreg, "qcom,cpr-ro-scaling-factor is required for closed-loop voltage adjustment, but is missing\n");
+		return -EINVAL;
+	}
+
+	volt_adjust = kcalloc(vreg->corner_count, sizeof(*volt_adjust),
+				GFP_KERNEL);
+	ro_scale = kcalloc(vreg->corner_count * CPR3_RO_COUNT,
+				sizeof(*ro_scale), GFP_KERNEL);
+	if (!volt_adjust || !ro_scale) {
+		rc = -ENOMEM;
+		goto done;
+	}
+
+	rc = cpr3_parse_corner_array_property(vreg,
+			"qcom,cpr-ro-scaling-factor", CPR3_RO_COUNT, ro_scale);
+	if (rc) {
+		cpr3_err(vreg, "could not load RO scaling factors, rc=%d\n",
+			rc);
+		goto done;
+	}
+
+	for (i = 0; i < vreg->corner_count; i++)
+		memcpy(vreg->corner[i].ro_scale, &ro_scale[i * CPR3_RO_COUNT],
+			sizeof(*ro_scale) * CPR3_RO_COUNT);
+
+	if (explicit_adjustment) {
+		rc = cpr3_parse_corner_array_property(vreg,
+			"qcom,cpr-closed-loop-voltage-adjustment",
+			1, volt_adjust);
+		if (rc) {
+			cpr3_err(vreg, "could not load closed-loop voltage adjustments, rc=%d\n",
+				rc);
+			goto done;
+		}
+
+		_cpr3_adjust_target_quotients(vreg, volt_adjust, ro_scale,
+			"from DT");
+		cpr3_enforce_inc_quotient_monotonicity(vreg);
+	}
+
+	if (fused_adjustment && fuse_volt_adjust) {
+		memset(volt_adjust, 0,
+			sizeof(*volt_adjust) * vreg->corner_count);
+
+		rc = cpr3_apply_closed_loop_offset_voltages(vreg, volt_adjust,
+				fuse_volt_adjust);
+		if (rc) {
+			cpr3_err(vreg, "could not apply fused closed-loop voltage reductions, rc=%d\n",
+				rc);
+			goto done;
+		}
+
+		is_increasing = _cpr3_adjust_target_quotients(vreg, volt_adjust,
+					ro_scale, "from fuse");
+		if (is_increasing)
+			cpr3_enforce_inc_quotient_monotonicity(vreg);
+		else
+			cpr3_enforce_dec_quotient_monotonicity(vreg);
+	}
+
+done:
+	kfree(volt_adjust);
+	kfree(ro_scale);
+	return rc;
+}
+
 struct {
 	struct cpr3_controller *ctrl;
 	int *fuse_volt;
@@ -2248,7 +2512,7 @@ int cpr3_get_fuse_cpr_rev(int id)
 
 	return ctrl->thread->vreg->cpr_rev_fuse;
 }
-EXPORT_SYMBOL(cpr3_get_fuse_spr_rev);
+EXPORT_SYMBOL(cpr3_get_fuse_cpr_rev);
 
 int cpr3_get_fuse_speed_bin(int id)
 {

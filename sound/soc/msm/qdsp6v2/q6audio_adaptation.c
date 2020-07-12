@@ -39,8 +39,10 @@
 #define TRUE        0x01
 #define FALSE       0x00
 
+#if defined(CONFIG_SND_SOC_MAXIM_DSM)
 #define SEC_ADAPTATAION_DSM_SRC_PORT		5	/* AFE */
 #define SEC_ADAPTATAION_DSM_DEST_PORT		0	/* AFE */
+#endif
 #define SEC_ADAPTATAION_AUDIO_PORT			3	/* ASM */
 #define SEC_ADAPTATAION_LOOPBACK_SRC_PORT	2	/* CVS */
 #define SEC_ADAPTATAION_VOICE_SRC_PORT		2	/* CVP */
@@ -71,8 +73,10 @@ struct afe_ctl {
 	atomic_t state;
 	atomic_t status;
 	wait_queue_head_t wait;
+#if defined(CONFIG_SND_SOC_MAXIM_DSM)
 	struct afe_dsm_spkr_prot_response_data calib_data;
 	struct afe_dsm_spkr_prot_response_log_data calib_log_data;
+#endif
 };
 
 struct cvs_ctl {
@@ -122,6 +126,7 @@ static struct mutex asm_lock;
 static int loopback_mode;
 static int loopback_prev_mode;
 
+#if defined(CONFIG_SND_SOC_MAXIM_DSM)
 /****************************************************************************/
 /*//////////////////// MAXIM SPEAKER AMP DSM SOLUTION //////////////////////*/
 /****************************************************************************/
@@ -263,6 +268,8 @@ static int q6audio_dsm_write(int port,
 	config.set_config = *set_config;
 
 	atomic_set(&this_afe.state, 1);
+	atomic_set(&this_afe.status, 0);
+
 	pr_info("%s: port=%#x, port_id=%#x, param_id=%#x, module_id=%#x\n",
 		__func__, port,
 		config.param.port_id,
@@ -334,6 +341,7 @@ int q6audio_dsm_read(int port)
 	config.pdata.param_size = sizeof(config.res_cfg);
 
 	atomic_set(&this_afe.state, 1);
+	atomic_set(&this_afe.status, 0);
 
 	pr_info("%s: port_id=%#x, param_id=%#x, module_id=%#x module_id=%#x\n",
 		__func__,
@@ -405,6 +413,7 @@ int q6audio_dsm_log_read(int port)
 	config.pdata.param_size = sizeof(config.res_log_cfg);
 
 	atomic_set(&this_afe.state, 1);
+	atomic_set(&this_afe.status, 0);
 
 	pr_info("%s: port_id=%#x, param_id=%#x, module_id=%#x module_id=%#x\n",
 		__func__,
@@ -575,7 +584,7 @@ int32_t dsm_read_write(void *data)
 
 	return ret;
 }
-
+#endif
 /****************************************************************************/
 /*//////////////////////////// AUDIO SOLUTION //////////////////////////////*/
 /****************************************************************************/
@@ -1352,8 +1361,8 @@ static int32_t q6audio_adaptation_cvs_callback(struct apr_client_data *data, voi
 			}
 		
 			switch (ptr[0]) {
-			case VOICE_CMD_SET_PARAM:
-				pr_info("%s: VOICE_CMD_SET_PARAM\n", __func__);
+			case VSS_ICOMMON_CMD_SET_PARAM_V2:
+				pr_info("%s: VSS_ICOMMON_CMD_SET_PARAM_V2\n", __func__);
 				atomic_set(&this_cvs.state, 0);
 				wake_up(&this_cvs.wait);
 				break;
@@ -1387,7 +1396,7 @@ static int send_packet_loopback_cmd(struct voice_data *v, int mode)
 	cvs_set_loopback_cmd.hdr.src_port = SEC_ADAPTATAION_LOOPBACK_SRC_PORT;
 	cvs_set_loopback_cmd.hdr.dest_port = cvs_handle;
 	cvs_set_loopback_cmd.hdr.token = 0;
-	cvs_set_loopback_cmd.hdr.opcode = VOICE_CMD_SET_PARAM;
+	cvs_set_loopback_cmd.hdr.opcode = VSS_ICOMMON_CMD_SET_PARAM_V2;
 
 	cvs_set_loopback_cmd.mem_handle = 0;
 	cvs_set_loopback_cmd.mem_address_lsw = 0;
@@ -1547,8 +1556,8 @@ static int32_t q6audio_adaptation_cvp_callback(struct apr_client_data *data, voi
 			}
 
 			switch (ptr[0]) {
-			case VOICE_CMD_SET_PARAM:
-				pr_info("%s: VOICE_CMD_SET_PARAM\n", __func__);
+			case VSS_ICOMMON_CMD_SET_PARAM_V2:
+				pr_info("%s: VSS_ICOMMON_CMD_SET_PARAM_V2\n", __func__);
 				atomic_set(&this_cvp.state, 0);
 				wake_up(&this_cvp.wait);
 				break;
@@ -1594,7 +1603,7 @@ static int sec_voice_send_adaptation_sound_cmd(struct voice_data *v,
 	cvp_adaptation_sound_param_cmd.hdr.src_port = SEC_ADAPTATAION_VOICE_SRC_PORT;
 	cvp_adaptation_sound_param_cmd.hdr.dest_port = cvp_handle;
 	cvp_adaptation_sound_param_cmd.hdr.token = 0;
-	cvp_adaptation_sound_param_cmd.hdr.opcode = VOICE_CMD_SET_PARAM;
+	cvp_adaptation_sound_param_cmd.hdr.opcode = VSS_ICOMMON_CMD_SET_PARAM_V2;
 	cvp_adaptation_sound_param_cmd.mem_handle = 0;
 	cvp_adaptation_sound_param_cmd.mem_address_lsw = 0;
 	cvp_adaptation_sound_param_cmd.mem_address_msw = 0;

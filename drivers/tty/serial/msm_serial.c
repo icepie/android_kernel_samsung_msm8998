@@ -35,7 +35,6 @@
 #include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
 #include <linux/delay.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
@@ -319,15 +318,17 @@ static void msm_request_tx_dma(struct msm_port *msm_port, resource_size_t base)
 	struct device *dev = msm_port->uart.dev;
 	struct dma_slave_config conf;
 	struct msm_dma *dma;
+	struct dma_chan *dma_chan;
 	u32 crci = 0;
 	int ret;
 
 	dma = &msm_port->tx_dma;
 
 	/* allocate DMA resources, if available */
-	dma->chan = dma_request_slave_channel_reason(dev, "tx");
-	if (IS_ERR(dma->chan))
+	dma_chan = dma_request_slave_channel_reason(dev, "tx");
+	if (IS_ERR(dma_chan))
 		goto no_tx;
+	dma->chan = dma_chan;
 
 	of_property_read_u32(dev->of_node, "qcom,tx-crci", &crci);
 
@@ -362,15 +363,17 @@ static void msm_request_rx_dma(struct msm_port *msm_port, resource_size_t base)
 	struct device *dev = msm_port->uart.dev;
 	struct dma_slave_config conf;
 	struct msm_dma *dma;
+	struct dma_chan *dma_chan;
 	u32 crci = 0;
 	int ret;
 
 	dma = &msm_port->rx_dma;
 
 	/* allocate DMA resources, if available */
-	dma->chan = dma_request_slave_channel_reason(dev, "rx");
-	if (IS_ERR(dma->chan))
+	dma_chan = dma_request_slave_channel_reason(dev, "rx");
+	if (IS_ERR(dma_chan))
 		goto no_rx;
+	dma->chan = dma_chan;
 
 	of_property_read_u32(dev->of_node, "qcom,rx-crci", &crci);
 
@@ -419,12 +422,8 @@ static void msm_stop_tx(struct uart_port *port)
 {
 	struct msm_port *msm_port = UART_TO_MSM(port);
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	msm_port->imr &= ~UART_IMR_TXLEV;
 	msm_write(port, msm_port->imr, UART_IMR);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static void msm_start_tx(struct uart_port *port)
@@ -436,12 +435,8 @@ static void msm_start_tx(struct uart_port *port)
 	if (dma->count)
 		return;
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	msm_port->imr |= UART_IMR_TXLEV;
 	msm_write(port, msm_port->imr, UART_IMR);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static void msm_reset_dm_count(struct uart_port *port, int count)
@@ -463,8 +458,6 @@ static void msm_complete_tx_dma(void *args)
 	unsigned int count;
 	u32 val;
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	spin_lock_irqsave(&port->lock, flags);
 
 	/* Already stopped */
@@ -501,8 +494,6 @@ static void msm_complete_tx_dma(void *args)
 	msm_handle_tx(port);
 done:
 	spin_unlock_irqrestore(&port->lock, flags);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static int msm_handle_tx_dma(struct msm_port *msm_port, unsigned int count)
@@ -575,8 +566,6 @@ static void msm_complete_rx_dma(void *args)
 	unsigned long flags;
 	u32 val;
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	spin_lock_irqsave(&port->lock, flags);
 
 	/* Already stopped */
@@ -628,8 +617,6 @@ done:
 
 	if (count)
 		tty_flip_buffer_push(tport);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static void msm_start_rx_dma(struct msm_port *msm_port)
@@ -704,28 +691,19 @@ static void msm_stop_rx(struct uart_port *port)
 	struct msm_port *msm_port = UART_TO_MSM(port);
 	struct msm_dma *dma = &msm_port->rx_dma;
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	msm_port->imr &= ~(UART_IMR_RXLEV | UART_IMR_RXSTALE);
 	msm_write(port, msm_port->imr, UART_IMR);
 
 	if (dma->chan)
 		msm_stop_dma(port, dma);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static void msm_enable_ms(struct uart_port *port)
 {
 	struct msm_port *msm_port = UART_TO_MSM(port);
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
-
 	msm_port->imr |= UART_IMR_DELTA_CTS;
 	msm_write(port, msm_port->imr, UART_IMR);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static void msm_handle_rx_dm(struct uart_port *port, unsigned int misr)
@@ -972,8 +950,6 @@ static irqreturn_t msm_uart_irq(int irq, void *dev_id)
 	unsigned int misr;
 	u32 val;
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return IRQ_NONE;
 	spin_lock_irqsave(&port->lock, flags);
 	misr = msm_read(port, UART_MISR);
 	msm_write(port, 0, UART_IMR); /* disable interrupt */
@@ -1007,25 +983,13 @@ static irqreturn_t msm_uart_irq(int irq, void *dev_id)
 
 	msm_write(port, msm_port->imr, UART_IMR); /* restore interrupt */
 	spin_unlock_irqrestore(&port->lock, flags);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 
 	return IRQ_HANDLED;
 }
 
 static unsigned int msm_tx_empty(struct uart_port *port)
 {
-	int ret;
-
-	ret = pm_runtime_get_sync(port->dev);
-	if (ret < 0)
-		return ret;
-
-	ret = msm_read(port, UART_SR) & UART_SR_TX_EMPTY ? TIOCSER_TEMT : 0;
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
-
-	return ret;
+	return (msm_read(port, UART_SR) & UART_SR_TX_EMPTY) ? TIOCSER_TEMT : 0;
 }
 
 static unsigned int msm_get_mctrl(struct uart_port *port)
@@ -1054,8 +1018,6 @@ static void msm_set_mctrl(struct uart_port *port, unsigned int mctrl)
 {
 	unsigned int mr;
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	mr = msm_read(port, UART_MR1);
 
 	if (!(mctrl & TIOCM_RTS)) {
@@ -1066,20 +1028,14 @@ static void msm_set_mctrl(struct uart_port *port, unsigned int mctrl)
 		mr |= UART_MR1_RX_RDY_CTL;
 		msm_write(port, mr, UART_MR1);
 	}
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static void msm_break_ctl(struct uart_port *port, int break_ctl)
 {
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	if (break_ctl)
 		msm_write(port, UART_CR_CMD_START_BREAK, UART_CR);
 	else
 		msm_write(port, UART_CR_CMD_STOP_BREAK, UART_CR);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 struct msm_baud_map {
@@ -1229,11 +1185,6 @@ static int msm_startup(struct uart_port *port)
 	snprintf(msm_port->name, sizeof(msm_port->name),
 		 "msm_serial%d", port->line);
 
-	ret = request_irq(port->irq, msm_uart_irq, IRQF_TRIGGER_HIGH,
-			  msm_port->name, port);
-	if (unlikely(ret))
-		return ret;
-
 	/*
 	 * UART clk must be kept enabled to
 	 * avoid losing received character
@@ -1241,13 +1192,10 @@ static int msm_startup(struct uart_port *port)
 	ret = clk_prepare_enable(msm_port->clk);
 	if (ret)
 		return ret;
-	ret = clk_prepare(msm_port->pclk);
-	if (ret)
-		return ret;
 
-	ret = pm_runtime_get_sync(port->dev);
-	if (ret < 0)
-		goto err;
+	ret = clk_prepare_enable(msm_port->pclk);
+	if (ret)
+		goto err_pclk;
 
 	msm_serial_set_mnd_regs(port);
 
@@ -1275,15 +1223,22 @@ static int msm_startup(struct uart_port *port)
 		msm_request_rx_dma(msm_port, msm_port->uart.mapbase);
 	}
 
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
+	ret = request_irq(port->irq, msm_uart_irq, IRQF_TRIGGER_HIGH,
+			  msm_port->name, port);
+	if (unlikely(ret))
+		goto err_irq;
 
 	return 0;
 
-err:
-	clk_unprepare(msm_port->pclk);
+err_irq:
+	if (msm_port->is_uartdm)
+		msm_release_dma(msm_port);
+
+	clk_disable_unprepare(msm_port->pclk);
+
+err_pclk:
 	clk_disable_unprepare(msm_port->clk);
-	free_irq(port->irq, port);
+
 	return ret;
 }
 
@@ -1291,18 +1246,13 @@ static void msm_shutdown(struct uart_port *port)
 {
 	struct msm_port *msm_port = UART_TO_MSM(port);
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
-
 	msm_port->imr = 0;
 	msm_write(port, 0, UART_IMR); /* disable interrupts */
 
 	if (msm_port->is_uartdm)
 		msm_release_dma(msm_port);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 
-	clk_unprepare(msm_port->pclk);
+	clk_disable_unprepare(msm_port->pclk);
 	clk_disable_unprepare(msm_port->clk);
 
 	free_irq(port->irq, port);
@@ -1316,8 +1266,6 @@ static void msm_set_termios(struct uart_port *port, struct ktermios *termios,
 	unsigned long flags;
 	unsigned int baud, mr;
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	spin_lock_irqsave(&port->lock, flags);
 
 	if (dma->chan) /* Terminate if any */
@@ -1391,8 +1339,6 @@ static void msm_set_termios(struct uart_port *port, struct ktermios *termios,
 	msm_start_rx_dma(msm_port);
 
 	spin_unlock_irqrestore(&port->lock, flags);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static const char *msm_type(struct uart_port *port)
@@ -1479,20 +1425,14 @@ static void msm_power(struct uart_port *port, unsigned int state,
 		 */
 		if (clk_prepare_enable(msm_port->clk))
 			return;
-		if (clk_prepare(msm_port->pclk)) {
-			clk_disable_unprepare(msm_port->clk);
-			return;
-		}
-		if (pm_runtime_get_sync(port->dev) < 0) {
-			clk_unprepare(msm_port->pclk);
+		if (clk_prepare_enable(msm_port->pclk)) {
 			clk_disable_unprepare(msm_port->clk);
 			return;
 		}
 		break;
 	case 3:
-		pm_runtime_put(port->dev);
-		clk_unprepare(msm_port->pclk);
 		clk_disable_unprepare(msm_port->clk);
+		clk_disable_unprepare(msm_port->pclk);
 		break;
 	default:
 		pr_err("msm_serial: Unknown PM state %d\n", state);
@@ -1734,11 +1674,7 @@ static void msm_console_write(struct console *co, const char *s,
 	port = msm_get_port_from_line(co->index);
 	msm_port = UART_TO_MSM(port);
 
-	if (pm_runtime_get_sync(port->dev) < 0)
-		return;
 	__msm_console_write(port, s, count, msm_port->is_uartdm);
-	pm_runtime_mark_last_busy(port->dev);
-	pm_runtime_put_autosuspend(port->dev);
 }
 
 static int __init msm_console_setup(struct console *co, char *options)
@@ -1905,12 +1841,6 @@ static int msm_serial_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, port);
 
-	pm_runtime_use_autosuspend(&pdev->dev);
-	pm_runtime_set_autosuspend_delay(&pdev->dev, 500);
-	pm_runtime_irq_safe(&pdev->dev);
-	pm_runtime_enable(&pdev->dev);
-	pm_runtime_set_suspended(&pdev->dev);
-
 	return uart_add_one_port(&msm_uart_driver, port);
 }
 
@@ -1919,7 +1849,6 @@ static int msm_serial_remove(struct platform_device *pdev)
 	struct uart_port *port = platform_get_drvdata(pdev);
 
 	uart_remove_one_port(&msm_uart_driver, port);
-	pm_runtime_disable(&pdev->dev);
 
 	return 0;
 }
@@ -1929,34 +1858,7 @@ static const struct of_device_id msm_match_table[] = {
 	{ .compatible = "qcom,msm-uartdm" },
 	{}
 };
-
-#ifdef CONFIG_PM
-static int msm_serial_runtime_suspend(struct device *dev)
-{
-	struct uart_port *port = dev_get_drvdata(dev);
-	struct msm_port *msm_port = UART_TO_MSM(port);
-
-	if (msm_port->is_uartdm)
-		clk_disable(msm_port->pclk);
-
-	return 0;
-}
-
-static int msm_serial_runtime_resume(struct device *dev)
-{
-	struct uart_port *port = dev_get_drvdata(dev);
-	struct msm_port *msm_port = UART_TO_MSM(port);
-	int ret;
-
-	if (msm_port->is_uartdm) {
-		ret = clk_enable(msm_port->pclk);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
-}
-#endif
+MODULE_DEVICE_TABLE(of, msm_match_table);
 
 #ifdef CONFIG_PM_SLEEP
 static int msm_serial_suspend(struct device *dev)
@@ -1980,8 +1882,6 @@ static int msm_serial_resume(struct device *dev)
 
 static const struct dev_pm_ops msm_serial_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(msm_serial_suspend, msm_serial_resume)
-	SET_RUNTIME_PM_OPS(msm_serial_runtime_suspend,
-				msm_serial_runtime_resume, NULL)
 };
 
 static struct platform_driver msm_platform_driver = {

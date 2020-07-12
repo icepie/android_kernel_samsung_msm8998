@@ -1319,7 +1319,5 @@ int msm_fd_hw_schedule_next_buffer(struct msm_fd_device *fd, u8 lock_flag)
 	}
 	MSM_FD_SPIN_UNLOCK(fd->slock, lock_flag);
 
-	msm_fd_hw_update_settings(fd, buf);
-
 	return 0;
 }

@@ -14,6 +14,8 @@
 #include <linux/device.h>
 #include <sound/soc.h>
 
+#define MAX_NUM_OF_INTERFACES 4
+
 enum dbmdx_va_speeds {
 	DBMDX_VA_SPEED_NORMAL = 0,
 	DBMDX_VA_SPEED_BUFFERING,
@@ -34,19 +36,33 @@ enum dbmdx_clocks {
 	DBMDX_NR_OF_CLKS,
 };
 
+enum dbmdx_interface_type {
+	DBMDX_PREBOOT_INTERFACE = 0,
+	DBMDX_BOOT_INTERFACE,
+	DBMDX_CMD_INTERFACE,
+	DBMDX_DEBUG_INTERFACE,
+	DBMDX_MAX_INTERFACES,
+};
+
 struct dbmdx_platform_data {
 	int				gpio_wakeup;
 	int				gpio_reset;
 	int				gpio_sv;
 	int				gpio_d2strap1;
 	int				gpio_d2strap1_rst_val;
+	int				wakeup_disabled;
 	int				wakeup_set_value;
 	int				send_wakeup_seq;
 	int				use_gpio_for_wakeup;
 
+	const char			*cd_interfaces[MAX_NUM_OF_INTERFACES];
 	const char			*va_firmware_name;
+	const char			*va_preboot_firmware_name;
 	const char			*vqe_firmware_name;
 	const char			*vqe_non_overlay_firmware_name;
+#ifdef DBMDX_VA_NS_SUPPORT
+	const char			*va_asrp_params_firmware_name;
+#endif
 	int				firmware_id;
 
 	int				clock_rates[DBMDX_NR_OF_CLKS];
@@ -54,8 +70,16 @@ struct dbmdx_platform_data {
 	int				feature_va;
 	int				feature_vqe;
 	int				feature_fw_overlay;
+
 	unsigned int			va_cfg_values;
 	u32				*va_cfg_value;
+
+#ifdef DBMDX_VA_NS_SUPPORT
+	unsigned int			va_ns_supported;
+	unsigned int			va_ns_cfg_values;
+	u32				*va_ns_cfg_value;
+#endif
+
 	unsigned int			vqe_cfg_values;
 	u32				*vqe_cfg_value;
 	unsigned int			vqe_modes_values;
@@ -65,11 +89,17 @@ struct dbmdx_platform_data {
 	int				auto_detection;
 	int				detection_after_buffering;
 	int				send_uevent_on_detection;
+	int				send_uevent_after_buffering;
 	int				uart_low_speed_enabled;
+	u32				va_backlog_length;
+	u32				va_backlog_length_okg;
+
+	int				max_detection_buffer_size;
 
 	int				detection_buffer_channels;
 	u32				min_samples_chunk_size;
 	u32				pcm_streaming_mode;
+	int				buffering_timeout;
 
 	struct va_speed	va_speed_cfg[DBMDX_VA_NR_OF_SPEEDS];
 	u32				va_mic_config[5];
@@ -80,7 +110,15 @@ struct dbmdx_platform_data {
 	unsigned int			va_buffering_pcm_rate;
 
 	unsigned int			va_recovery_disabled;
+	u32				multi_interface_support;
+	u32				boot_options;
+	u32				amodel_options;
+
+	int	va_interfaces[DBMDX_MAX_INTERFACES];
+	int	vqe_interfaces[DBMDX_MAX_INTERFACES];
+
 };
+
 int dbmdx_get_samples(struct snd_soc_codec *codec,
 	char *buffer, unsigned int samples);
 int dbmdx_codec_lock(struct snd_soc_codec *codec);

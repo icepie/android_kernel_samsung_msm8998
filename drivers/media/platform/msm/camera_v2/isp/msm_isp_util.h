@@ -77,4 +77,5 @@ int msm_isp_process_overflow_irq(
 	struct vfe_device *vfe_dev,
 	uint32_t *irq_status0, uint32_t *irq_status1,
 	uint32_t force_overflow);
+void msm_isp_prepare_ispif_dump(int vfe_id, uint32_t frame_id);
 #endif /* __MSM_ISP_UTIL_H__ */

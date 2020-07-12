@@ -23,13 +23,14 @@
 
 #define RAWDATA_TIMER_MS 200
 #define RAWDATA_TIMER_MARGIN_MS	20
-#define ACCEL_SELFTEST_TRY_CNT 7
+#define ACCEL_SELFTEST_TRY_CNT 3
 
 /* Haptic Pattern A vibrate during 7ms.
  * touch, touchkey, operation feedback use this.
  * Do not call motor_workfunc when duration is 7ms.
  */
-#define DURATION_7MS 7
+#define DURATION_SKIP 10
+#define MOTOR_OFF 0
 
 #ifdef CONFIG_SLPI_MOTOR
 struct accel_motor_data {
@@ -45,43 +46,44 @@ void slpi_motor_work_func(struct work_struct *work);
 static ssize_t accel_vendor_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%s\n", VENDOR);
+	return snprintf(buf, PAGE_SIZE, "%s\n", VENDOR);
 }
 
 static ssize_t accel_name_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%s\n", CHIP_ID);
+	return snprintf(buf, PAGE_SIZE, "%s\n", CHIP_ID);
 }
 
 static ssize_t sensor_type_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%s\n", "ADSP");
+	return snprintf(buf, PAGE_SIZE, "%s\n", "ADSP");
 }
 
 static ssize_t accel_calibration_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
-	int iCount = 0;
-	unsigned long timeout;
-
 	struct msg_data message;
+	int iCount = 0;
+	uint8_t cnt = 0;
+
 	message.sensor_type = ADSP_FACTORY_ACCEL;
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_GET_CALIB_DATA, 0, 0);
+	data->calib_ready_flag &= ~(1 << ADSP_FACTORY_ACCEL);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_GET_CALIB_DATA, 0, 0);
 
-	timeout = jiffies + (20 * HZ);
-	while (!(data->calib_ready_flag & 1 << ADSP_FACTORY_ACCEL)) {
+	while (!(data->calib_ready_flag & 1 << ADSP_FACTORY_ACCEL) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
-		if (time_after(jiffies, timeout)) {
-			pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
-			return snprintf(buf, PAGE_SIZE, "%d,%d,%d,%d\n",
-				-1, 0, 0, 0);
-		}
-	}
 
-	data->calib_ready_flag &= 0 << ADSP_FACTORY_ACCEL;
+	data->calib_ready_flag &= ~(1 << ADSP_FACTORY_ACCEL);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "%d,%d,%d,%d\n", -1, 0, 0, 0);
+	}
 
 	pr_info("[FACTORY] %s: %d,%d,%d,%d\n", __func__,
 		data->sensor_calib_data[ADSP_FACTORY_ACCEL].result,
@@ -101,35 +103,38 @@ static ssize_t accel_calibration_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct msg_data message;
-	unsigned long enable = 0;
-	unsigned long timeout;
 	struct adsp_data *data = dev_get_drvdata(dev);
+	unsigned long enable = 0;
+	uint8_t cnt = 0;
 
 	if (kstrtoul(buf, 10, &enable)) {
 		pr_err("[FACTORY] %s: strict_strtoul fail\n", __func__);
 		return -EINVAL;
 	}
+
 	if (enable > 0)
 		enable = 1;
 
 	message.sensor_type = ADSP_FACTORY_ACCEL;
 	message.param1 = enable;
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_CALIB_STORE_DATA, 0, 0);
+	data->calib_store_ready_flag &= ~(1 << ADSP_FACTORY_ACCEL);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_CALIB_STORE_DATA, 0, 0);
 
-	timeout = jiffies + (20 * HZ);
-	while (!(data->calib_store_ready_flag & 1 << ADSP_FACTORY_ACCEL)) {
+	while (!(data->calib_store_ready_flag & 1 << ADSP_FACTORY_ACCEL) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
-		if (time_after(jiffies, timeout)) {
-			pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
-			return -1;
-		}
+
+	data->calib_store_ready_flag &= ~(1 << ADSP_FACTORY_ACCEL);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return size;
 	}
 
 	if (data->sensor_calib_result[ADSP_FACTORY_ACCEL].result < 0)
-		pr_err("[FACTORY] %s: failed\n", __func__);
-
-	data->calib_store_ready_flag |= 0 << ADSP_FACTORY_ACCEL;
+		pr_info("[FACTORY] %s: failed\n", __func__);
 
 	pr_info("[FACTORY] %s: result(%d)\n", __func__,
 		data->sensor_calib_result[ADSP_FACTORY_ACCEL].result);
@@ -141,65 +146,62 @@ static ssize_t accel_selftest_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
+	struct msg_data message;
 	int init_status = 0;
 	int accel_result = 0;
 	int temp[4] = {0, };
-	unsigned long timeout;
-	struct msg_data message;
 	int retry = 0;
+	uint8_t cnt = 0;
 
 retry_accel_selftest:
 	message.sensor_type = ADSP_FACTORY_ACCEL;
 
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
+	data->selftest_ready_flag &= ~(1 << ADSP_FACTORY_ACCEL);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_SELFTEST_SHOW_DATA, 0, 0);
 
-	adsp_unicast(&message, sizeof(message), NETLINK_MESSAGE_SELFTEST_SHOW_DATA, 0, 0);
-
-	timeout = jiffies + (20 * HZ);
-
-	while (!(data->selftest_ready_flag & 1 << ADSP_FACTORY_ACCEL)) {
+	while (!(data->selftest_ready_flag & 1 << ADSP_FACTORY_ACCEL) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
-		if (time_after(jiffies, timeout)) {
-			pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
-		}
-	}
+
+	data->selftest_ready_flag &= ~(1 << ADSP_FACTORY_ACCEL);
+
+	if (cnt >= TIMEOUT_CNT)
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
 
 	if (data->sensor_selftest_result[ADSP_FACTORY_ACCEL].result1 < 0)
-		pr_err("[FACTORY] %s: accel_selftest failed\n", __func__);
+		pr_info("[FACTORY] %s: accel_selftest failed\n", __func__);
 
-	data->selftest_ready_flag &= 0 << ADSP_FACTORY_ACCEL;
 	init_status = data->sensor_selftest_result[ADSP_FACTORY_ACCEL].result1;
 	accel_result = data->sensor_selftest_result[ADSP_FACTORY_ACCEL].result2;
 
-	temp[0] = (int)(data->sensor_selftest_result[ADSP_FACTORY_ACCEL].ratio_x);
-	temp[1] = (int)(data->sensor_selftest_result[ADSP_FACTORY_ACCEL].ratio_y);
-	temp[2] = (int)(data->sensor_selftest_result[ADSP_FACTORY_ACCEL].ratio_z);
+	temp[0] = data->sensor_selftest_result[ADSP_FACTORY_ACCEL].ratio_x;
+	temp[1] = data->sensor_selftest_result[ADSP_FACTORY_ACCEL].ratio_y;
+	temp[2] = data->sensor_selftest_result[ADSP_FACTORY_ACCEL].ratio_z;
 
-	if (accel_result == 1)
-		pr_info("[FACTORY] %s : Accel Selftest OK!, result = %d, retry = %d\n",
-			__func__,accel_result, retry);
-	else {
+	if (accel_result == 1) {
+		pr_info("[FACTORY] %s : Pass - result = %d, retry = %d\n",
+			__func__, accel_result, retry);
+	} else {
 		accel_result = -5;
-		pr_info("[FACTORY] %s : Accel Selftest Fail!, result = %d, retry = %d\n",
+		pr_err("[FACTORY] %s : Fail - result = %d, retry = %d\n",
 			__func__, accel_result, retry);
 	}
 
-	pr_info("[FACTORY] init = %d, result = %d, X = %d, Y = %d, Z = %d\n",
-		init_status,
-		accel_result,
-		temp[0],
-		temp[1],
-		temp[2]);
+	pr_info("[FACTORY] %s : init = %d, result = %d, XYZ = %d, %d, %d\n",
+		__func__, init_status, accel_result, temp[0], temp[1], temp[2]);
 
 	if (accel_result != 1) {
-		if (retry < ACCEL_SELFTEST_TRY_CNT && data->sensor_selftest_result[ADSP_FACTORY_ACCEL].ratio_x == 0) {
+		if (retry < ACCEL_SELFTEST_TRY_CNT && temp[0] == 0) {
 			retry++;
 			msleep(RAWDATA_TIMER_MS * 2);
+			pr_info("[FACTORY] %s: retry\n", __func__);
 			goto retry_accel_selftest;
 		}
 	}
 
-	return sprintf(buf, "%d,%d,%d,%d\n", accel_result,
+	return snprintf(buf, PAGE_SIZE, "%d,%d,%d,%d\n", accel_result,
 			(int)abs(temp[0]),
 			(int)abs(temp[1]),
 			(int)abs(temp[2]));
@@ -209,7 +211,7 @@ static ssize_t accel_raw_data_read(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
-	static uint8_t sample_cnt = 0;
+	static uint8_t sample_cnt;
 
 	if (adsp_start_raw_data(ADSP_FACTORY_ACCEL) == false)
 		return snprintf(buf, PAGE_SIZE, "%d,%d,%d\n",
@@ -217,8 +219,7 @@ static ssize_t accel_raw_data_read(struct device *dev,
 			data->sensor_data[ADSP_FACTORY_ACCEL].y,
 			data->sensor_data[ADSP_FACTORY_ACCEL].z);
 
-	sample_cnt++;
-	if (sample_cnt > 40) {	/* sample log 1s */
+	if (++sample_cnt > 40) {
 		pr_info("[FACTORY] %s: x(%d), y(%d), z(%d)\n",
 			__func__,
 			data->sensor_data[ADSP_FACTORY_ACCEL].x,
@@ -271,14 +272,14 @@ static ssize_t accel_lowpassfilter_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
-	unsigned long timeout;
 	struct msg_data message;
 	int lpf_on_off = 1;
+	uint8_t cnt = 0;
 
-	if (sysfs_streq(buf, "1")) { // LPF ON
+	if (sysfs_streq(buf, "1")) {
 		lpf_on_off = NETLINK_MESSAGE_ACCEL_LPF_ON;
 		message.sensor_type = ADSP_FACTORY_ACCEL_LPF_ON;
-	} else if (sysfs_streq(buf, "0")) {// LPF OFF
+	} else if (sysfs_streq(buf, "0")) {
 		lpf_on_off = NETLINK_MESSAGE_ACCEL_LPF_OFF;
 		message.sensor_type = ADSP_FACTORY_ACCEL_LPF_OFF;
 	}
@@ -286,36 +287,41 @@ static ssize_t accel_lowpassfilter_store(struct device *dev,
 	pr_info("[FACTORY] %s: lpf_on_off = %d\n", __func__, lpf_on_off);
 
 	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
+	data->selftest_ready_flag &= ~(1 << message.sensor_type);
 	adsp_unicast(&message, sizeof(message), lpf_on_off, 0, 0);
 
-	timeout = jiffies + (10 * HZ);
-	while (!(data->selftest_ready_flag & 1 << message.sensor_type)) {
+	while (!(data->selftest_ready_flag & 1 << message.sensor_type) &&
+		cnt++ < TIMEOUT_CNT)
 		msleep(20);
-		if (time_after(jiffies, timeout)) {
-			pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
-			return -1;
-		}
+
+	data->selftest_ready_flag &= ~(1 << message.sensor_type);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_err("[FACTORY] %s: Timeout!!!\n", __func__);
+		return size;
 	}
 
 	pr_info("[FACTORY] %s: lpf_on_off done (%d)(0x%x)\n", __func__,
 		data->accel_lpf_result.result,
 		data->accel_lpf_result.lpf_on_off);
+
 	return size;
 }
 
 #ifdef CONFIG_SLPI_MOTOR
 int setSensorCallback(int state, int duration)
 {
-	pr_info("[FACTORY] %s: state = %d, duration = %d\n", 
+	pr_info("[FACTORY] %s: state = %d, duration = %d\n",
 		__func__, pdata->motor_state, duration);
 
-	if (duration == DURATION_7MS)
+	if (duration > MOTOR_OFF && duration <= DURATION_SKIP)
 		return 0;
 
 	if (pdata->motor_state != state) {
 		pdata->motor_state = state;
 		queue_work(pdata->slpi_motor_wq, &pdata->work_slpi_motor);
 	}
+
 	return 0;
 }
 
@@ -334,10 +340,62 @@ void slpi_motor_work_func(struct work_struct *work)
 
 	pr_info("[FACTORY] %s: state = %d\n", __func__, pdata->motor_state);
 
-//	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
 	adsp_unicast(&message, sizeof(message), motor, 0, 0);
 }
 #endif
+
+static ssize_t accel_dhr_sensor_info_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct adsp_data *data = dev_get_drvdata(dev);
+	struct msg_data message;
+	char ctrl1_xl = 0;
+	uint8_t fullscale = 0;
+	uint8_t cnt = 0;
+
+	message.sensor_type = ADSP_FACTORY_ACCEL;
+	msleep(RAWDATA_TIMER_MS + RAWDATA_TIMER_MARGIN_MS);
+	data->dump_reg_ready_flag &= ~(1 << ADSP_FACTORY_ACCEL);
+	adsp_unicast(&message, sizeof(message),
+		NETLINK_MESSAGE_DUMP_REGISTER, 0, 0);
+
+	while (!(data->dump_reg_ready_flag & 1 << ADSP_FACTORY_ACCEL) &&
+		cnt++ < TIMEOUT_CNT)
+		msleep(20);
+
+	data->dump_reg_ready_flag &= ~(1 << ADSP_FACTORY_ACCEL);
+
+	if (cnt >= TIMEOUT_CNT) {
+		pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
+		return snprintf(buf, PAGE_SIZE, "\"FULL_SCALE\":\"8G\"\n");
+	}
+
+	ctrl1_xl = data->dump_registers[ADSP_FACTORY_ACCEL].reg[0x10];
+
+	ctrl1_xl &= 0xC;
+
+	switch (ctrl1_xl) {
+	case 0xC:
+		fullscale = 8;
+		break;
+	case 0x8:
+		fullscale = 4;
+		break;
+	case 0x4:
+		fullscale = 16;
+		break;
+	case 0:
+		fullscale = 2;
+		break;
+	default:
+		break;
+	}
+
+	pr_info("[FACTORY] %s: f/s %u\n", __func__, fullscale);
+
+	return snprintf(buf, PAGE_SIZE, "\"FULL_SCALE\":\"%uG\"\n", fullscale);
+}
+
 static DEVICE_ATTR(name, S_IRUGO, accel_name_show, NULL);
 static DEVICE_ATTR(vendor, S_IRUGO, accel_vendor_show, NULL);
 static DEVICE_ATTR(type, S_IRUGO, sensor_type_show, NULL);
@@ -350,6 +408,8 @@ static DEVICE_ATTR(reactive_alert, S_IRUGO | S_IWUSR | S_IWGRP,
 	accel_reactive_show, accel_reactive_store);
 static DEVICE_ATTR(lowpassfilter, S_IWUSR | S_IWGRP,
 	NULL, accel_lowpassfilter_store);
+static DEVICE_ATTR(dhr_sensor_info, S_IRUSR | S_IRGRP,
+	accel_dhr_sensor_info_show, NULL);
 
 static struct device_attribute *acc_attrs[] = {
 	&dev_attr_name,
@@ -360,6 +420,7 @@ static struct device_attribute *acc_attrs[] = {
 	&dev_attr_raw_data,
 	&dev_attr_reactive_alert,
 	&dev_attr_lowpassfilter,
+	&dev_attr_dhr_sensor_info,
 	NULL,
 };
 
@@ -374,7 +435,7 @@ static int __init k6ds3_accel_factory_init(void)
 		return 0;
 	}
 
-	pdata->slpi_motor_wq = 
+	pdata->slpi_motor_wq =
 		create_singlethread_workqueue("slpi_motor_wq");
 
 	if (pdata->slpi_motor_wq == NULL) {
@@ -387,6 +448,7 @@ static int __init k6ds3_accel_factory_init(void)
 	pdata->motor_state = 0;
 #endif
 	pr_info("[FACTORY] %s\n", __func__);
+
 	return 0;
 }
 

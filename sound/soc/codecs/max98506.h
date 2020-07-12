@@ -717,4 +717,12 @@ struct max98506_priv {
 	struct regmap *sub_regmap;
 };
 
+#ifdef CONFIG_SND_SOC_MAXIM_DSM
+#ifdef USE_DSM_LOG
+struct max98506_spk_amp_reg_diff_log {
+	int seq_num;
+	uint8_t reg_value[4];
+};
+#endif
+#endif
 #endif /* _MAX98506_H */

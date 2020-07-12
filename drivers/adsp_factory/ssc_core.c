@@ -16,7 +16,11 @@
 #include <linux/module.h>
 #include "adsp.h"
 
+#include <linux/adsp/ssc_ssr_reason.h>
+#define SSR_REASON_LEN	81 /* MAX length defined at sub tz pil */
+
 static int pid;
+static char panic_msg[SSR_REASON_LEN];
 /*************************************************************************/
 /* factory Sysfs							 */
 /*************************************************************************/
@@ -73,6 +77,7 @@ static ssize_t mode_show(struct device *dev,
 {
 	struct msg_data message;
 	unsigned long timeout;
+	int repeat_count = 5;
 
 	if (pid != 0) {
 		pr_info("[FACTORY] To stop logging %d\n", pid);
@@ -82,10 +87,12 @@ static ssize_t mode_show(struct device *dev,
 		adsp_unicast(&message, sizeof(message),
 			NETLINK_MESSAGE_DUMPSTATE, 0, 0);
 
-		while (pid != 0) {
-			msleep(20);
-			if (time_after(jiffies, timeout))
+		while ((pid != 0) && (repeat_count > 0)) {
+			msleep(50);
+			if (time_after(jiffies, timeout)) {
 				pr_info("[FACTORY] %s: Timeout!!!\n", __func__);
+				repeat_count--;
+			}
 		}
 	}
 	pr_info("[FACTORY] PID %d\n", pid);
@@ -171,12 +178,33 @@ static ssize_t remove_sensor_sysfs_store(struct device *dev,
 static DEVICE_ATTR(remove_sysfs, S_IWUSR | S_IWGRP,
 	NULL, remove_sensor_sysfs_store);
 
+
+void ssr_reason_call_back(char reason[], int len)
+{
+	if (len <= 0) {
+		pr_info("[FACTORY] ssr %d\n", len);
+		return;
+	}
+	memset(panic_msg, 0, SSR_REASON_LEN);
+	strlcpy(panic_msg, reason, min(len, (int)(SSR_REASON_LEN - 1)));
+
+	pr_info("[FACTORY] ssr %s\n", panic_msg);
+}
+
+static ssize_t ssr_msg_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", panic_msg);
+}
+static DEVICE_ATTR(ssr_msg, 0440, ssr_msg_show, NULL);
+
 static struct device_attribute *core_attrs[] = {
 	&dev_attr_dumpstate,
 	&dev_attr_operation_mode,
 	&dev_attr_mode,
 	&dev_attr_ssc_pid,
 	&dev_attr_remove_sysfs,
+	&dev_attr_ssr_msg,
 	NULL,
 };
 

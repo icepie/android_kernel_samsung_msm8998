@@ -14,6 +14,7 @@
 #include "msm_camera_io_util.h"
 #include "msm_camera_i2c_mux.h"
 #include "msm_cci.h"
+#include "msm_actuator_fpga.h"
 
 #define CAM_SENSOR_PINCTRL_STATE_SLEEP "cam_suspend"
 #define CAM_SENSOR_PINCTRL_STATE_DEFAULT "cam_default"
@@ -40,7 +41,8 @@ struct regulator *ana_reg;
 int sensor_power_on_cnt;
 bool g_shared_gpio;
 int g_shared_gpio_cnt;
-struct msm_camera_power_ctrl_t *g_shared_power_ctrl;
+struct msm_camera_power_ctrl_t *g_prev_power_ctrl;
+
 extern struct mutex sensor_pwr_lock;
 
 int msm_camera_fill_vreg_params(struct camera_vreg_t *cam_vreg,
@@ -2139,11 +2141,11 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 				ctrl->clk_info[power_setting->seq_val].
 					clk_rate = power_setting->config_val;
 
-			if (g_shared_gpio && (g_shared_power_ctrl != NULL) &&
-				(g_shared_power_ctrl != ctrl)) {
+			if (g_shared_gpio && (g_prev_power_ctrl != NULL) &&
+				(g_prev_power_ctrl != ctrl)) {
 				rc = msm_camera_s_clk_enable(ctrl->dev,
 					ctrl->clk_info, ctrl->clk_ptr,
-					ctrl->clk_info_size, true, g_shared_power_ctrl);
+					ctrl->clk_info_size, true, g_prev_power_ctrl);
 				if (rc < 0) {
 					pr_err("%s: shared clk enable failed\n", __func__);
 					goto power_up_failed;
@@ -2160,7 +2162,7 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 			}
 			if (sub_device == SUB_DEVICE_TYPE_SENSOR &&
 				!g_shared_gpio)
-				g_shared_power_ctrl = ctrl;
+				g_prev_power_ctrl = ctrl;
 
 			break;
 		case SENSOR_GPIO:
@@ -2243,7 +2245,14 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 				continue;
 			}
 #endif
-
+#if defined (CONFIG_SEC_GREATQLTE_PROJECT)
+			if ( (sensor_power_on_cnt > 1) &&
+				(!strcmp(ctrl->cam_vreg[power_setting->seq_val].reg_name, "cam_vdd_ois2")) ) {
+				pr_err("%s skip cam_vdd_ois2. Because of dual camera scenario, it is already on.\n", __func__);
+				power_setting->data[0] = regulator_get(ctrl->dev, (ctrl->cam_vreg[power_setting->seq_val]).custom_vreg_name);
+				continue;
+			}
+#endif
 			if (power_setting->seq_val == INVALID_VREG)
 				break;
 			if (power_setting->seq_val >= CAM_VREG_MAX) {
@@ -2326,11 +2335,10 @@ power_up_failed:
 		switch (power_setting->seq_type) {
 
 		case SENSOR_CLK:
-			if (g_shared_gpio && (g_shared_power_ctrl != NULL) &&
-				(g_shared_power_ctrl != ctrl)) {
+			if (g_shared_gpio && (g_prev_power_ctrl != NULL)) {
 				msm_camera_s_clk_enable(ctrl->dev,
 				    ctrl->clk_info, ctrl->clk_ptr,
-				    ctrl->clk_info_size, false, g_shared_power_ctrl);
+				    ctrl->clk_info_size, false, g_prev_power_ctrl);
 				break;
 			}
 
@@ -2443,7 +2451,7 @@ power_up_failed:
 
 	if (sub_device == SUB_DEVICE_TYPE_SENSOR) {
 		if (!g_shared_gpio)
-		    g_shared_power_ctrl = NULL;
+		    g_prev_power_ctrl = NULL;
 		g_shared_gpio = false;
 		mutex_unlock(&sensor_pwr_lock);
 	}
@@ -2499,6 +2507,7 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 			pr_info("%s:%d [POWER_DBG] sensor power cnt %d\n",
 				__func__, __LINE__, sensor_power_on_cnt);
 	}
+
 	if (device_type == MSM_CAMERA_PLATFORM_DEVICE)
 		sensor_i2c_client->i2c_func_tbl->i2c_util(
 			sensor_i2c_client, MSM_CCI_RELEASE);
@@ -2510,11 +2519,10 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 		CDBG("%s type %d\n", __func__, pd->seq_type);
 		switch (pd->seq_type) {
 		case SENSOR_CLK:
-			if (g_shared_gpio && (g_shared_power_ctrl != NULL) &&
-				(g_shared_power_ctrl != ctrl)) {
+			if (g_shared_gpio && (g_prev_power_ctrl != NULL)) {
 				msm_camera_s_clk_enable(ctrl->dev,
 				    ctrl->clk_info, ctrl->clk_ptr,
-				    ctrl->clk_info_size, false, g_shared_power_ctrl);
+				    ctrl->clk_info_size, false, g_prev_power_ctrl);
 				break;
 			}
 
@@ -2593,6 +2601,13 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 				continue;
 			}
 #endif
+#if defined (CONFIG_SEC_GREATQLTE_PROJECT)
+			if ( (sensor_power_on_cnt > 1) &&
+				(!strcmp(ctrl->cam_vreg[pd->seq_val].reg_name, "cam_vdd_ois2")) ) {
+				pr_err("%s skip cam_vdd_ois2. Because of dual camera scenario, it will be off.\n", __func__);
+				continue;
+			}
+#endif
 			if (pd->seq_val == INVALID_VREG)
 				break;
 			if (pd->seq_val >= CAM_VREG_MAX) {
@@ -2644,7 +2659,7 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 				(pd->delay * 1000) + 1000);
 		}
 	}
-	if (ctrl->cam_pinctrl_status && !g_shared_gpio) {
+	if (ctrl->cam_pinctrl_status) {
 		ret = pinctrl_select_state(ctrl->pinctrl_info.pinctrl,
 				ctrl->pinctrl_info.gpio_state_suspend);
 		if (ret)
@@ -2675,14 +2690,13 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 		if (sensor_power_on_cnt == 0) {
 			pr_info("%s [POWER_DBG] : sensor power was turned off(shared %d)\n",
 			    __func__, g_shared_gpio_cnt);
-			g_shared_power_ctrl = NULL;
+			g_prev_power_ctrl = NULL;
 		} else {
 			pr_warn("%s [POWER_DBG] : sensor power must be turned off more(power %d, shared %d)\n",
 				__func__, sensor_power_on_cnt, g_shared_gpio_cnt);
 		}
-		if ((g_shared_gpio_cnt == 0) ||
-			(sensor_power_on_cnt == 0))
-			g_shared_gpio = false;
+
+		g_shared_gpio = false;
 	}
 
 	pr_info("%s [POWER_DBG] : X\n", __func__);

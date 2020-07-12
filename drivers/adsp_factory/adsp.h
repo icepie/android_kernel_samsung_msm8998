@@ -27,7 +27,7 @@
 #include <linux/uaccess.h>
 #include <linux/sensors.h>
 #include <linux/adsp/adsp_ft_common.h>
-
+#define TIMEOUT_CNT 50
 
 /* Main struct containing all the data */
 struct adsp_data {

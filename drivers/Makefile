@@ -100,6 +100,7 @@ obj-$(CONFIG_USB_PHY)		+= usb/
 obj-$(CONFIG_USB)		+= usb/
 obj-$(CONFIG_PCI)		+= usb/
 obj-$(CONFIG_USB_GADGET)	+= usb/
+obj-$(CONFIG_OF)		+= usb/
 obj-$(CONFIG_SERIO)		+= input/serio/
 obj-$(CONFIG_GAMEPORT)		+= input/gameport/
 obj-$(CONFIG_INPUT)		+= input/
@@ -195,6 +196,9 @@ obj-$(CONFIG_ESOC)              += esoc/
 #motor
 obj-y              		+= motor/
 
+# COMBO REDRIVER
+obj-$(CONFIG_COMBO_REDRIVER)	+= redriver/
+
 # CCIC
 obj-y	+= ccic/
 
@@ -206,3 +210,6 @@ obj-$(CONFIG_TRUSTONIC_TEE)	+= gud/
 
 # FINGERPRINT
 obj-$(CONFIG_SENSORS_FINGERPRINT)	+= fingerprint/
+
+# RKP
+obj-$(CONFIG_TIMA_RKP) 		+= rkp/

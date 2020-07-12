@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -46,6 +46,20 @@ int ipa3_enable_data_path(u32 clnt_hdl)
 	int res = 0;
 	struct ipahal_reg_endp_init_rsrc_grp rsrc_grp;
 
+	/* Assign the resource group for pipe */
+	memset(&rsrc_grp, 0, sizeof(rsrc_grp));
+	rsrc_grp.rsrc_grp = ipa_get_ep_group(ep->client);
+	if (rsrc_grp.rsrc_grp == -1) {
+		IPAERR("invalid group for client %d\n", ep->client);
+		WARN_ON(1);
+		return -EFAULT;
+	}
+
+	IPADBG("Setting group %d for pipe %d\n",
+		rsrc_grp.rsrc_grp, clnt_hdl);
+	ipahal_write_reg_n_fields(IPA_ENDP_INIT_RSRC_GRP_n, clnt_hdl,
+		&rsrc_grp);
+
 	IPADBG("Enabling data path\n");
 	if (IPA_CLIENT_IS_CONS(ep->client)) {
 		memset(&holb_cfg, 0 , sizeof(holb_cfg));
@@ -63,20 +77,6 @@ int ipa3_enable_data_path(u32 clnt_hdl)
 		ep_cfg_ctrl.ipa_ep_suspend = false;
 		res = ipa3_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
 	}
-
-	/* Assign the resource group for pipe */
-	memset(&rsrc_grp, 0, sizeof(rsrc_grp));
-	rsrc_grp.rsrc_grp = ipa_get_ep_group(ep->client);
-	if (rsrc_grp.rsrc_grp == -1) {
-		IPAERR("invalid group for client %d\n", ep->client);
-		WARN_ON(1);
-		return -EFAULT;
-	}
-
-	IPADBG("Setting group %d for pipe %d\n",
-		rsrc_grp.rsrc_grp, clnt_hdl);
-	ipahal_write_reg_n_fields(IPA_ENDP_INIT_RSRC_GRP_n, clnt_hdl,
-		&rsrc_grp);
 
 	return res;
 }
@@ -800,7 +800,7 @@ static int ipa3_reconfigure_channel_to_gpi(struct ipa3_ep_context *ep,
 	chan_props.ring_len = 2 * GSI_CHAN_RE_SIZE_16B;
 	chan_props.ring_base_vaddr =
 		dma_alloc_coherent(ipa3_ctx->pdev, chan_props.ring_len,
-		&chan_dma_addr, 0);
+		&chan_dma_addr, GFP_ATOMIC);
 	chan_props.ring_base_addr = chan_dma_addr;
 	chan_dma->base = chan_props.ring_base_vaddr;
 	chan_dma->phys_base = chan_props.ring_base_addr;
@@ -857,6 +857,8 @@ static int ipa3_reset_with_open_aggr_frame_wa(u32 clnt_hdl,
 	struct gsi_xfer_elem xfer_elem;
 	int i;
 	int aggr_active_bitmap = 0;
+	bool pipe_suspended = false;
+	struct ipa_ep_cfg_ctrl ctrl;
 
 	IPADBG("Applying reset channel with open aggregation frame WA\n");
 	ipahal_write_reg(IPA_AGGR_FORCE_CLOSE, (1 << clnt_hdl));
@@ -883,6 +885,15 @@ static int ipa3_reset_with_open_aggr_frame_wa(u32 clnt_hdl,
 	if (result)
 		return -EFAULT;
 
+	ipahal_read_reg_n_fields(IPA_ENDP_INIT_CTRL_n, clnt_hdl, &ctrl);
+	if (ctrl.ipa_ep_suspend) {
+		IPADBG("pipe is suspended, remove suspend\n");
+		pipe_suspended = true;
+		ctrl.ipa_ep_suspend = false;
+		ipahal_write_reg_n_fields(IPA_ENDP_INIT_CTRL_n,
+			clnt_hdl, &ctrl);
+	}
+
 	/* Start channel and put 1 Byte descriptor on it */
 	gsi_res = gsi_start_channel(ep->gsi_chan_hdl);
 	if (gsi_res != GSI_STATUS_SUCCESS) {
@@ -892,7 +903,7 @@ static int ipa3_reset_with_open_aggr_frame_wa(u32 clnt_hdl,
 
 	memset(&xfer_elem, 0, sizeof(struct gsi_xfer_elem));
 	buff = dma_alloc_coherent(ipa3_ctx->pdev, 1, &dma_addr,
-		GFP_KERNEL);
+		GFP_ATOMIC);
 	xfer_elem.addr = dma_addr;
 	xfer_elem.len = 1;
 	xfer_elem.flags = GSI_XFER_FLAG_EOT;
@@ -942,6 +953,13 @@ static int ipa3_reset_with_open_aggr_frame_wa(u32 clnt_hdl,
 	 */
 	msleep(IPA_POLL_AGGR_STATE_SLEEP_MSEC);
 
+	if (pipe_suspended) {
+		IPADBG("suspend the pipe again\n");
+		ctrl.ipa_ep_suspend = true;
+		ipahal_write_reg_n_fields(IPA_ENDP_INIT_CTRL_n,
+			clnt_hdl, &ctrl);
+	}
+
 	/* Restore channels properties */
 	result = ipa3_restore_channel_properties(ep, &orig_chan_props,
 		&orig_chan_scratch);
@@ -956,6 +974,12 @@ queue_xfer_fail:
 	ipa3_stop_gsi_channel(clnt_hdl);
 	dma_free_coherent(ipa3_ctx->pdev, 1, buff, dma_addr);
 start_chan_fail:
+	if (pipe_suspended) {
+		IPADBG("suspend the pipe again\n");
+		ctrl.ipa_ep_suspend = true;
+		ipahal_write_reg_n_fields(IPA_ENDP_INIT_CTRL_n,
+			clnt_hdl, &ctrl);
+	}
 	ipa3_restore_channel_properties(ep, &orig_chan_props,
 		&orig_chan_scratch);
 restore_props_fail:
@@ -1230,6 +1254,12 @@ int ipa3_request_gsi_channel(struct ipa_request_gsi_channel_params *params,
 
 	memset(gsi_ep_cfg_ptr, 0, sizeof(struct ipa_gsi_ep_config));
 	gsi_ep_cfg_ptr = ipa_get_gsi_ep_info(ipa_ep_idx);
+	if (gsi_ep_cfg_ptr == NULL) {
+		IPAERR("Error ipa_get_gsi_ep_info ret NULL\n");
+		result = -EFAULT;
+		goto write_evt_scratch_fail;
+	}
+
 	params->chan_params.evt_ring_hdl = ep->gsi_evt_ring_hdl;
 	params->chan_params.ch_id = gsi_ep_cfg_ptr->ipa_gsi_chan_num;
 	gsi_res = gsi_alloc_channel(&params->chan_params, gsi_dev_hdl,
@@ -1474,7 +1504,7 @@ static int ipa3_is_xdci_channel_empty(struct ipa3_ep_context *ep,
 	return 0;
 }
 
-static int ipa3_enable_force_clear(u32 request_id, bool throttle_source,
+int ipa3_enable_force_clear(u32 request_id, bool throttle_source,
 	u32 source_pipe_bitmask)
 {
 	struct ipa_enable_force_clear_datapath_req_msg_v01 req;
@@ -1497,7 +1527,7 @@ static int ipa3_enable_force_clear(u32 request_id, bool throttle_source,
 	return 0;
 }
 
-static int ipa3_disable_force_clear(u32 request_id)
+int ipa3_disable_force_clear(u32 request_id)
 {
 	struct ipa_disable_force_clear_datapath_req_msg_v01 req;
 	int result;
@@ -1644,8 +1674,21 @@ static int ipa3_stop_ul_chan_with_data_drain(u32 qmi_req_id,
 	if (should_force_clear) {
 		result = ipa3_enable_force_clear(qmi_req_id, false,
 			source_pipe_bitmask);
-		if (result)
-			goto exit;
+		if (result) {
+			struct ipahal_ep_cfg_ctrl_scnd ep_ctrl_scnd = { 0 };
+
+			/*
+			 * assuming here modem SSR\shutdown, AP can remove
+			 * the delay in this case
+			 */
+			IPAERR(
+				"failed to force clear %d, remove delay from SCND reg\n"
+				, result);
+			ep_ctrl_scnd.endp_delay = false;
+			ipahal_write_reg_n_fields(
+				IPA_ENDP_INIT_CTRL_SCND_n, clnt_hdl,
+				&ep_ctrl_scnd);
+		}
 	}
 	/* with force clear, wait for emptiness */
 	for (i = 0; i < IPA_POLL_FOR_EMPTINESS_NUM; i++) {
@@ -1777,7 +1820,8 @@ dealloc_chan_fail:
 int ipa3_xdci_suspend(u32 ul_clnt_hdl, u32 dl_clnt_hdl,
 	bool should_force_clear, u32 qmi_req_id, bool is_dpl)
 {
-	struct ipa3_ep_context *ul_ep, *dl_ep;
+	struct ipa3_ep_context *ul_ep = NULL;
+	struct ipa3_ep_context *dl_ep;
 	int result = -EFAULT;
 	u32 source_pipe_bitmask = 0;
 	bool dl_data_pending = true;

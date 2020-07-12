@@ -65,4 +65,7 @@ extern int enable_chgdet(muic_data_t *pmuic, int enable);
 extern int run_chgdet(muic_data_t *pmuic, bool started);
 extern int attach_HMT(muic_data_t *, muic_attached_dev_t);
 extern int detach_HMT(muic_data_t *pmuic);
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+extern void set_manual_audio_path(muic_data_t *pmuic);
+#endif
 #endif

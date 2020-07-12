@@ -11,7 +11,6 @@ obj-$(CONFIG_SND_SOC_DBMDX) += dbmdx-uart.o
 obj-$(CONFIG_SND_SOC_DBMDX) += dbmdx-i2s.o
 obj-$(CONFIG_SND_SOC_DBMDX) += dbmdx-customer.o
 obj-$(CONFIG_SND_SOC_DBMDX) += dbmdx-cdev.o
-obj-$(CONFIG_SND_SOC_DBMDX) += dbmdx-event.o
 obj-$(CONFIG_SND_SOC_DBMDX_SND_CAPTURE) += dbmdx-snd.o
 obj-$(CONFIG_SND_SOC_DBMDX_SND_CAPTURE) += dbmdx-snd-pcm.o
 

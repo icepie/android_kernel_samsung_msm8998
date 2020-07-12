@@ -284,21 +284,26 @@
 /* ADMA2 32-bit DMA descriptor size */
 #define SDHCI_ADMA2_32_DESC_SZ	8
 
-/* ADMA2 32-bit DMA alignment */
-#define SDHCI_ADMA2_32_ALIGN	4
-
 /* ADMA2 32-bit descriptor */
 struct sdhci_adma2_32_desc {
 	__le16	cmd;
 	__le16	len;
 	__le32	addr;
-}  __packed __aligned(SDHCI_ADMA2_32_ALIGN);
+}  __packed __aligned(4);
+
+/* ADMA2 data alignment */
+#define SDHCI_ADMA2_ALIGN	4
+#define SDHCI_ADMA2_MASK	(SDHCI_ADMA2_ALIGN - 1)
+
+/*
+ * ADMA2 descriptor alignment.  Some controllers (e.g. Intel) require 8 byte
+ * alignment for the descriptor table even in 32-bit DMA mode.  Memory
+ * allocation is at least 8 byte aligned anyway, so just stipulate 8 always.
+ */
+#define SDHCI_ADMA2_DESC_ALIGN	8
 
 /* ADMA2 64-bit DMA descriptor size */
 #define SDHCI_ADMA2_64_DESC_SZ	12
-
-/* ADMA2 64-bit DMA alignment */
-#define SDHCI_ADMA2_64_ALIGN	8
 
 /*
  * ADMA2 64-bit descriptor. Note 12-byte descriptor can't always be 8-byte
@@ -511,7 +516,7 @@ struct sdhci_host {
  * Some controllers may use PIO mode to workaround HW issues in ADMA for
  * eMMC tuning commands.
  */
-#define SDHCI_QUIRK2_USE_PIO_FOR_EMMC_TUNING (1 << 23)
+#define SDHCI_QUIRK2_USE_PIO_FOR_EMMC_TUNING (1 << 29)
 
 
 	int irq;		/* Device IRQ */
@@ -559,6 +564,7 @@ struct sdhci_host {
 	bool runtime_suspended;	/* Host is runtime suspended */
 	bool bus_on;		/* Bus power prevents runtime suspend */
 	bool preset_enabled;	/* Preset is enabled */
+	bool cdr_support;
 
 	struct mmc_request *mrq;	/* Current request */
 	struct mmc_command *cmd;	/* Current command */
@@ -581,8 +587,6 @@ struct sdhci_host {
 	dma_addr_t align_addr;	/* Mapped bounce buffer */
 
 	unsigned int desc_sz;	/* ADMA descriptor size */
-	unsigned int align_sz;	/* ADMA alignment */
-	unsigned int align_mask;	/* ADMA alignment mask */
 
 	struct tasklet_struct finish_tasklet;	/* Tasklet structures */
 
@@ -654,6 +658,10 @@ struct sdhci_ops {
 	int	(*platform_execute_tuning)(struct sdhci_host *host, u32 opcode);
 	int	(*crypto_engine_cfg)(struct sdhci_host *host,
 				struct mmc_request *mrq, u32 slot);
+	int	(*crypto_engine_cmdq_cfg)(struct sdhci_host *host,
+			struct mmc_request *mrq, u32 slot, u64 *ice_ctx);
+	int	(*crypto_engine_cfg_end)(struct sdhci_host *host,
+					struct mmc_request *mrq);
 	int	(*crypto_engine_reset)(struct sdhci_host *host);
 	void	(*crypto_cfg_reset)(struct sdhci_host *host, unsigned int slot);
 	void	(*set_uhs_signaling)(struct sdhci_host *host, unsigned int uhs);

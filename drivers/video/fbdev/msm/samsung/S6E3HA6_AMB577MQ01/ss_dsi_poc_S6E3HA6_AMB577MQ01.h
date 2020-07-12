@@ -21,7 +21,12 @@
 #include <linux/err.h>
 #include <linux/mutex.h>
 
+#ifdef CONFIG_SUPPORT_POC_2_0
+#define POC_IMG_SIZE    (546008)
+#else
 #define POC_IMG_SIZE    (532816)
+#endif
+
 #define POC_IMG_ADDR	(0x000000)
 #define POC_PAGE		(4096)
 #define POC_TEST_PATTERN_SIZE	(1024)

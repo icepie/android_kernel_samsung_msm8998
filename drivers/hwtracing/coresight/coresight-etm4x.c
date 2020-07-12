@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2016 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -2557,6 +2557,8 @@ static int etm4_set_reg_dump(struct etmv4_drvdata *drvdata)
 
 	drvdata->reg_data.addr = virt_to_phys(baddr);
 	drvdata->reg_data.len = size;
+	scnprintf(drvdata->reg_data.name, sizeof(drvdata->reg_data.name),
+		"KETM_REG%d", drvdata->cpu);
 
 	dump_entry.id = MSM_DUMP_DATA_ETM_REG + drvdata->cpu;
 	dump_entry.addr = virt_to_phys(&drvdata->reg_data);
@@ -2824,6 +2826,8 @@ err_late_init:
 		unregister_hotcpu_notifier(&etm4_cpu_notifier);
 		unregister_hotcpu_notifier(&etm4_cpu_dying_notifier);
 	}
+	etmdrvdata[drvdata->cpu] = NULL;
+	dev_set_drvdata(dev, NULL);
 	return ret;
 }
 

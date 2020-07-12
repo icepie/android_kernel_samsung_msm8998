@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -40,6 +40,8 @@
 #include <linux/mutex.h>
 #include <asm/arch_timer.h>
 
+#include <soc/qcom/watchdog.h>
+
 enum {
 	MSM_MPM_GIC_IRQ_DOMAIN,
 	MSM_MPM_GPIO_IRQ_DOMAIN,
@@ -69,8 +71,8 @@ struct mpm_irqs {
 	char domain_name[MAX_DOMAIN_NAME];
 };
 
+#define MAX_MPM_PIN_PER_IRQ 2
 static struct mpm_irqs unlisted_irqs[MSM_MPM_NR_IRQ_DOMAINS];
-
 static int num_mpm_irqs = MSM_MPM_NR_MPM_IRQS;
 static struct hlist_head *irq_hash;
 static unsigned int *msm_mpm_irqs_m2a;
@@ -129,23 +131,15 @@ static uint32_t *msm_mpm_falling_edge;
 static uint32_t *msm_mpm_rising_edge;
 static uint32_t *msm_mpm_polarity;
 
-enum {
-	MSM_MPM_DEBUG_NON_DETECTABLE_IRQ = BIT(0),
-	MSM_MPM_DEBUG_PENDING_IRQ = BIT(1),
-	MSM_MPM_DEBUG_WRITE = BIT(2),
-	MSM_MPM_DEBUG_NON_DETECTABLE_IRQ_IDLE = BIT(3),
-};
-
-static int msm_mpm_debug_mask = 1;
-module_param_named(
-	debug_mask, msm_mpm_debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP
-);
-
 enum mpm_state {
 	MSM_MPM_GIC_IRQ_MAPPING_DONE = BIT(0),
 	MSM_MPM_GPIO_IRQ_MAPPING_DONE = BIT(1),
 	MSM_MPM_DEVICE_PROBED = BIT(2),
 };
+
+/* Add debug purpose */
+u64 expected_wakeup_cycles = 0;
+extern u64 suspend_cycles;
 
 static enum mpm_state msm_mpm_initialized;
 static int mpm_init_irq_domain(struct device_node *node, int irq_domain);
@@ -174,9 +168,6 @@ static inline void msm_mpm_write(
 	unsigned int offset = reg * MSM_MPM_REG_WIDTH + subreg_index + 2;
 
 	__raw_writel(value, msm_mpm_dev_data.mpm_request_reg_base + offset * 4);
-	if (MSM_MPM_DEBUG_WRITE & msm_mpm_debug_mask)
-		pr_info("%s: reg %u.%u: 0x%08x\n",
-			__func__, reg, subreg_index, value);
 }
 
 static inline void msm_mpm_send_interrupt(void)
@@ -202,6 +193,15 @@ static void msm_mpm_timer_write(uint32_t *expiry)
 {
 	__raw_writel(expiry[0], msm_mpm_dev_data.mpm_request_reg_base);
 	__raw_writel(expiry[1], msm_mpm_dev_data.mpm_request_reg_base + 0x4);
+}
+
+static u64 msm_mpm_timer_read(void)
+{
+	u64 low_val, high_val;
+	low_val = (u32)__raw_readl(msm_mpm_dev_data.mpm_request_reg_base);
+	high_val = __raw_readl(msm_mpm_dev_data.mpm_request_reg_base + 0x4);
+
+	return (high_val & 0xFFFFFFFF) << 0x20 | low_val;
 }
 
 static void msm_mpm_set(cycle_t wakeup, bool wakeset)
@@ -244,9 +244,10 @@ static inline unsigned int msm_mpm_get_irq_m2a(unsigned int pin)
 	return msm_mpm_irqs_m2a[pin];
 }
 
-static inline uint16_t msm_mpm_get_irq_a2m(struct irq_data *d)
+static inline void msm_mpm_get_irq_a2m(struct irq_data *d, uint16_t *mpm_pins)
 {
 	struct mpm_irqs_a2m *node = NULL;
+	int count = 0;
 
 	hlist_for_each_entry(node, &irq_hash[hashfn(d->hwirq)], node) {
 		if ((node->hwirq == d->hwirq)
@@ -257,58 +258,71 @@ static inline uint16_t msm_mpm_get_irq_a2m(struct irq_data *d)
 			 */
 			if (node->pin != 0xff)
 				msm_mpm_irqs_m2a[node->pin] = d->irq;
-			break;
+			if (count >= MAX_MPM_PIN_PER_IRQ) {
+				count--;
+				__WARN();
+			}
+			mpm_pins[count] = node->pin;
+			count++;
 		}
 	}
-	return node ? node->pin : 0;
 }
 
 static int msm_mpm_enable_irq_exclusive(
 	struct irq_data *d, bool enable, bool wakeset)
 {
-	uint16_t mpm_pin;
+	uint16_t num = 0;
+	uint16_t mpm_pins[MAX_MPM_PIN_PER_IRQ] = {0};
 
 	WARN_ON(!d);
+
 	if (!d)
 		return 0;
 
-	mpm_pin = msm_mpm_get_irq_a2m(d);
+	msm_mpm_get_irq_a2m(d, mpm_pins);
 
-	if (mpm_pin == 0xff)
-		return 0;
+	for (num = 0; num < MAX_MPM_PIN_PER_IRQ; num++) {
 
-	if (mpm_pin) {
-		uint32_t *mpm_irq_masks = wakeset ?
+		if (mpm_pins[num] == 0xff)
+			break;
+
+		if (num && mpm_pins[num] == 0)
+			break;
+
+		if (mpm_pins[num]) {
+			uint32_t *mpm_irq_masks = wakeset ?
 				msm_mpm_wake_irq : msm_mpm_enabled_irq;
-		uint32_t index = MSM_MPM_IRQ_INDEX(mpm_pin);
-		uint32_t mask = MSM_MPM_IRQ_MASK(mpm_pin);
+			uint32_t index = MSM_MPM_IRQ_INDEX(mpm_pins[num]);
+			uint32_t mask = MSM_MPM_IRQ_MASK(mpm_pins[num]);
 
-		if (enable)
-			mpm_irq_masks[index] |= mask;
-		else
-			mpm_irq_masks[index] &= ~mask;
-	} else {
-		int i;
-		unsigned long *irq_apps;
+			if (enable)
+				mpm_irq_masks[index] |= mask;
+			else
+				mpm_irq_masks[index] &= ~mask;
+		} else {
+			int i;
+			unsigned long *irq_apps;
 
-		for (i = 0; i < MSM_MPM_NR_IRQ_DOMAINS; i++) {
-			if (d->domain == unlisted_irqs[i].domain)
-				break;
-		}
+			for (i = 0; i < MSM_MPM_NR_IRQ_DOMAINS; i++) {
+				if (d->domain == unlisted_irqs[i].domain)
+					break;
+			}
 
-		if (i == MSM_MPM_NR_IRQ_DOMAINS)
-			return 0;
-		irq_apps = wakeset ? unlisted_irqs[i].wakeup_irqs :
+			if (i == MSM_MPM_NR_IRQ_DOMAINS)
+				return 0;
+
+			irq_apps = wakeset ? unlisted_irqs[i].wakeup_irqs :
 					unlisted_irqs[i].enabled_irqs;
 
-		if (enable)
-			__set_bit(d->hwirq, irq_apps);
-		else
-			__clear_bit(d->hwirq, irq_apps);
+			if (enable)
+				__set_bit(d->hwirq, irq_apps);
+			else
+				__clear_bit(d->hwirq, irq_apps);
 
-		if ((msm_mpm_initialized & MSM_MPM_DEVICE_PROBED)
+			if ((msm_mpm_initialized & MSM_MPM_DEVICE_PROBED)
 				&& !wakeset && !msm_mpm_in_suspend)
-			complete(&wake_wq);
+				complete(&wake_wq);
+		}
 	}
 
 	return 0;
@@ -337,27 +351,32 @@ static void msm_mpm_set_edge_ctl(int pin, unsigned int flow_type)
 static int msm_mpm_set_irq_type_exclusive(
 	struct irq_data *d, unsigned int flow_type)
 {
-	uint32_t mpm_irq;
+	uint16_t num = 0;
+	uint16_t mpm_pins[MAX_MPM_PIN_PER_IRQ] = {0};
 
-	mpm_irq = msm_mpm_get_irq_a2m(d);
+	msm_mpm_get_irq_a2m(d, mpm_pins);
 
-	if (mpm_irq == 0xff)
-		return 0;
+	for (num = 0; num < MAX_MPM_PIN_PER_IRQ; num++) {
 
-	if (mpm_irq) {
-		uint32_t index = MSM_MPM_IRQ_INDEX(mpm_irq);
-		uint32_t mask = MSM_MPM_IRQ_MASK(mpm_irq);
+		if (mpm_pins[num] == 0xff)
+			break;
 
-		if (index >= MSM_MPM_REG_WIDTH)
-			return -EFAULT;
+		if (mpm_pins[num]) {
+			uint32_t index = MSM_MPM_IRQ_INDEX(mpm_pins[num]);
+			uint32_t mask = MSM_MPM_IRQ_MASK(mpm_pins[num]);
 
-		msm_mpm_set_edge_ctl(mpm_irq, flow_type);
+			if (index >= MSM_MPM_REG_WIDTH)
+				return -EFAULT;
 
-		if (flow_type &  IRQ_TYPE_LEVEL_HIGH)
-			msm_mpm_polarity[index] |= mask;
-		else
-			msm_mpm_polarity[index] &= ~mask;
+			msm_mpm_set_edge_ctl(mpm_pins[num], flow_type);
+
+			if (flow_type &  IRQ_TYPE_LEVEL_HIGH)
+				msm_mpm_polarity[index] |= mask;
+			else
+				msm_mpm_polarity[index] &= ~mask;
+		}
 	}
+
 	return 0;
 }
 
@@ -494,36 +513,18 @@ int msm_mpm_set_pin_type(unsigned int pin, unsigned int flow_type)
 static bool msm_mpm_interrupts_detectable(int d, bool from_idle)
 {
 	unsigned long *irq_bitmap;
-	bool debug_mask, ret = false;
+	bool ret = false;
 	struct mpm_irqs *unlisted = &unlisted_irqs[d];
 
 	if (!msm_mpm_is_initialized())
 		return false;
 
-	if (from_idle) {
+	if (from_idle)
 		irq_bitmap = unlisted->enabled_irqs;
-		debug_mask = msm_mpm_debug_mask &
-				MSM_MPM_DEBUG_NON_DETECTABLE_IRQ_IDLE;
-	} else {
+	else
 		irq_bitmap = unlisted->wakeup_irqs;
-		debug_mask = msm_mpm_debug_mask &
-				MSM_MPM_DEBUG_NON_DETECTABLE_IRQ;
-	}
 
 	ret = (bool) bitmap_empty(irq_bitmap, unlisted->size);
-
-	if (debug_mask && !ret) {
-		int i = 0;
-		i = find_first_bit(irq_bitmap, unlisted->size);
-		pr_info("%s(): %s preventing system sleep modes during %s\n",
-				__func__, unlisted->domain_name,
-				from_idle ? "idle" : "suspend");
-
-		while (i < unlisted->size) {
-			pr_info("\thwirq: %d\n", i);
-			i = find_next_bit(irq_bitmap, unlisted->size, i + 1);
-		}
-	}
 
 	return ret;
 }
@@ -556,6 +557,18 @@ void msm_mpm_enter_sleep(uint64_t sclk_count, bool from_idle,
 		wakeup = (~0ULL);
 	}
 
+	/* Add debug Code */
+	if (!from_idle && sclk_count) {
+		expected_wakeup_cycles = wakeup;
+		pr_err("[%s] next expected wake up : %lld \
+			suspend_cycle %lld \n",
+			__func__, expected_wakeup_cycles, suspend_cycles);
+		if (expected_wakeup_cycles < suspend_cycles)
+			BUG();
+	} else {
+		expected_wakeup_cycles = 0;
+	}
+
 	msm_mpm_gpio_irqs_detectable(from_idle);
 	msm_mpm_irqs_detectable(from_idle);
 	msm_mpm_set(wakeup, !from_idle);
@@ -577,14 +590,26 @@ void msm_mpm_exit_sleep(bool from_idle)
 
 	enabled_intr = from_idle ? msm_mpm_enabled_irq :
 						msm_mpm_wake_irq;
+	/* Add debug Code  */
+	if (!from_idle && expected_wakeup_cycles) {
+		u64 actual_wakeup = arch_counter_get_cntvct();
+		u64 programmed_wakeup = msm_mpm_timer_read();
+		 /* 3 secs behind the scheduled wakeup */
+		if (((s64)actual_wakeup - (s64)expected_wakeup_cycles)
+			>= (3 * 19200000)) {
+			pr_err("[%s] late wakeup, expected :\
+				%lld, programmed : %lld, actual :\
+				%lld, delta : %lld\n",
+				__func__, expected_wakeup_cycles, programmed_wakeup,
+				actual_wakeup, actual_wakeup-expected_wakeup_cycles);
+			msm_trigger_wdog_bite();
+		}
+		expected_wakeup_cycles = 0;
+	}
 
 	for (i = 0; i < MSM_MPM_REG_WIDTH; i++) {
 		pending = msm_mpm_read(MSM_MPM_REG_STATUS, i);
 		pending &= enabled_intr[i];
-
-		if (MSM_MPM_DEBUG_PENDING_IRQ & msm_mpm_debug_mask)
-			pr_info("%s: enabled_intr.%d pending.%d: 0x%08x 0x%08lx\n",
-				__func__, i, i, enabled_intr[i], pending);
 
 		k = find_first_bit(&pending, 32);
 		while (k < 32) {

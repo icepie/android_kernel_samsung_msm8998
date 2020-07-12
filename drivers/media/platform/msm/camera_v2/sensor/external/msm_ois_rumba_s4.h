@@ -98,7 +98,7 @@ struct msm_ois_ctrl_t {
     bool is_servo_on;
 };
 
-enum msm_ois_modes{
+enum msm_ois_modes {
     OIS_MODE_OFF       = 1,
     OIS_MODE_ON        = 2,
     OIS_MODE_ON_STILL  = 3,

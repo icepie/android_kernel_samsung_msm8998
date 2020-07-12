@@ -154,7 +154,7 @@ static void gic_enable_redist(bool enable)
 			return;	/* No PM support in this redistributor */
 	}
 
-	while (count--) {
+	while (--count) {
 		val = readl_relaxed(rbase + GICR_WAKER);
 		if (enable ^ (val & GICR_WAKER_ChildrenAsleep))
 			break;
@@ -289,9 +289,9 @@ static int gic_irq_get_irqchip_state(struct irq_data *d,
 }
 static void gic_disable_irq(struct irq_data *d)
 {
-	/* don't lazy-disable PPIs */ 
-	if (gic_irq(d) < 32) 
-	gic_mask_irq(d);
+	/* don't lazy-disable PPIs */
+	if (gic_irq(d) < 32)
+		gic_mask_irq(d);
 	if (gic_arch_extn.irq_disable)
 		gic_arch_extn.irq_disable(d);
 }
@@ -425,6 +425,12 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 	u32 enabled;
 	u32 pending[32];
 	void __iomem *base = gic_data_dist_base(gic);
+#ifdef CONFIG_SEC_PM
+	char reason[256] = { 0, };
+	int len = 0;
+	bool ismpm = false, isrpm = false;
+	int irq_cnt = 0;
+#endif
 
 	if (!msm_show_resume_irq_mask)
 		return;
@@ -447,14 +453,43 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 		else if (desc->action && desc->action->name)
 			name = desc->action->name;
 
-		pr_warn("%s: %d triggered %s\n", __func__, irq, name);
+		pr_warn("%s: %d triggered %s(gic%d)\n", __func__, irq, name, i);
 
 #ifdef CONFIG_SEC_PM
-		last_resume_kernel_reason_len += 
-			sprintf(last_resume_kernel_reason + last_resume_kernel_reason_len,
-			"HWIRQ %d(irq %d), %s|", i, irq, name);
+		/* for detecting alarm wakeup by mpm */
+		if (i == 203)	ismpm = true;
+		if (i == 200)	isrpm = true;
+		irq_cnt++;
+
+		/* bypass basic irq and make shorten irq name */
+		if (i == 203)	continue;
+		else if (i == 484)	name = "modem";
+		else if (i == 189)	name = "adsp";
+		else if (i == 211)	name = "dsps";
+		else if (i == 200)	continue;
+
+		len += sprintf(reason + len, "[irq%d,%s]", i, name);
 #endif
 	}
+
+#ifdef CONFIG_SEC_PM
+	/* alarm detected or not */
+	if ((irq_cnt == 2) && ismpm && isrpm) {
+		last_resume_kernel_reason_len +=
+			sprintf(last_resume_kernel_reason +
+				last_resume_kernel_reason_len,
+				"[alarm]");
+	} else {
+		last_resume_kernel_reason_len +=
+			sprintf(last_resume_kernel_reason +
+				last_resume_kernel_reason_len,
+				reason);
+	}
+
+	/* reset value for detecting alarm */
+	isrpm = ismpm = false;
+	irq_cnt = 0;
+#endif
 }
 
 static void gic_resume_one(struct gic_chip_data *gic)
@@ -716,7 +751,7 @@ static struct notifier_block gic_cpu_notifier = {
 static u16 gic_compute_target_list(int *base_cpu, const struct cpumask *mask,
 				   unsigned long cluster_id)
 {
-	int cpu = *base_cpu;
+	int next_cpu, cpu = *base_cpu;
 	unsigned long mpidr = cpu_logical_map(cpu);
 	u16 tlist = 0;
 
@@ -730,9 +765,10 @@ static u16 gic_compute_target_list(int *base_cpu, const struct cpumask *mask,
 
 		tlist |= 1 << (mpidr & 0xf);
 
-		cpu = cpumask_next(cpu, mask);
-		if (cpu >= nr_cpu_ids)
+		next_cpu = cpumask_next(cpu, mask);
+		if (next_cpu >= nr_cpu_ids)
 			goto out;
+		cpu = next_cpu;
 
 		mpidr = cpu_logical_map(cpu);
 
@@ -803,6 +839,9 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 	int enabled;
 	u64 val;
 
+	if (cpu >= nr_cpu_ids)
+		return -EINVAL;
+
 	if (gic_irq_in_rdist(d))
 		return -EINVAL;
 
@@ -815,6 +854,14 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 	val = gic_mpidr_to_affinity(cpu_logical_map(cpu));
 
 	gic_write_irouter(val, reg);
+
+	/*
+	 * It is possible that irq is disabled from SW perspective only,
+	 * because kernel takes lazy disable approach. Therefore check irq
+	 * descriptor if it should kept disabled.
+	 */
+	if (irqd_irq_disabled(d))
+		enabled = 0;
 
 	/*
 	 * If the interrupt was enabled, enabled it again. Otherwise,

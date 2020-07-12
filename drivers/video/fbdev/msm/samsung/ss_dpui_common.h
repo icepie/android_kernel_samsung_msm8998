@@ -15,7 +15,11 @@
 #define __DPUI_H__
 
 #define MAX_DPUI_KEY_LEN	(20)
-#define MAX_DPUI_VAL_LEN	(128)
+/* Increase buf size for SS LOG.
+ * TODO: Instead of fixed length, allocate buf dynamically using kmalloc.
+ */
+#define MAX_DPUI_VAL_LEN	(700) // (128)
+
 
 enum {
 	DPUI_AUTO_CLEAR_OFF,

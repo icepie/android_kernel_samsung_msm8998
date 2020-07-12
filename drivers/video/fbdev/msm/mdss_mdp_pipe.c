@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1011,8 +1011,10 @@ static void mdss_mdp_qos_vbif_remapper_setup(struct mdss_data_type *mdata,
 	u32 mask, reg_val, reg_val_lvl, i, vbif_qos;
 	u32 reg_high;
 	bool is_nrt_vbif = mdss_mdp_is_nrt_vbif_client(mdata, pipe);
+	u32 *vbif_qos_ptr = is_realtime ? mdata->vbif_rt_qos :
+		mdata->vbif_nrt_qos;
 
-	if (mdata->npriority_lvl == 0)
+	if ((mdata->npriority_lvl == 0) || !vbif_qos_ptr)
 		return;
 
 	if (test_bit(MDSS_QOS_REMAPPER, mdata->mdss_qos_map)) {
@@ -1028,8 +1030,7 @@ static void mdss_mdp_qos_vbif_remapper_setup(struct mdss_data_type *mdata,
 				is_nrt_vbif);
 
 			mask = 0x3 << (pipe->xin_id * 4);
-			vbif_qos = is_realtime ?
-				mdata->vbif_rt_qos[i] : mdata->vbif_nrt_qos[i];
+			vbif_qos = vbif_qos_ptr[i];
 
 			reg_val &= ~(mask);
 			reg_val |= vbif_qos << (pipe->xin_id * 4);
@@ -1053,8 +1054,7 @@ static void mdss_mdp_qos_vbif_remapper_setup(struct mdss_data_type *mdata,
 
 			mask = 0x3 << (pipe->xin_id * 2);
 			reg_val &= ~(mask);
-			vbif_qos = is_realtime ?
-				mdata->vbif_rt_qos[i] : mdata->vbif_nrt_qos[i];
+			vbif_qos = vbif_qos_ptr[i];
 			reg_val |= vbif_qos << (pipe->xin_id * 2);
 			MDSS_VBIF_WRITE(mdata, MDSS_VBIF_QOS_REMAP_BASE + i*4,
 				reg_val, is_nrt_vbif);
@@ -1250,11 +1250,12 @@ cursor_done:
 }
 
 struct mdss_mdp_pipe *mdss_mdp_pipe_alloc(struct mdss_mdp_mixer *mixer,
-	u32 type, struct mdss_mdp_pipe *left_blend_pipe)
+	u32 off, u32 type, struct mdss_mdp_pipe *left_blend_pipe)
 {
 	struct mdss_mdp_pipe *pipe;
+
 	mutex_lock(&mdss_mdp_sspp_lock);
-	pipe = mdss_mdp_pipe_init(mixer, type, 0, left_blend_pipe);
+	pipe = mdss_mdp_pipe_init(mixer, type, off, left_blend_pipe);
 	mutex_unlock(&mdss_mdp_sspp_lock);
 	return pipe;
 }
@@ -2293,6 +2294,9 @@ static int mdss_mdp_src_addr_setup(struct mdss_mdp_pipe *pipe,
 		mdss_mdp_pipe_write(pipe, MDSS_MDP_REG_SSPP_SRC3_ADDR, addr[2]);
 	}
 
+	MDSS_XLOG(pipe->num, pipe->multirect.num, pipe->mixer_left->num,
+		pipe->play_cnt, addr[0], addr[1], addr[2], addr[3]);
+
 	return 0;
 }
 
@@ -2408,8 +2412,17 @@ bool mdss_mdp_is_amortizable_pipe(struct mdss_mdp_pipe *pipe,
 	struct mdss_mdp_mixer *mixer, struct mdss_data_type *mdata)
 {
 	/* do not apply for rotator or WB */
-	return ((pipe->dst.y > mdata->prefill_data.ts_threshold) &&
-		(mixer->type == MDSS_MDP_MIXER_TYPE_INTF));
+	if (!((pipe->dst.y > mdata->prefill_data.ts_threshold) &&
+		(mixer->type == MDSS_MDP_MIXER_TYPE_INTF)))
+		return false;
+
+	/* do not apply for msm8998, sdm660 & sdm630 in command mode */
+	if (MDSS_GET_MAJOR(mdata->mdp_rev) ==
+		MDSS_GET_MAJOR(MDSS_MDP_HW_REV_300)
+		 && !mixer->ctl->is_video_mode)
+		return false;
+
+	return true;
 }
 
 static inline void __get_ordered_rects(struct mdss_mdp_pipe *pipe,
@@ -2463,7 +2476,8 @@ static u32 __get_ts_count(struct mdss_mdp_pipe *pipe,
 		if (pipe &&
 		    pipe->multirect.mode == MDSS_MDP_PIPE_MULTIRECT_SERIAL) {
 			__get_ordered_rects(pipe, &low_pipe, &high_pipe);
-			ts_ypos = high_pipe->dst.y - low_pipe->dst.y - 1;
+			ts_ypos = high_pipe->dst.y -
+				(low_pipe->dst.y + low_pipe->dst.h) - 1;
 			rate_factor = TS_CLK / fps;
 			ts_count = mult_frac(ts_ypos, rate_factor, v_total);
 			MDSS_XLOG(ts_ypos, rate_factor, ts_count);
@@ -2537,7 +2551,7 @@ static u32 __get_ts_bytes(struct mdss_mdp_pipe *pipe,
 		/* calculate ts bytes as the sum of both rects */
 		ts_bytes_low = __calc_ts_bytes(&low_pipe->src, fps,
 			low_pipe->src_fmt->bpp);
-		ts_bytes_high = __calc_ts_bytes(&low_pipe->src, fps,
+		ts_bytes_high = __calc_ts_bytes(&high_pipe->src, fps,
 			high_pipe->src_fmt->bpp);
 
 		ts_bytes = ts_bytes_low + ts_bytes_high;
@@ -2724,9 +2738,6 @@ int mdss_mdp_pipe_queue_data(struct mdss_mdp_pipe *pipe,
 
 		goto update_nobuf;
 	}
-
-	MDSS_XLOG(pipe->num, pipe->multirect.num, pipe->mixer_left->num,
-		pipe->play_cnt, 0x222);
 
 	if (params_changed) {
 		pipe->params_changed = 0;

@@ -31,7 +31,7 @@
 
 static long power_on_alarm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	int rv;
+	int rv = 0;
 	char bootalarm_data[14];
 
 	switch (ANDROID_ALARM_BASE_CMD(cmd)) {
@@ -44,7 +44,7 @@ static long power_on_alarm_ioctl(struct file *file, unsigned int cmd, unsigned l
 		break;
 	}
 
-	return 0;
+	return rv;
 }
 
 static int power_on_alarm_open(struct inode *inode, struct file *file)

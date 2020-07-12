@@ -109,6 +109,7 @@ static int s2mm005_src_capacity_information(const struct i2c_client *i2c, uint32
 	uint32_t PDO_cnt;
 	uint32_t PDO_sel;
 	int available_pdo_num = 0;
+	int num_of_obj = 0;
 
 	MSG_HEADER_Type *MSG_HDR;
 	SRC_FIXED_SUPPLY_Typedef *MSG_FIXED_SUPPLY;
@@ -134,7 +135,8 @@ static int s2mm005_src_capacity_information(const struct i2c_client *i2c, uint32
 	dev_info(&i2c->dev, "    Rsvd2_msg_header        : %d\n",MSG_HDR->Rsvd2_msg_header );
 	dev_info(&i2c->dev, "    Message_Type            : %d\n",MSG_HDR->Message_Type );
 
-	for(PDO_cnt = 0;PDO_cnt < MSG_HDR->Number_of_obj;PDO_cnt++)
+	num_of_obj = MSG_HDR->Number_of_obj > MAX_PDO_NUM ? MAX_PDO_NUM : MSG_HDR->Number_of_obj;
+	for (PDO_cnt = 0; PDO_cnt < num_of_obj; PDO_cnt++)
 	{
 		PDO_sel = (RX_SRC_CAPA_MSG[PDO_cnt + 1] >> 30) & 0x3;
 		dev_info(&i2c->dev, "    =================\n");
@@ -195,14 +197,14 @@ void process_pd(void *data, u8 plug_attach_done, u8 *pdic_attach, MSG_IRQ_STATUS
 	struct s2mm005_data *usbpd_data = data;
 	struct i2c_client *i2c = usbpd_data->i2c;
 	uint16_t REG_ADD;
-	uint8_t rp_currentlvl, is_src;
+	uint8_t rp_currentlvl, is_src, i;
 	REQUEST_FIXED_SUPPLY_STRUCT_Typedef *request_power_number;
 	struct otg_notify *o_notify = get_otg_notify();
 
 	printk("%s\n",__func__);
 
 	rp_currentlvl = ((usbpd_data->func_state >> 27) & 0x3);
-	is_src = (usbpd_data->func_state >> 1) & 0x1;
+	is_src = (usbpd_data->func_state & (0x1 << 25) ? 1 : 0);
 	dev_info(&i2c->dev, "rp_currentlvl:0x%02X, is_source:0x%02X\n", rp_currentlvl, is_src);
 
 	if (MSG_IRQ_State->BITS.Ctrl_Flag_PR_Swap)
@@ -214,13 +216,13 @@ void process_pd(void *data, u8 plug_attach_done, u8 *pdic_attach, MSG_IRQ_STATUS
 		}
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 		usbpd_data->power_role = is_src ? DUAL_ROLE_PROP_PR_SRC : DUAL_ROLE_PROP_PR_SNK;
-		if( usbpd_data->power_role == DUAL_ROLE_PROP_PR_SRC) {
+		if (usbpd_data->power_role == DUAL_ROLE_PROP_PR_SRC) {
 			send_otg_notify(o_notify, NOTIFY_EVENT_POWER_SOURCE, 1);
 			vbus_turn_on_ctrl(is_src);
-		} else if( usbpd_data->power_role == DUAL_ROLE_PROP_PR_SNK) {
+		} else if (usbpd_data->power_role == DUAL_ROLE_PROP_PR_SNK) {
 			vbus_turn_on_ctrl(is_src);
 			send_otg_notify(o_notify, NOTIFY_EVENT_POWER_SOURCE, 0);
-		}			
+		}
 		ccic_event_work(usbpd_data, CCIC_NOTIFY_DEV_PDIC, CCIC_NOTIFY_ID_ROLE_SWAP, 0, 0, 0);
 #endif
 	}
@@ -300,10 +302,19 @@ void process_pd(void *data, u8 plug_attach_done, u8 *pdic_attach, MSG_IRQ_STATUS
 				return;
 		} else
 			return;
+#ifdef CONFIG_SEC_FACTORY
+		pr_info(" %s : debug pdic_attach(%d) event(%d)\n", __func__, *pdic_attach, pd_noti.event);
+#endif
 		ccic_event_work(usbpd_data, CCIC_NOTIFY_DEV_BATTERY, CCIC_NOTIFY_ID_POWER_STATUS, *pdic_attach, 0, 0);
 	} else {
+		for (i = 0; i < MAX_PDO_NUM + 1; i++) {
+			pd_noti.sink_status.power_list[i].max_current = 0;
+			pd_noti.sink_status.power_list[i].max_voltage = 0;
+		}
 		pd_noti.sink_status.rp_currentlvl = RP_CURRENT_LEVEL_NONE;
+		pd_noti.sink_status.available_pdo_num = 0;
 		pd_noti.sink_status.selected_pdo_num = 0;
+		pd_noti.sink_status.current_pdo_num = 0;
 		pd_noti.event = PDIC_NOTIFY_EVENT_DETACH;
 	}
 #else

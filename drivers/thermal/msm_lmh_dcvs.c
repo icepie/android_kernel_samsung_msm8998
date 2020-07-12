@@ -25,6 +25,8 @@
 #include <linux/timer.h>
 #include <linux/pm_opp.h>
 #include <linux/cpu_cooling.h>
+#include <linux/bitmap.h>
+#include <linux/msm_thermal.h>
 
 #include <asm/smp_plat.h>
 #include <asm/cacheflush.h>
@@ -46,6 +48,7 @@
 #define MSM_LIMITS_ALGO_MODE_ENABLE	0x454E424C
 
 #define MSM_LIMITS_HI_THRESHOLD		0x48494748
+#define MSM_LIMITS_LOW_THRESHOLD        0x4C4F5700
 #define MSM_LIMITS_ARM_THRESHOLD	0x41524D00
 
 #define MSM_LIMITS_CLUSTER_0		0x6370302D
@@ -55,6 +58,7 @@
 
 #define MSM_LIMITS_HIGH_THRESHOLD_VAL	85000
 #define MSM_LIMITS_ARM_THRESHOLD_VAL	65000
+#define MSM_LIMITS_LOW_THRESHOLD_OFFSET 500
 #define MSM_LIMITS_POLLING_DELAY_MS	10
 #define MSM_LIMITS_CLUSTER_0_REQ	0x179C1B04
 #define MSM_LIMITS_CLUSTER_1_REQ	0x179C3B04
@@ -74,6 +78,7 @@ enum lmh_hw_trips {
 };
 
 struct msm_lmh_dcvs_hw {
+	char sensor_name[THERMAL_NAME_LENGTH];
 	uint32_t affinity;
 	uint32_t temp_limits[LIMITS_TRIP_MAX];
 	struct sensor_threshold default_lo, default_hi;
@@ -85,6 +90,7 @@ struct msm_lmh_dcvs_hw {
 	uint32_t max_freq;
 	uint32_t hw_freq_limit;
 	struct list_head list;
+	DECLARE_BITMAP(is_irq_enabled, 1);
 #ifdef CONFIG_SEC_PM
 	uint32_t prev_max_freq;
 	uint32_t lowest_freq;
@@ -124,9 +130,9 @@ static void msm_lmh_dcvs_get_max_freq(uint32_t cpu, uint32_t *max_freq)
 
 static uint32_t msm_lmh_mitigation_notify(struct msm_lmh_dcvs_hw *hw)
 {
-	uint32_t max_limit = 0, val = 0;
+	uint32_t val = 0;
 	struct device *cpu_dev = NULL;
-	unsigned long freq_val;
+	unsigned long freq_val, max_limit = 0;
 	struct dev_pm_opp *opp_entry;
 
 	val = readl_relaxed(hw->osm_hw_reg);
@@ -182,6 +188,7 @@ static void msm_lmh_dcvs_poll(unsigned long data)
 		hw->lowest_freq = UINT_MAX;
 #endif
 		writel_relaxed(0xFF, hw->int_clr_reg);
+		set_bit(1, hw->is_irq_enabled);
 		enable_irq(hw->irq_num);
 	} else {
 		mod_timer(&hw->poll_timer, jiffies + msecs_to_jiffies(
@@ -198,19 +205,26 @@ static void msm_lmh_dcvs_poll(unsigned long data)
 	}
 }
 
+static void lmh_dcvs_notify(struct msm_lmh_dcvs_hw *hw)
+{
+	if (test_and_clear_bit(1, hw->is_irq_enabled)) {
+		disable_irq_nosync(hw->irq_num);
+		msm_lmh_mitigation_notify(hw);
+		mod_timer(&hw->poll_timer, jiffies + msecs_to_jiffies(
+			MSM_LIMITS_POLLING_DELAY_MS));
+	}
+}
+
 static irqreturn_t lmh_dcvs_handle_isr(int irq, void *data)
 {
 	struct msm_lmh_dcvs_hw *hw = data;
 
-	disable_irq_nosync(irq);
+	lmh_dcvs_notify(hw);
 #ifdef CONFIG_SEC_PM
 		LMHDCVS_IPC_LOG("Start lmh cpu%d @%d\n",
 			cpumask_first(&hw->core_map), hw->hw_freq_limit);
 #endif
 	hw->limiting = true;
-	msm_lmh_mitigation_notify(hw);
-	mod_timer(&hw->poll_timer, jiffies + msecs_to_jiffies(
-			MSM_LIMITS_POLLING_DELAY_MS));
 
 	return IRQ_HANDLED;
 }
@@ -268,7 +282,8 @@ static int lmh_activate_trip(struct thermal_zone_device *dev,
 		int trip, enum thermal_trip_activation_mode mode)
 {
 	struct msm_lmh_dcvs_hw *hw = dev->devdata;
-	uint32_t enable, temp, thresh;
+	uint32_t enable, temp;
+	int ret = 0;
 
 	enable = (mode == THERMAL_TRIP_ACTIVATION_ENABLED) ? 1 : 0;
 	if (!enable) {
@@ -281,12 +296,35 @@ static int lmh_activate_trip(struct thermal_zone_device *dev,
 			hw->temp_limits[LIMITS_TRIP_HI])
 		return -EINVAL;
 
-	thresh = (trip == LIMITS_TRIP_LO) ? MSM_LIMITS_ARM_THRESHOLD :
-			MSM_LIMITS_HI_THRESHOLD;
 	temp = hw->temp_limits[trip];
+	switch (trip) {
+	case LIMITS_TRIP_LO:
+		ret =  msm_lmh_dcvs_write(hw->affinity,
+				MSM_LIMITS_SUB_FN_THERMAL,
+				MSM_LIMITS_ARM_THRESHOLD, temp);
+		break;
+	case LIMITS_TRIP_HI:
+		/*
+		 * The high threshold should be atleast greater than the
+		 * low threshold offset
+		 */
+		if (temp < MSM_LIMITS_LOW_THRESHOLD_OFFSET)
+			return -EINVAL;
+		ret =  msm_lmh_dcvs_write(hw->affinity,
+				MSM_LIMITS_SUB_FN_THERMAL,
+				MSM_LIMITS_HI_THRESHOLD, temp);
+		if (ret)
+			break;
+		ret =  msm_lmh_dcvs_write(hw->affinity,
+				MSM_LIMITS_SUB_FN_THERMAL,
+				MSM_LIMITS_LOW_THRESHOLD, temp -
+				MSM_LIMITS_LOW_THRESHOLD_OFFSET);
+		break;
+	default:
+		return -EINVAL;
+	}
 
-	return msm_lmh_dcvs_write(hw->affinity, MSM_LIMITS_SUB_FN_THERMAL,
-				thresh, temp);
+	return ret;
 }
 
 static int lmh_get_trip_temp(struct thermal_zone_device *dev,
@@ -365,12 +403,22 @@ static struct cpu_cooling_ops cd_ops = {
 	.ceil_limit = lmh_set_max_limit,
 };
 
+int msm_lmh_dcvsh_sw_notify(int cpu)
+{
+	struct msm_lmh_dcvs_hw *hw = get_dcvsh_hw_from_cpu(cpu);
+
+	if (!hw)
+		return -EINVAL;
+
+	lmh_dcvs_notify(hw);
+	return 0;
+}
+
 static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 {
 	int ret;
 	int affinity = -1;
 	struct msm_lmh_dcvs_hw *hw;
-	char sensor_name[] = "limits_sensor-00";
 	struct thermal_zone_device *tzdev;
 	struct thermal_cooling_device *cdev;
 	struct device_node *dn = pdev->dev.of_node;
@@ -443,9 +491,9 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 	 * Let's register with thermal framework, so we have the ability
 	 * to set low/high thresholds.
 	 */
-	snprintf(sensor_name, sizeof(sensor_name), "limits_sensor-%02d",
+	snprintf(hw->sensor_name, sizeof(hw->sensor_name), "limits_sensor-%02d",
 			affinity);
-	tzdev = thermal_zone_device_register(sensor_name, LIMITS_TRIP_MAX,
+	tzdev = thermal_zone_device_register(hw->sensor_name, LIMITS_TRIP_MAX,
 			(1 << LIMITS_TRIP_MAX) - 1, hw, &limits_sensor_ops,
 			NULL, 0, 0);
 	if (IS_ERR_OR_NULL(tzdev))
@@ -460,7 +508,7 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 	 * Since we make a check for hi > lo value, set the hi threshold
 	 * before the low threshold
 	 */
-	id = sensor_get_id(sensor_name);
+	id = sensor_get_id(hw->sensor_name);
 	if (id < 0)
 		return id;
 
@@ -515,9 +563,10 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 		pr_err("Error getting IRQ number. err:%d\n", ret);
 		return ret;
 	}
+	set_bit(1, hw->is_irq_enabled);
 	ret = devm_request_threaded_irq(&pdev->dev, hw->irq_num, NULL,
 		lmh_dcvs_handle_isr, IRQF_TRIGGER_HIGH | IRQF_ONESHOT
-		| IRQF_NO_SUSPEND, sensor_name, hw);
+		| IRQF_NO_SUSPEND, hw->sensor_name, hw);
 	if (ret) {
 		pr_err("Error registering for irq. err:%d\n", ret);
 		return ret;

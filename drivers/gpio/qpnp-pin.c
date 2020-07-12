@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -303,7 +303,7 @@ static int qpnp_pin_check_config(enum qpnp_pin_param_type idx,
 				if (val >= QPNP_PIN_GPIO_LV_MV_MODE_INVALID)
 					return -EINVAL;
 			} else if (val >= QPNP_PIN_GPIO_MODE_INVALID) {
-					return -EINVAL;
+				return -EINVAL;
 			}
 		} else if (q_spec->type == Q_MPP_TYPE) {
 			if (val >= QPNP_PIN_MPP_MODE_INVALID)
@@ -761,16 +761,17 @@ int qpnp_pin_config(int gpio, struct qpnp_pin_cfg *param)
 }
 EXPORT_SYMBOL(qpnp_pin_config);
 
-#define Q_MAX_CHIP_NAME 128
 int qpnp_pin_map(const char *name, uint32_t pmic_pin)
 {
 	struct qpnp_pin_chip *q_chip;
 	struct qpnp_pin_spec *q_spec = NULL;
 
+	if (!name)
+		return -EINVAL;
+
 	mutex_lock(&qpnp_pin_chips_lock);
 	list_for_each_entry(q_chip, &qpnp_pin_chips, chip_list) {
-		if (strncmp(q_chip->gpio_chip.label, name,
-							Q_MAX_CHIP_NAME) != 0)
+		if (strcmp(q_chip->gpio_chip.label, name) != 0)
 			continue;
 		if (q_chip->pmic_pin_lowest <= pmic_pin &&
 		    q_chip->pmic_pin_highest >= pmic_pin) {
@@ -786,7 +787,7 @@ int qpnp_pin_map(const char *name, uint32_t pmic_pin)
 }
 EXPORT_SYMBOL(qpnp_pin_map);
 
-static int qpnp_pin_to_irq(struct gpio_chip *gpio_chip, unsigned offset)
+static int qpnp_pin_to_irq(struct gpio_chip *gpio_chip, unsigned int offset)
 {
 	struct qpnp_pin_chip *q_chip = dev_get_drvdata(gpio_chip->dev);
 	struct qpnp_pin_spec *q_spec;
@@ -819,14 +820,13 @@ static int qpnp_pin_to_irq(struct gpio_chip *gpio_chip, unsigned offset)
 	return q_spec->irq;
 }
 
-static int qpnp_pin_get(struct gpio_chip *gpio_chip, unsigned offset)
+static int qpnp_pin_get(struct gpio_chip *gpio_chip, unsigned int offset)
 {
-	int rc, ret_val;
 	struct qpnp_pin_chip *q_chip = dev_get_drvdata(gpio_chip->dev);
 	struct qpnp_pin_spec *q_spec = NULL;
-	u8 buf[1], en_mask;
-	u8 shift, mask, reg;
-	int val;
+	u8 buf, en_mask, shift, mask, reg;
+	unsigned int val;
+	int rc;
 
 	if (WARN_ON(!q_chip))
 		return -ENODEV;
@@ -848,7 +848,9 @@ static int qpnp_pin_get(struct gpio_chip *gpio_chip, unsigned offset)
 					== QPNP_PIN_MODE_DIG_IN) {
 		rc = regmap_read(q_chip->regmap,
 				 Q_REG_ADDR(q_spec, Q_REG_STATUS1), &val);
-		buf[0] = (u8)val;
+		if (rc)
+			return rc;
+		buf = val;
 
 		if (q_spec->type == Q_GPIO_TYPE && q_spec->dig_major_rev == 0)
 			en_mask = Q_REG_STATUS1_GPIO_EN_REV0_MASK;
@@ -858,26 +860,23 @@ static int qpnp_pin_get(struct gpio_chip *gpio_chip, unsigned offset)
 		else /* MPP */
 			en_mask = Q_REG_STATUS1_MPP_EN_MASK;
 
-		if (!(buf[0] & en_mask))
+		if (!(buf & en_mask))
 			return -EPERM;
 
-		return buf[0] & Q_REG_STATUS1_VAL_MASK;
-	} else {
-		if (is_gpio_lv_mv(q_spec)) {
-			shift = Q_REG_DIG_OUT_SRC_INVERT_SHIFT;
-			mask = Q_REG_DIG_OUT_SRC_INVERT_MASK;
-			reg = q_spec->regs[Q_REG_I_DIG_OUT_SRC_CTL];
-		} else {
-			shift = Q_REG_OUT_INVERT_SHIFT;
-			mask = Q_REG_OUT_INVERT_MASK;
-			reg = q_spec->regs[Q_REG_I_MODE_CTL];
-		}
-
-		ret_val = (reg & mask) >> shift;
-		return ret_val;
+		return buf & Q_REG_STATUS1_VAL_MASK;
 	}
 
-	return 0;
+	if (is_gpio_lv_mv(q_spec)) {
+		shift = Q_REG_DIG_OUT_SRC_INVERT_SHIFT;
+		mask = Q_REG_DIG_OUT_SRC_INVERT_MASK;
+		reg = q_spec->regs[Q_REG_I_DIG_OUT_SRC_CTL];
+	} else {
+		shift = Q_REG_OUT_INVERT_SHIFT;
+		mask = Q_REG_OUT_INVERT_MASK;
+		reg = q_spec->regs[Q_REG_I_MODE_CTL];
+	}
+
+	return (reg & mask) >> shift;
 }
 
 static int __qpnp_pin_set(struct qpnp_pin_chip *q_chip,
@@ -913,7 +912,7 @@ static int __qpnp_pin_set(struct qpnp_pin_chip *q_chip,
 
 
 static void qpnp_pin_set(struct gpio_chip *gpio_chip,
-		unsigned offset, int value)
+		unsigned int offset, int value)
 {
 	struct qpnp_pin_chip *q_chip = dev_get_drvdata(gpio_chip->dev);
 	struct qpnp_pin_spec *q_spec;
@@ -958,7 +957,7 @@ static int qpnp_pin_set_mode(struct qpnp_pin_chip *q_chip,
 }
 
 static int qpnp_pin_direction_input(struct gpio_chip *gpio_chip,
-		unsigned offset)
+		unsigned int offset)
 {
 	struct qpnp_pin_chip *q_chip = dev_get_drvdata(gpio_chip->dev);
 	struct qpnp_pin_spec *q_spec;
@@ -974,8 +973,7 @@ static int qpnp_pin_direction_input(struct gpio_chip *gpio_chip,
 }
 
 static int qpnp_pin_direction_output(struct gpio_chip *gpio_chip,
-		unsigned offset,
-		int val)
+		unsigned int offset, int val)
 {
 	int rc;
 	struct qpnp_pin_chip *q_chip = dev_get_drvdata(gpio_chip->dev);
@@ -1351,7 +1349,7 @@ struct qpnp_pin_debugfs_args {
 	const char *filename;
 };
 
-static struct qpnp_pin_debugfs_args dfs_args[] = {
+static struct qpnp_pin_debugfs_args dfs_args[Q_NUM_PARAMS] = {
 	{ Q_PIN_CFG_MODE, "mode" },
 	{ Q_PIN_CFG_OUTPUT_TYPE, "output_type" },
 	{ Q_PIN_CFG_INVERT, "invert" },
@@ -1381,8 +1379,6 @@ static int qpnp_pin_debugfs_create(struct qpnp_pin_chip *q_chip)
 
 	return 0; // Should be removed after problem solved
 
-	BUG_ON(Q_NUM_PARAMS != ARRAY_SIZE(dfs_args));
-
 	q_chip->dfs_dir = debugfs_create_dir(q_chip->gpio_chip.label,
 							driver_dfs_dir);
 	if (q_chip->dfs_dir == NULL) {
@@ -1391,7 +1387,7 @@ static int qpnp_pin_debugfs_create(struct qpnp_pin_chip *q_chip)
 		return -ENODEV;
 	}
 
-	for (i = 0; i < of_get_child_count(pdev->dev.of_node); i++) {
+	for (i = 0; i < q_chip->gpio_chip.ngpio; i++) {
 		q_spec = qpnp_chip_gpio_get_spec(q_chip, i);
 		params = q_spec->params;
 		snprintf(pmic_pin, DEBUGFS_BUF_SIZE, "%u", q_spec->pmic_pin);
@@ -1413,12 +1409,8 @@ static int qpnp_pin_debugfs_create(struct qpnp_pin_chip *q_chip)
 				continue;
 
 			params[type] = type;
-			dfs = debugfs_create_file(
-					filename,
-					S_IRUGO | S_IWUSR,
-					dfs_io_dir,
-					&q_spec->params[type],
-					&qpnp_pin_fops);
+			dfs = debugfs_create_file(filename, 0644, dfs_io_dir,
+					&q_spec->params[type], &qpnp_pin_fops);
 			if (dfs == NULL)
 				goto dfs_err;
 		}
@@ -1868,7 +1860,7 @@ static int qpnp_pin_remove(struct platform_device *pdev)
 	return qpnp_pin_free_chip(q_chip);
 }
 
-static struct of_device_id spmi_match_table[] = {
+static const struct of_device_id spmi_match_table[] = {
 	{	.compatible = "qcom,qpnp-pin",
 	},
 	{}

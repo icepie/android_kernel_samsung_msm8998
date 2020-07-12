@@ -7,3 +7,5 @@ obj-$(CONFIG_MOTOR_DRV_MAX77854)	+= max77854_haptic.o
 obj-$(CONFIG_MOTOR_DRV_SM5720)		+= sm5720_haptic.o
 obj-$(CONFIG_SS_VIBRATOR)		+= ss_vibrator.o
 obj-$(CONFIG_MOTOR_DRV2624)		+= drv2624.o
+obj-$(CONFIG_BLDC_VIBRATOR)		+= bldc_vibrator.o
+obj-$(CONFIG_MOTOR_S2MU004)		+= s2mu004_haptic.o

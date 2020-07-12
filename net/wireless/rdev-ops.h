@@ -6,11 +6,12 @@
 #include "core.h"
 #include "trace.h"
 
-static inline int rdev_suspend(struct cfg80211_registered_device *rdev)
+static inline int rdev_suspend(struct cfg80211_registered_device *rdev,
+			       struct cfg80211_wowlan *wowlan)
 {
 	int ret;
-	trace_rdev_suspend(&rdev->wiphy, rdev->wiphy.wowlan_config);
-	ret = rdev->ops->suspend(&rdev->wiphy, rdev->wiphy.wowlan_config);
+	trace_rdev_suspend(&rdev->wiphy, wowlan);
+	ret = rdev->ops->suspend(&rdev->wiphy, wowlan);
 	trace_rdev_return_int(&rdev->wiphy, ret);
 	return ret;
 }
@@ -485,6 +486,18 @@ static inline int rdev_connect(struct cfg80211_registered_device *rdev,
 	int ret;
 	trace_rdev_connect(&rdev->wiphy, dev, sme);
 	ret = rdev->ops->connect(&rdev->wiphy, dev, sme);
+	trace_rdev_return_int(&rdev->wiphy, ret);
+	return ret;
+}
+
+static inline int
+rdev_update_connect_params(struct cfg80211_registered_device *rdev,
+			   struct net_device *dev,
+			   struct cfg80211_connect_params *sme, u32 changed)
+{
+	int ret;
+	trace_rdev_update_connect_params(&rdev->wiphy, dev, sme, changed);
+	ret = rdev->ops->update_connect_params(&rdev->wiphy, dev, sme, changed);
 	trace_rdev_return_int(&rdev->wiphy, ret);
 	return ret;
 }

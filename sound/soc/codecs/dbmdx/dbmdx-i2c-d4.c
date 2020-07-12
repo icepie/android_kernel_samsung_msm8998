@@ -1,5 +1,5 @@
 /*
- * DSPG DBMD4 I2C interface driver
+ * DSPG DBMD4/DBMD6/DBMD8 I2C interface driver
  *
  * Copyright (C) 2014 DSP Group
  *
@@ -49,12 +49,20 @@ static int dbmd4_i2c_boot(const void *fw_data, size_t fw_size,
 	/* change to boot I2C address */
 	i2c_p->client->addr = (unsigned short)(i2c_p->pdata->boot_addr);
 
-	while (retry--) {
+	do {
 
 		if (p->active_fw == DBMDX_FW_PRE_BOOT) {
 
-			/* reset DBMD4 chip */
-			p->reset_sequence(p);
+			if (!(p->boot_mode & DBMDX_BOOT_MODE_RESET_DISABLED)) {
+				/* reset DBMD4 chip */
+				p->reset_sequence(p);
+			} else {
+				/* If failed and reset is disabled, break */
+				if (retry != RETRY_COUNT) {
+					retry = -1;
+					break;
+				}
+			}
 
 			/* delay before sending commands */
 			if (p->clk_get_rate(p, DBMDX_CLK_MASTER) <= 32768)
@@ -63,13 +71,30 @@ static int dbmd4_i2c_boot(const void *fw_data, size_t fw_size,
 				usleep_range(DBMDX_USLEEP_I2C_D4_AFTER_RESET,
 					DBMDX_USLEEP_I2C_D4_AFTER_RESET + 5000);
 
-			/* send CRC clear command */
-			ret = write_i2c_data(p, clr_crc_cmd,
-				sizeof(clr_crc_cmd));
-			if (ret != sizeof(clr_crc_cmd)) {
-				dev_err(p->dev, "%s: failed to clear CRC\n",
-					 __func__);
-				continue;
+			/* verify chip id */
+			if (p->cur_boot_options &
+				DBMDX_BOOT_OPT_VERIFY_CHIP_ID) {
+				ret = i2c_verify_chip_id(p);
+				if (ret < 0) {
+					dev_err(i2c_p->dev,
+						"%s: couldn't verify chip id\n",
+						__func__);
+					continue;
+				}
+			}
+
+			if (!(p->cur_boot_options &
+				DBMDX_BOOT_OPT_DONT_CLR_CRC)) {
+
+				/* send CRC clear command */
+				ret = write_i2c_data(p, clr_crc_cmd,
+					sizeof(clr_crc_cmd));
+				if (ret != sizeof(clr_crc_cmd)) {
+					dev_err(p->dev,
+						"%s: failed to clear CRC\n",
+						__func__);
+					continue;
+				}
 			}
 		} else {
 			ret = send_i2c_cmd_va(p,
@@ -100,7 +125,8 @@ static int dbmd4_i2c_boot(const void *fw_data, size_t fw_size,
 		msleep(DBMDX_MSLEEP_I2C_D4_BEFORE_FW_CHECKSUM);
 
 		/* verify checksum */
-		if (checksum) {
+		if (checksum && !(p->cur_boot_options &
+					DBMDX_BOOT_OPT_DONT_VERIFY_CRC)) {
 			ret = i2c_verify_boot_checksum(p, checksum, chksum_len);
 			if (ret < 0) {
 				dev_err(i2c_p->dev,
@@ -113,19 +139,22 @@ static int dbmd4_i2c_boot(const void *fw_data, size_t fw_size,
 		dev_info(p->dev, "%s: ---------> firmware loaded\n",
 			__func__);
 		break;
-	}
+	} while (--retry);
 
 	/* no retries left, failed to boot */
-	if (retry < 0) {
+	if (retry <= 0) {
 		dev_err(p->dev, "%s: failed to load firmware\n", __func__);
-		return -1;
+		return -EIO;
 	}
 
-	/* send boot command */
-	ret = send_i2c_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
-	if (ret < 0) {
-		dev_err(p->dev, "%s: booting the firmware failed\n", __func__);
-		return -1;
+	if (!(p->cur_boot_options & DBMDX_BOOT_OPT_DONT_SEND_START_BOOT)) {
+		/* send boot command */
+		ret = send_i2c_cmd_boot(p, DBMDX_FIRMWARE_BOOT);
+		if (ret < 0) {
+			dev_err(p->dev,
+				"%s: booting the firmware failed\n", __func__);
+			return -EIO;
+		}
 	}
 
 	/* wait some time */
@@ -226,44 +255,48 @@ static int dbmd4_i2c_probe(struct i2c_client *client,
 }
 
 
-static const struct of_device_id dbmd_4_6_i2c_of_match[] = {
+static const struct of_device_id dbmd_4_8_i2c_of_match[] = {
 	{ .compatible = "dspg,dbmd4-i2c", },
 	{ .compatible = "dspg,dbmd6-i2c", },
+	{ .compatible = "dspg,dbmd8-i2c", },
 	{},
 };
-MODULE_DEVICE_TABLE(of, dbmd_4_6_i2c_of_match);
+MODULE_DEVICE_TABLE(of, dbmd_4_8_i2c_of_match);
 
-static const struct i2c_device_id dbmd_4_6_i2c_id[] = {
+static const struct i2c_device_id dbmd_4_8_i2c_id[] = {
 	{ "dbmdx-i2c", 0 },
 	{ "dbmd4-i2c", 0 },
 	{ "dbmd6-i2c", 0 },
+	{ "dbmd8-i2c", 0 },
 	{ }
 };
-MODULE_DEVICE_TABLE(i2c, dbmd_4_6_i2c_id);
+MODULE_DEVICE_TABLE(i2c, dbmd_4_8_i2c_id);
 
-static struct i2c_driver dbmd_4_6_i2c_driver = {
+static struct i2c_driver dbmd_4_8_i2c_driver = {
 	.driver = {
-		.name = "dbmd_4_6-i2c",
+		.name = "dbmd_4_8-i2c",
 		.owner = THIS_MODULE,
-		.of_match_table = dbmd_4_6_i2c_of_match,
+#ifdef CONFIG_OF
+		.of_match_table = dbmd_4_8_i2c_of_match,
+#endif
 		.pm = &dbmdx_i2c_pm,
 	},
 	.probe =    dbmd4_i2c_probe,
 	.remove =   i2c_common_remove,
-	.id_table = dbmd_4_6_i2c_id,
+	.id_table = dbmd_4_8_i2c_id,
 };
 
-static int __init dbmd_4_6_modinit(void)
+static int __init dbmd_4_8_modinit(void)
 {
-	return i2c_add_driver(&dbmd_4_6_i2c_driver);
+	return i2c_add_driver(&dbmd_4_8_i2c_driver);
 }
-module_init(dbmd_4_6_modinit);
+module_init(dbmd_4_8_modinit);
 
-static void __exit dbmd_4_6_exit(void)
+static void __exit dbmd_4_8_exit(void)
 {
-	i2c_del_driver(&dbmd_4_6_i2c_driver);
+	i2c_del_driver(&dbmd_4_8_i2c_driver);
 }
-module_exit(dbmd_4_6_exit);
+module_exit(dbmd_4_8_exit);
 
-MODULE_DESCRIPTION("DSPG DBMD4/DBMD6 I2C interface driver");
+MODULE_DESCRIPTION("DSPG DBMD4/DBMD6/DBMD8 I2C interface driver");
 MODULE_LICENSE("GPL");

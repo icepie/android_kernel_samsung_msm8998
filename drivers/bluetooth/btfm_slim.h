@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -68,6 +68,7 @@ struct btfmslim {
 
 	uint32_t num_rx_port;
 	uint32_t num_tx_port;
+	uint32_t sample_rate;
 
 	struct btfmslim_ch *rx_chs;
 	struct btfmslim_ch *tx_chs;

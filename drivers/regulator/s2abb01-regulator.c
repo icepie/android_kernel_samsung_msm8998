@@ -51,9 +51,10 @@ static struct regulator_ops s2abb01_reg_ops = {
 	.ops			= &s2abb01_reg_ops,		\
 	.type			= REGULATOR_VOLTAGE,		\
 	.owner			= THIS_MODULE,			\
-	.n_voltages		= BIT_OUT_L	+ 1,		\
+	.n_voltages		= 31,				\
 	.min_uV			= LDO_MINUV,			\
 	.uV_step		= LDO_STEP,			\
+	.linear_min_sel		= 0x0E,				\
 	.vsel_reg		= REG_LDO_CTRL,			\
 	.vsel_mask		= BIT_OUT_L,			\
 	.enable_reg		= REG_LDO_CTRL,			\
@@ -66,9 +67,10 @@ static struct regulator_ops s2abb01_reg_ops = {
 	.ops		= &s2abb01_reg_ops,			\
 	.type		= REGULATOR_VOLTAGE,			\
 	.owner		= THIS_MODULE,				\
-	.n_voltages	= BIT_VBB_CTRL + 1,			\
+	.n_voltages	= 81,					\
 	.min_uV		= BUCK_MINUV,				\
 	.uV_step	= BUCK_STEP,				\
+	.linear_min_sel	= 0x10,					\
 	.vsel_reg	= REG_BB_OUT,				\
 	.vsel_mask	= BIT_VBB_CTRL,				\
 	.enable_reg	= REG_BB_OUT,				\
@@ -139,7 +141,11 @@ static int s2abb01_reg_set_alwayson( struct s2abb01_reg *s2abb01_reg, struct s2a
 		val = pdata->regulators[reg_id -1].alwayson ? BIT_BB_EN : 0;
 		reg = REG_BB_OUT;
 		//rc = regmap_update_bits
-		rc = regmap_write( s2abb01_reg->regmap, reg, val | BUCK_ALWAYS_3_2V );
+#if defined(CONFIG_MACH_KELLYLTE_CHN_OPEN)
+			rc = regmap_write( s2abb01_reg->regmap, reg, val | BUCK_ALWAYS_3_4V );
+#else
+			rc = regmap_write( s2abb01_reg->regmap, reg, val | BUCK_ALWAYS_3_2V );
+#endif
 		regmap_read(s2abb01_reg->regmap,REG_BB_OUT,&val);
                 pr_info("##val:0x%X\n", val);
 

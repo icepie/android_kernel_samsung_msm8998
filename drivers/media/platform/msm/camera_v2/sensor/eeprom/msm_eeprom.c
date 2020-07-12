@@ -19,6 +19,7 @@
 #include "msm_sd.h"
 #include "msm_cci.h"
 #include "msm_eeprom.h"
+#include "msm_actuator_fpga.h"
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -28,21 +29,26 @@ DEFINE_MSM_MUTEX(msm_eeprom_mutex);
 static struct v4l2_file_operations msm_eeprom_v4l2_subdev_fops;
 #endif
 
-extern uint32_t rear_af_cal_pan;
-extern uint32_t rear_af_cal_macro;
-extern uint32_t rear_af_cal_mid;
 extern uint32_t front_af_cal_pan;
 extern uint32_t front_af_cal_macro;
 #if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
-extern uint32_t rear2_af_cal_pan;
-extern uint32_t rear2_af_cal_macro;
-extern uint32_t rear2_af_cal_mid;
+extern uint8_t rear_dual_cal[FROM_REAR_DUAL_CAL_SIZE + 1];
+extern int rear2_af_cal[FROM_REAR_AF_CAL_SIZE + 1];
 #endif
-
+extern int rear_af_cal[FROM_REAR_AF_CAL_SIZE + 1];
 extern char rear_sensor_id[FROM_SENSOR_ID_SIZE + 1];
 extern char front_sensor_id[FROM_SENSOR_ID_SIZE + 1];
 #if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
 extern char rear2_sensor_id[FROM_SENSOR_ID_SIZE + 1];
+extern int rear2_dual_tilt_x;
+extern int rear2_dual_tilt_y;
+extern int rear2_dual_tilt_z;
+extern int rear2_dual_tilt_sx;
+extern int rear2_dual_tilt_sy;
+extern int rear2_dual_tilt_range;
+extern int rear2_dual_tilt_max_err;
+extern int rear2_dual_tilt_avg_err;
+extern int rear2_dual_tilt_dll_ver;
 #endif
 
 extern uint8_t rear_module_id[FROM_MODULE_ID_SIZE + 1];
@@ -280,6 +286,20 @@ static long msm_eeprom_subdev_ioctl(struct v4l2_subdev *sd,
 	CDBG("%s X\n", __func__);
 }
 
+#if defined(CONFIG_USE_ACTUATOR_FPGA)
+static struct msm_camera_i2c_fn_t msm_eeprom_fpga_iic_func_tbl = {
+	.i2c_read = msm_camera_fpga_i2c_read,
+	.i2c_write = msm_camera_fpga_i2c_write,
+	.i2c_write_table_w_microdelay =
+		msm_camera_fpga_i2c_write_table_w_microdelay,
+	.i2c_read_seq = msm_camera_fpga_i2c_read_seq,
+	.i2c_write_seq = msm_camera_fpga_i2c_write_seq,
+	.i2c_write_table = msm_camera_fpga_i2c_write_table,
+	.i2c_write_seq_table = msm_camera_fpga_i2c_write_seq_table,
+	.i2c_poll = msm_camera_fpga_i2c_poll,
+	.i2c_util = msm_camera_fpga_i2c_util,
+};
+#else
 static struct msm_camera_i2c_fn_t msm_eeprom_cci_func_tbl = {
 	.i2c_read = msm_camera_cci_i2c_read,
 	.i2c_read_seq = msm_camera_cci_i2c_read_seq,
@@ -292,6 +312,7 @@ static struct msm_camera_i2c_fn_t msm_eeprom_cci_func_tbl = {
 	.i2c_util = msm_sensor_cci_i2c_util,
 	.i2c_poll = msm_camera_cci_i2c_poll,
 };
+#endif
 
 static struct msm_camera_i2c_fn_t msm_eeprom_qup_func_tbl = {
 	.i2c_read = msm_camera_qup_i2c_read,
@@ -367,6 +388,10 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 
 	if (e_ctrl->eeprom_device_type == MSM_CAMERA_I2C_DEVICE) {
 		max_size = I2C_BAM_MAX_SIZE;
+#if defined(CONFIG_USE_ACTUATOR_FPGA)
+	} else if (e_ctrl->eeprom_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
+		max_size = FPGA_I2C_MAX_SIZE;
+#endif
 	} else {
 		max_size = SPI_TRANSFER_MAX_SIZE;
 	}
@@ -416,9 +441,10 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 
 		if (emap[j].mem.valid_size) {
 			memptr = block->mapdata + emap[j].mem.addr;
-			CDBG("%s: %d memptr = %p, addr = 0x%X, size = %d\n", __func__, __LINE__, memptr, emap[j].mem.addr, emap[j].mem.valid_size);
+			CDBG("%s: %d memptr = %p, addr = 0x%X, size = %d, subdev = %d\n", __func__, __LINE__, memptr, emap[j].mem.addr, emap[j].mem.valid_size, e_ctrl->subdev_id);
 
-			if (e_ctrl->eeprom_device_type == MSM_CAMERA_I2C_DEVICE || e_ctrl->eeprom_device_type == MSM_CAMERA_SPI_DEVICE) {
+			if (e_ctrl->eeprom_device_type == MSM_CAMERA_I2C_DEVICE || e_ctrl->eeprom_device_type == MSM_CAMERA_SPI_DEVICE ||
+				e_ctrl->eeprom_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 				if(e_ctrl->eeprom_device_type == MSM_CAMERA_SPI_DEVICE && emap[j].mem.data_t == 0) {
 					continue;
 				}
@@ -783,6 +809,10 @@ static int eeprom_config_read_compressed_data(struct msm_eeprom_ctrl_t *e_ctrl,
 
 	if (e_ctrl->eeprom_device_type == MSM_CAMERA_I2C_DEVICE) {
 		max_size = I2C_BAM_MAX_SIZE;
+#if defined(CONFIG_USE_ACTUATOR_FPGA)
+	} else if (e_ctrl->eeprom_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
+		max_size = FPGA_I2C_MAX_SIZE;
+#endif
 	} else {
 		max_size = SPI_TRANSFER_MAX_SIZE;
 	}
@@ -997,6 +1027,10 @@ static int eeprom_config_write_data(struct msm_eeprom_ctrl_t *e_ctrl,
 
 	if (e_ctrl->eeprom_device_type == MSM_CAMERA_I2C_DEVICE) {
 		max_size = I2C_BAM_MAX_SIZE;
+#if defined(CONFIG_USE_ACTUATOR_FPGA)
+	} else if (e_ctrl->eeprom_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
+		max_size = FPGA_I2C_MAX_SIZE;
+#endif
 	} else {
 		max_size = SPI_TRANSFER_MAX_SIZE;
 	}
@@ -1185,6 +1219,10 @@ static int eeprom_config_read_data(struct msm_eeprom_ctrl_t *e_ctrl,
 
 	if (e_ctrl->eeprom_device_type == MSM_CAMERA_I2C_DEVICE) {
 		max_size = I2C_BAM_MAX_SIZE;
+#if defined(CONFIG_USE_ACTUATOR_FPGA)
+	} else if (e_ctrl->eeprom_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
+		max_size = FPGA_I2C_MAX_SIZE;
+#endif
 	} else {
 		max_size = SPI_TRANSFER_MAX_SIZE;
 	}
@@ -1446,6 +1484,7 @@ static int msm_eeprom_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 	CDBG("%s:%d E: subdevid: %d\n",__func__,__LINE__,e_ctrl->subdev_id);
 	cdata.cfgtype = cdata32->cfgtype;
 	CDBG("%s:%d cfgtype = %d\n", __func__, __LINE__, cdata.cfgtype);
+	mutex_lock(e_ctrl->eeprom_mutex);
 	switch (cdata.cfgtype) {
 	case CFG_EEPROM_GET_INFO:
 		CDBG("%s E CFG_EEPROM_GET_INFO: %d, %s\n",
@@ -1564,6 +1603,7 @@ static int msm_eeprom_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 	default:
 		break;
 	}
+	mutex_unlock(e_ctrl->eeprom_mutex);
 	CDBG("%s X rc: %d\n", __func__, rc);
 	return rc;
 }
@@ -1605,6 +1645,7 @@ static long msm_eeprom_subdev_fops_ioctl32(struct file *file, unsigned int cmd,
 
 #endif
 
+#if 0 // remove eebin. This is not used.
 static int msm_eeprom_cmm_dts(struct msm_eeprom_board_info *eb_info,
 				struct device_node *of_node)
 {
@@ -1636,7 +1677,7 @@ static int msm_eeprom_cmm_dts(struct msm_eeprom_board_info *eb_info,
 		cmm_data->cmm_size);
 	return 0;
 }
-
+#endif
 
 #define	MAX_RETRY		(3)
 static int msm_eeprom_spi_setup(struct spi_device *spi)
@@ -1798,18 +1839,6 @@ static int msm_eeprom_spi_setup(struct spi_device *spi)
 		}
 
 		if(b_ok == 1) {
-			rear_af_cal_pan = *((uint32_t *)&e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_PAN_ADDR]);
-			rear_af_cal_macro = *((uint32_t *)&e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_MACRO_ADDR]);
-			rear_af_cal_mid = *((uint32_t *)&e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_MID_ADDR]);
-			pr_info("rear_af_cal_pan: %d, rear_af_cal_macro: %d, rear_af_cal_mid: %d\n", rear_af_cal_pan, rear_af_cal_macro, rear_af_cal_mid);
-
-#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
-			rear2_af_cal_pan = *((uint32_t *)&e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_PAN_ADDR]);
-			rear2_af_cal_macro = *((uint32_t *)&e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_MACRO_ADDR]);
-			rear2_af_cal_mid = *((uint32_t *)&e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_MID_ADDR]);
-			pr_info("rear2_af_cal_pan: %d, rear2_af_cal_macro: %d, rear2_af_cal_mid: %d\n", rear2_af_cal_pan, rear2_af_cal_macro, rear2_af_cal_mid);
-#endif
-
 			/* read rear sensor id */
 			memcpy(rear_sensor_id, &e_ctrl->cal_data.mapdata[FROM_REAR_SENSOR_ID_ADDR], FROM_SENSOR_ID_SIZE);
 			rear_sensor_id[FROM_SENSOR_ID_SIZE] = '\0';
@@ -1834,11 +1863,102 @@ static int msm_eeprom_spi_setup(struct spi_device *spi)
 			rear_mtf_exif[FROM_MTF_SIZE] = '\0';
 			CDBG("%s : %d rear mtf exif = %s", __func__, e_ctrl->subdev_id, rear_mtf_exif);
 
+			/*rear af cal*/
+#if  defined(FROM_REAR_AF_CAL_MACRO_ADDR)
+			memcpy(&rear_af_cal[0], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_MACRO_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_PAN_ADDR)
+			memcpy(&rear_af_cal[9], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_PAN_ADDR], 4);
+#endif
+
 #if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
 			/* rear2 mtf exif */
 			memcpy(rear2_mtf_exif, &e_ctrl->cal_data.mapdata[FROM_REAR2_MTF_ADDR], FROM_MTF_SIZE);
 			rear2_mtf_exif[FROM_MTF_SIZE] = '\0';
 			CDBG("%s : %d rear2 mtf exif = %s", __func__, e_ctrl->subdev_id, rear2_mtf_exif);
+
+			/* rear dual cal */
+			memcpy(rear_dual_cal, &e_ctrl->cal_data.mapdata[FROM_REAR_DUAL_CAL_ADDR], FROM_REAR_DUAL_CAL_SIZE);
+			rear_dual_cal[FROM_REAR_DUAL_CAL_SIZE] = '\0';
+			CDBG("%s : %d rear dual cal = %s", __func__, e_ctrl->subdev_id, rear_dual_cal);
+
+			/* rear2 tilt */
+			memcpy(&rear2_dual_tilt_x, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_X], 4);
+			memcpy(&rear2_dual_tilt_y, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_Y], 4);
+			memcpy(&rear2_dual_tilt_z, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_Z], 4);
+			memcpy(&rear2_dual_tilt_sx, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_SX], 4);
+			memcpy(&rear2_dual_tilt_sy, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_SY], 4);
+			memcpy(&rear2_dual_tilt_range, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_RANGE], 4);
+			memcpy(&rear2_dual_tilt_max_err, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_MAX_ERR], 4);
+			memcpy(&rear2_dual_tilt_avg_err, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_AVG_ERR], 4);
+			memcpy(&rear2_dual_tilt_dll_ver, &e_ctrl->cal_data.mapdata[FROM_REAR2_DUAL_TILT_DLL_VERSION], 4);
+			CDBG("%s : %d rear dual tilt x = %d, y = %d, z = %d, sx = %d, sy = %d, range = %d, max_err = %d, avg_err = %d, dll_ver = %d\n",
+				__func__, e_ctrl->subdev_id, rear2_dual_tilt_x, rear2_dual_tilt_y, rear2_dual_tilt_z, rear2_dual_tilt_sx, rear2_dual_tilt_sy,
+				rear2_dual_tilt_range, rear2_dual_tilt_max_err, rear2_dual_tilt_avg_err, rear2_dual_tilt_dll_ver);
+
+			/*rear af cal*/
+#if  defined(FROM_REAR_AF_CAL_MACRO_ADDR)
+			memcpy(&rear_af_cal[0], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_MACRO_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_D10_ADDR)
+			memcpy(&rear_af_cal[1], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_D10_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_D20_ADDR)
+			memcpy(&rear_af_cal[2], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_D20_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_D30_ADDR)
+			memcpy(&rear_af_cal[3], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_D30_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_D40_ADDR)
+			memcpy(&rear_af_cal[4], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_D40_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_D50_ADDR)
+			memcpy(&rear_af_cal[5], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_D50_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_D60_ADDR)
+			memcpy(&rear_af_cal[6], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_D60_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_D70_ADDR)
+			memcpy(&rear_af_cal[7], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_D70_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_D80_ADDR)
+			memcpy(&rear_af_cal[8], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_D80_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_PAN_ADDR)
+			memcpy(&rear_af_cal[9], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_PAN_ADDR], 4);
+#endif
+
+			/*rear2 af cal*/
+#if  defined(FROM_REAR2_AF_CAL_MACRO_ADDR)
+			memcpy(&rear2_af_cal[0], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_MACRO_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_D10_ADDR)
+			memcpy(&rear2_af_cal[1], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_D10_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_D20_ADDR)
+			memcpy(&rear2_af_cal[2], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_D20_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_D30_ADDR)
+			memcpy(&rear2_af_cal[3], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_D30_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_D40_ADDR)
+			memcpy(&rear2_af_cal[4], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_D40_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_D50_ADDR)
+			memcpy(&rear2_af_cal[5], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_D50_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_D60_ADDR)
+			memcpy(&rear2_af_cal[6], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_D60_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_D70_ADDR)
+			memcpy(&rear2_af_cal[7], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_D70_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_D80_ADDR)
+			memcpy(&rear2_af_cal[8], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_D80_ADDR], 4);
+#endif
+#if  defined(FROM_REAR2_AF_CAL_PAN_ADDR)
+			memcpy(&rear2_af_cal[9], &e_ctrl->cal_data.mapdata[FROM_REAR2_AF_CAL_PAN_ADDR], 4);
+#endif
 #endif
 		}
 	}
@@ -1947,7 +2067,6 @@ static int msm_eeprom_spi_remove(struct spi_device *sdev)
 static int msm_eeprom_platform_probe(struct platform_device *pdev)
 {
 	int rc = 0;
-	int j = 0;
 	uint32_t temp;
 
 	struct msm_camera_cci_client *cci_client = NULL;
@@ -1983,6 +2102,7 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	}
 	e_ctrl->subdev_id = pdev->id;
 
+#if !defined(CONFIG_USE_ACTUATOR_FPGA)
 	rc = of_property_read_u32(of_node, "qcom,cci-master",
 		&e_ctrl->cci_master);
 	CDBG("qcom,cci-master %d, rc %d\n", e_ctrl->cci_master, rc);
@@ -1991,6 +2111,7 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		kfree(e_ctrl);
 		return rc;
 	}
+#endif
 	rc = of_property_read_u32(of_node, "qcom,slave-addr",
 		&temp);
 	if (rc < 0) {
@@ -1999,6 +2120,7 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		return rc;
 	}
 
+#if !defined(CONFIG_USE_ACTUATOR_FPGA)
 	rc = of_property_read_u32(of_node, "qcom,i2c-freq-mode",
 		&e_ctrl->i2c_freq_mode);
 	CDBG("qcom,i2c_freq_mode %d, rc %d\n", e_ctrl->i2c_freq_mode, rc);
@@ -2014,12 +2136,23 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		kfree(e_ctrl);
 		return -EINVAL;
 	}
+#else
+	e_ctrl->i2c_freq_mode = 0;
+#endif
 
 	/* Set platform device handle */
 	e_ctrl->pdev = pdev;
 	/* Set device type as platform device */
 	e_ctrl->eeprom_device_type = MSM_CAMERA_PLATFORM_DEVICE;
+
+#if defined(CONFIG_USE_ACTUATOR_FPGA)
+	e_ctrl->i2c_client.dev_id = 0x11; //front eeprom
+	e_ctrl->i2c_client.i2c_func_tbl = &msm_eeprom_fpga_iic_func_tbl;
+	e_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
+#else
 	e_ctrl->i2c_client.i2c_func_tbl = &msm_eeprom_cci_func_tbl;
+#endif
+
 	e_ctrl->i2c_client.cci_client = kzalloc(sizeof(
 		struct msm_camera_cci_client), GFP_KERNEL);
 	if (!e_ctrl->i2c_client.cci_client) {
@@ -2044,12 +2177,14 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	power_info->dev = &pdev->dev;
 
 
+#if !defined(CONFIG_USE_ACTUATOR_FPGA)
 	rc = of_property_read_u32(of_node, "qcom,i2c-freq-mode",
 		&eb_info->i2c_freq_mode);
 	if (rc < 0 || (eb_info->i2c_freq_mode >= I2C_MAX_MODES)) {
 		eb_info->i2c_freq_mode = I2C_STANDARD_MODE;
 		CDBG("%s Default I2C standard speed mode.\n", __func__);
 	}
+#endif
 
 	CDBG("qcom,slave-addr = 0x%X\n", eb_info->i2c_slaveaddr);
 	cci_client = e_ctrl->i2c_client.cci_client;
@@ -2070,9 +2205,11 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		goto board_free;
 	}
 
+#if 0	// remove eebin. This is not used.
 	rc = msm_eeprom_cmm_dts(e_ctrl->eboard_info, of_node);
 	if (rc < 0)
 		CDBG("%s MM data miss:%d\n", __func__, __LINE__);
+#endif
 
 	rc = msm_eeprom_get_dt_data(e_ctrl);
 	if (rc)
@@ -2088,6 +2225,10 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		pr_err("failed rc %d\n", rc);
 		goto memdata_free;
 	}
+
+#if 1 // To reduce booting time.
+	pr_info("%s: Skip front read eeprom in probe func\n", __func__);
+#else
 	rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
 	if (rc < 0) {
 		pr_err("%s read_eeprom_memory failed\n", __func__);
@@ -2098,6 +2239,7 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 			e_ctrl->cal_data.mapdata[j]);
 
 	e_ctrl->is_supported |= msm_eeprom_match_crc(&e_ctrl->cal_data, e_ctrl->subdev_id);
+#endif
 
 	rc = msm_camera_power_down(power_info, e_ctrl->eeprom_device_type,
 		&e_ctrl->i2c_client, false, SUB_DEVICE_TYPE_EEPROM);
@@ -2105,12 +2247,21 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		pr_err("failed rc %d\n", rc);
 		goto memdata_free;
 	}
+
+	if (0 > of_property_read_u32(of_node, "qcom,sensor-position",
+				&temp)) {
+		pr_err("%s:%d Fail position, Default sensor position\n", __func__, __LINE__);
+		temp = 0;
+	}
+	pr_err("%s qcom,sensor-position %d\n", __func__,temp);
+
 	v4l2_subdev_init(&e_ctrl->msm_sd.sd,
 		e_ctrl->eeprom_v4l2_subdev_ops);
 	v4l2_set_subdevdata(&e_ctrl->msm_sd.sd, e_ctrl);
 	platform_set_drvdata(pdev, &e_ctrl->msm_sd.sd);
 	e_ctrl->msm_sd.sd.internal_ops = &msm_eeprom_internal_ops;
 	e_ctrl->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	e_ctrl->msm_sd.sd.entity.flags = temp;
 	snprintf(e_ctrl->msm_sd.sd.name,
 		ARRAY_SIZE(e_ctrl->msm_sd.sd.name), "msm_eeprom");
 	media_entity_init(&e_ctrl->msm_sd.sd.entity, 0, NULL, 0);
@@ -2129,9 +2280,12 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	CDBG("%s X\n", __func__);
 	return rc;
 
+#if 0 // This is not used.
 power_down:
 	msm_camera_power_down(power_info, e_ctrl->eeprom_device_type,
 		&e_ctrl->i2c_client, false, SUB_DEVICE_TYPE_EEPROM);
+#endif
+
 memdata_free:
 	kfree(e_ctrl->cal_data.mapdata);
 	kfree(e_ctrl->cal_data.map);

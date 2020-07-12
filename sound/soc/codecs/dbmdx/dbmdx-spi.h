@@ -59,6 +59,7 @@ ssize_t send_spi_cmd_vqe(struct dbmdx_private *p,
 	u32 command, u16 *response);
 int spi_verify_boot_checksum(struct dbmdx_private *p,
 	const void *checksum, size_t chksum_len);
+int spi_verify_chip_id(struct dbmdx_private *p);
 int spi_common_probe(struct spi_device *client);
 int spi_common_remove(struct spi_device *client);
 int spi_set_speed(struct dbmdx_private *p, int index);

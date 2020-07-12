@@ -207,18 +207,14 @@ int ss_dsi_update_clock_contol_cmd(int time_update)
 		pload[18] = c_info->time_second % 60;
 		pload[19] = c_info->time_ms;
 
-		if (c_info->pos_x > pinfo->xres)
-			c_info->pos_x = pinfo->xres;
 		pload[20] = (c_info->pos_x >> 8) & 0xff;
 		pload[21] = c_info->pos_x & 0xff;
 
-		if (c_info->pos_x > pinfo->yres)
-			c_info->pos_y = pinfo->yres;
 		pload[22] = (c_info->pos_y >> 8) & 0xff;
 		pload[23] = c_info->pos_y & 0xff;
 
 		/* Update Self Drawer Command also */
-		pload_d[2] = ACTIVE_CLK_SELF_DRAWER_EN;
+		pload_d[2] = 0;
 
 		pload_d[30] = (c_info->pos_x >> 8) & 0xff;
 		pload_d[31] = c_info->pos_x & 0xff;

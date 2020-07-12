@@ -75,22 +75,22 @@ static ap_health_t *p_health;
  *
  */
 
-typedef enum
-{
-  LP4_SAMSUNG = 0x1,
-  LP4_NANYA = 0x5,
-  LP4_HYNIX = 0x6,
-  LP4_WINBOND = 0x8,
-  LP4_ESMT = 0x9,
-  LP4_FIDELIX = 0xF8,
-  LP4_APMEMORY = 0xFD,
-  LP4_MICRON = 0xFF,
+typedef enum {
+	LP4_SAMSUNG = 0x1,
+	LP4_NANYA = 0x5,
+	LP4_HYNIX = 0x6,
+	LP4_WINBOND = 0x8,
+	LP4_ESMT = 0x9,
+	LP4_FIDELIX = 0xF8,
+	LP4_APMEMORY = 0xFD,
+	LP4_MICRON = 0xFF,
 } LPDDR4_DDR_MANUFACTURES;
 
-static char* lpddr4_manufacture_name[] =
-{ [LP4_SAMSUNG] = "SEC", [LP4_NANYA] = "NAN", [LP4_HYNIX] = "HYP",
-  [LP4_WINBOND] = "WIN", [LP4_ESMT] = "ESM", [LP4_FIDELIX] = "FID",
-  [LP4_APMEMORY] = "APM", [LP4_MICRON] = "MIC"};
+static char *lpddr4_manufacture_name[] = {
+	[LP4_SAMSUNG] = "SEC", [LP4_NANYA] = "NAN", [LP4_HYNIX] = "HYP",
+	[LP4_WINBOND] = "WIN", [LP4_ESMT] = "ESM", [LP4_FIDELIX] = "FID",
+	[LP4_APMEMORY] = "APM", [LP4_MICRON] = "MIC"
+};
 
 char* get_ddr_vendor_name(void)
 {
@@ -105,17 +105,16 @@ char* get_ddr_vendor_name(void)
 		return "NA";
 	}
 
-	if (lpddr4_manufacture_name[vendor0->ddr_vendor & 0xFF]) {
+	if (lpddr4_manufacture_name[vendor0->ddr_vendor & 0xFF])
 		return lpddr4_manufacture_name[vendor0->ddr_vendor & 0xFF];
-	} else {
-		return "NA";
-	}
+
+	return "NA";
 }
 EXPORT_SYMBOL(get_ddr_vendor_name);
 
 uint8_t get_ddr_revision_id_1(void)
 {
-	unsigned size;
+	unsigned int size;
 	sec_smem_id_vendor0_v2_t *vendor0 = NULL;
 
 	vendor0 = smem_get_entry(SMEM_ID_VENDOR0, &size,
@@ -132,7 +131,7 @@ EXPORT_SYMBOL(get_ddr_revision_id_1);
 
 uint8_t get_ddr_revision_id_2(void)
 {
-	unsigned size;
+	unsigned int size;
 	sec_smem_id_vendor0_v2_t *vendor0 = NULL;
 
 	vendor0 = smem_get_entry(SMEM_ID_VENDOR0, &size,
@@ -149,7 +148,7 @@ EXPORT_SYMBOL(get_ddr_revision_id_2);
 
 uint8_t get_ddr_total_density(void)
 {
-	unsigned size;
+	unsigned int size;
 	sec_smem_id_vendor0_v2_t *vendor0 = NULL;
 
 	vendor0 = smem_get_entry(SMEM_ID_VENDOR0, &size,
@@ -166,8 +165,9 @@ EXPORT_SYMBOL(get_ddr_total_density);
 
 uint32_t get_ddr_DSF_version(void)
 {
-	unsigned size;
+	unsigned int size;
 	sec_smem_id_vendor1_v4_t *vendor1 = NULL;
+
 	vendor1 = smem_get_entry(SMEM_ID_VENDOR1, &size,
 					0, SMEM_ANY_HOST_FLAG);
 
@@ -179,6 +179,74 @@ uint32_t get_ddr_DSF_version(void)
 	return vendor1->ddr_training.version;
 }
 EXPORT_SYMBOL(get_ddr_DSF_version);
+
+uint16_t get_ddr_wr_eyeRect(uint32_t ch, uint32_t cs, uint32_t dq)
+{
+	unsigned int size;
+	sec_smem_id_vendor1_v4_t *vendor1 = NULL;
+
+	vendor1 = smem_get_entry(SMEM_ID_VENDOR1, &size,
+					0, SMEM_ANY_HOST_FLAG);
+
+	if (!vendor1 || !size) {
+		pr_err("%s: unable to read smem entry\n", __func__);
+		return 0;
+	}
+
+	return vendor1->ddr_training.wr_dqdqs_eye.rectangle[ch][cs][dq];
+}
+EXPORT_SYMBOL(get_ddr_wr_eyeRect);
+
+uint8_t get_ddr_wr_eyeVref(uint32_t ch, uint32_t cs, uint32_t dq)
+{
+	unsigned int size;
+	sec_smem_id_vendor1_v4_t *vendor1 = NULL;
+
+	vendor1 = smem_get_entry(SMEM_ID_VENDOR1, &size,
+					0, SMEM_ANY_HOST_FLAG);
+
+	if (!vendor1 || !size) {
+		pr_err("%s: unable to read smem entry\n", __func__);
+		return 0;
+	}
+
+	return vendor1->ddr_training.wr_dqdqs_eye.vref[ch][cs][dq];
+}
+EXPORT_SYMBOL(get_ddr_wr_eyeVref);
+
+uint8_t get_ddr_wr_eyeHeight(uint32_t ch, uint32_t cs, uint32_t dq)
+{
+	unsigned int size;
+	sec_smem_id_vendor1_v4_t *vendor1 = NULL;
+
+	vendor1 = smem_get_entry(SMEM_ID_VENDOR1, &size,
+					0, SMEM_ANY_HOST_FLAG);
+
+	if (!vendor1 || !size) {
+		pr_err("%s: unable to read smem entry\n", __func__);
+		return 0;
+	}
+
+	return vendor1->ddr_training.wr_dqdqs_eye.height[ch][cs][dq];
+}
+EXPORT_SYMBOL(get_ddr_wr_eyeRect);
+
+uint8_t get_ddr_wr_eyeWidth(uint32_t ch, uint32_t cs, uint32_t dq)
+{
+	unsigned int size;
+	sec_smem_id_vendor1_v4_t *vendor1 = NULL;
+
+	vendor1 = smem_get_entry(SMEM_ID_VENDOR1, &size,
+					0, SMEM_ANY_HOST_FLAG);
+
+	if (!vendor1 || !size) {
+		pr_err("%s: unable to read smem entry\n", __func__);
+		return 0;
+	}
+
+	return vendor1->ddr_training.wr_dqdqs_eye.width[ch][cs][dq];
+}
+EXPORT_SYMBOL(get_ddr_wr_eyeVref);
 
 uint8_t get_ddr_rcw_tDQSCK(uint32_t ch, uint32_t cs, uint32_t dq)
 {

@@ -161,6 +161,15 @@ config INPUT_PMIC8XXX_PWRKEY
 	  To compile this driver as a module, choose M here: the
 	  module will be called pmic8xxx-pwrkey.
 
+config INPUT_QPNP_POWER_ON
+	tristate "QPNP PMIC Power-on support"
+	depends on SPMI
+	help
+	  This option enables device driver support for the power-on
+	  functionality of Qualcomm Technologies, Inc. PNP PMICs.  It supports
+	  reporting the change in status of the KPDPWR_N line (connected to the
+	  power-key) as well as reset features.
+
 config INPUT_SPARCSPKR
 	tristate "SPARC Speaker support"
 	depends on PCI && SPARC64
@@ -824,5 +833,15 @@ config INPUT_DRV2667_HAPTICS
 	  module will be called drv2667-haptics.
 
 source "drivers/input/misc/ots_pat9125/Kconfig"
+
+config INPUT_STMVL53L0
+	tristate "STM VL53L0 Proximity support"
+	depends on INPUT && I2C
+	help
+	 Say Y here if you want to use STMicroelectronics's proximity sensor
+	 through I2C interface.
+
+	 To compile this driver as a module, choose M here: the
+	 module will be called stmvl53l0.
 
 endif

@@ -36,6 +36,9 @@
 #define ALERT_EN 0x04
 #define CAPACITY_SCALE_DEFAULT_CURRENT 1000
 #define CAPACITY_SCALE_HV_CURRENT 600
+#define SOH_CONTINUE_LIMIT 3
+#define SOH_MINUS_LIMIT 20
+#define SOH_LOW_LIMIT 30
 
 #define SW_RESET_CODE			0x00A6
 #define SW_RESET_OTP_CODE		0x01A6
@@ -66,6 +69,8 @@
 
 #define START_MQ                0x8000
 #define DUMP_MQ                 0x4000
+#define TH_SOC_INV              0x0A00
+#define SOH_RESET_FLAG          0x0400
 
 #define CNTL_REG_DEFAULT_VALUE  0x2008
 #define INIT_CHECK_MASK         0x0010
@@ -88,151 +93,165 @@ struct sm5720_fg_info {
 	u32 previous_fullcap;
 	u32 previous_vffullcap;
 
-    /* Device_id */
-    int device_id;
-    /* State Of Connect */
-    int online;
-    /* battery SOC (capacity) */
-    int batt_soc;
-    /* battery voltage */
-    int batt_voltage;
-    /* battery AvgVoltage */
-    int batt_avgvoltage;
-    /* battery OCV */
-    int batt_ocv;
-    /* Current */
-    int batt_current;
-    /* battery Avg Current */
-    int batt_avgcurrent;
-    /* battery SOC cycle */
-    int batt_soc_cycle;
+	/* full_cap estimate */
+	int estimated_full_cap;
+	int soh;
+	int nv_soh;
 
-    struct battery_data_t *comp_pdata;
+	/* Device_id */
+	int device_id;
+	/* State Of Connect */
+	int online;
+	/* battery SOC (capacity) */
+	int batt_soc;
+	/* battery voltage */
+	int batt_voltage;
+	/* battery AvgVoltage */
+	int batt_avgvoltage;
+	/* battery OCV */
+	int batt_ocv;
+	/* Current */
+	int batt_current;
+	/* battery Avg Current */
+	int batt_avgcurrent;
+	/* battery SOC cycle */
+	int batt_soc_cycle;
 
-    struct mutex param_lock;
-    /* copy from platform data /
-     * DTS or update by shell script */
+	struct battery_data_t *comp_pdata;
 
-    struct mutex io_lock;
-    struct device *dev;
-    int32_t temperature;; /* 0.1 deg C*/
-    int32_t temp_fg;; /* 0.1 deg C*/
-    /* register programming */
-    int reg_addr;
-    u8 reg_data[2];
+	struct mutex param_lock;
+	/* copy from platform data
+	 * DTS or update by shell script
+	 */
 
-    int battery_typ;        /*SDI_BATTERY_TYPE or ATL_BATTERY_TYPE*/
-    int batt_id_adc_check;
-    int battery_table[2][16];
+	struct mutex io_lock;
+	struct device *dev;
+	int32_t temperature;; /* 0.1 deg C*/
+	int32_t temp_fg;; /* 0.1 deg C*/
+	/* register programming */
+	int reg_addr;
+	u8 reg_data[2];
+
+	int battery_typ;        /*SDI_BATTERY_TYPE or ATL_BATTERY_TYPE*/
+	int batt_id_adc_check;
+	int battery_table[2][16];
+
 #ifdef CONFIG_BATTERY_AGE_FORECAST
-    int v_max_table[5];
-    int q_max_table[5];
-    int v_max_now;
-    int q_max_now;
+	int v_max_table[5];
+	int q_max_table[5];
+	int v_max_now;
+	int q_max_now;
 #endif
-    int full_mq_dump;
-    int full_eq_dump;	
-    int rce_value[3];
-    int dtcd_value;
-    int rs_value[5]; /*rs p_mix_factor n_mix_factor max min*/
-    int vit_period;
-    int mix_value[2]; /*mix_rate init_blank*/
-    int batt_v_max;
-    int misc;
-    int min_cap;
-    int cap;
-    int arsm[4];
+	int full_mq_dump;
+	int full_eq_dump;
+	int rce_value[3];
+	int dtcd_value;
+	int rs_value[5]; /*rs p_mix_factor n_mix_factor max min*/
+	int vit_period;
+	int mix_value[2]; /*mix_rate init_blank*/
+	int batt_v_max;
+	int misc;
+	int max_cap;
+	int min_cap;
+	int cap;
+	int arsm[4];
 
-    int enable_topoff_soc;
-    int topoff_soc;
-    int top_off;
+	int enable_topoff_soc;
+	int topoff_soc;
+	int top_off;
 
-    int cycle_high_limit;
-    int cycle_low_limit;
-    int cycle_limit_cntl;
+	int cycle_high_limit;
+	int cycle_low_limit;
+	int cycle_limit_cntl;
+	int soh_continue_val;
+	int soh_cycle;
 
-    int enable_v_offset_cancel_p;
-    int enable_v_offset_cancel_n;
-    int v_offset_cancel_level;
-    int v_offset_cancel_mohm;
+	int enable_v_offset_cancel_p;
+	int enable_v_offset_cancel_n;
+	int v_offset_cancel_level;
+	int v_offset_cancel_mohm;
 
-    int volt_cal;
-    int en_auto_i_offset;
-    int ecv_i_off;
-    int csp_i_off;
-    int csn_i_off;
-    int dp_ecv_i_off;
-    int dp_csp_i_off;
-    int dp_csn_i_off;
-    int ecv_i_slo;
-    int csp_i_slo;
-    int csn_i_slo;
-    int dp_ecv_i_slo;
-    int dp_csp_i_slo;
-    int dp_csn_i_slo;
+	int volt_cal;
+	int en_auto_i_offset;
+	int ecv_i_off;
+	int csp_i_off;
+	int csn_i_off;
+	int dp_ecv_i_off;
+	int dp_csp_i_off;
+	int dp_csn_i_off;
+	int ecv_i_slo;
+	int csp_i_slo;
+	int csn_i_slo;
+	int dp_ecv_i_slo;
+	int dp_csp_i_slo;
+	int dp_csn_i_slo;
 
-    int cntl_value;
+	int cntl_value;
+
 #ifdef ENABLE_FULL_OFFSET
-    int full_offset_margin;
-    int full_extra_offset;
+	int full_offset_margin;
+	int full_extra_offset;
 #endif
 
-    int temp_std;
-    int en_fg_temp_volcal;
-    int fg_temp_volcal_denom;
-    int fg_temp_volcal_fact;
-    int en_high_fg_temp_offset;
-    int high_fg_temp_offset_denom;
-    int high_fg_temp_offset_fact;
-    int en_low_fg_temp_offset;
-    int low_fg_temp_offset_denom;
-    int low_fg_temp_offset_fact;
-    int en_high_fg_temp_cal;
-    int high_fg_temp_p_cal_denom;
-    int high_fg_temp_p_cal_fact;
-    int high_fg_temp_n_cal_denom;
-    int high_fg_temp_n_cal_fact;
-    int en_low_fg_temp_cal;
-    int low_fg_temp_p_cal_denom;
-    int low_fg_temp_p_cal_fact;
-    int low_fg_temp_n_cal_denom;
-    int low_fg_temp_n_cal_fact;
-    int en_high_temp_cal;
-    int high_temp_p_cal_denom;
-    int high_temp_p_cal_fact;
-    int high_temp_n_cal_denom;
-    int high_temp_n_cal_fact;
-    int en_low_temp_cal;
-    int low_temp_p_cal_denom;
-    int low_temp_p_cal_fact;
-    int low_temp_n_cal_denom;
-    int low_temp_n_cal_fact;
+	int temp_std;
+	int en_fg_temp_volcal;
+	int fg_temp_volcal_denom;
+	int fg_temp_volcal_fact;
+	int en_high_fg_temp_offset;
+	int high_fg_temp_offset_denom;
+	int high_fg_temp_offset_fact;
+	int en_low_fg_temp_offset;
+	int low_fg_temp_offset_denom;
+	int low_fg_temp_offset_fact;
+	int en_high_fg_temp_cal;
+	int high_fg_temp_p_cal_denom;
+	int high_fg_temp_p_cal_fact;
+	int high_fg_temp_n_cal_denom;
+	int high_fg_temp_n_cal_fact;
+	int en_low_fg_temp_cal;
+	int low_fg_temp_p_cal_denom;
+	int low_fg_temp_p_cal_fact;
+	int low_fg_temp_n_cal_denom;
+	int low_fg_temp_n_cal_fact;
+	int en_high_temp_cal;
+	int high_temp_p_cal_denom;
+	int high_temp_p_cal_fact;
+	int high_temp_n_cal_denom;
+	int high_temp_n_cal_fact;
+	int en_low_temp_cal;
+	int low_temp_p_cal_denom;
+	int low_temp_p_cal_fact;
+	int low_temp_n_cal_denom;
+	int low_temp_n_cal_fact;
 
-    int data_ver;
-    uint32_t soc_alert_flag : 1;  /* 0 : nu-occur, 1: occur */
-    uint32_t volt_alert_flag : 1; /* 0 : nu-occur, 1: occur */
-    uint32_t flag_full_charge : 1; /* 0 : no , 1 : yes*/
-    uint32_t flag_chg_status : 1; /* 0 : discharging, 1: charging*/
-    uint32_t flag_charge_health : 1; /* 0 : no , 1 : good*/
+	int data_ver;
+	uint32_t soc_alert_flag : 1;  /* 0 : nu-occur, 1: occur */
+	uint32_t volt_alert_flag : 1; /* 0 : nu-occur, 1: occur */
+	uint32_t flag_full_charge : 1; /* 0 : no , 1 : yes*/
+	uint32_t flag_chg_status : 1; /* 0 : discharging, 1: charging*/
+	uint32_t flag_charge_health : 1; /* 0 : no , 1 : good*/
 
-    int32_t irq_ctrl;
-    int value_v_alarm;
+	int32_t irq_ctrl;
+	int value_v_alarm;
 
-    uint32_t is_FG_initialised;
-    int iocv_error_count;
+	uint32_t is_FG_initialised;
+	int iocv_error_count;
 
-    int n_tem_poff;
-    int n_tem_poff_offset;
-    int l_tem_poff;
-    int l_tem_poff_offset;
+	int n_tem_poff;
+	int n_tem_poff_offset;
+	int l_tem_poff;
+	int l_tem_poff_offset;
 
-    /* previous battery voltage current*/
-    int p_batt_voltage;
-    int p_batt_current;
+	/* previous battery voltage current*/
+	int p_batt_voltage;
+	int p_batt_current;
 
 	unsigned long fullcap_check_interval;
 	int full_check_flag;
 	bool is_first_check;
+
+    int v_correction;
+    int intercept_add;
 };
 
 #define CURRENT_RANGE_MAX_NUM	5

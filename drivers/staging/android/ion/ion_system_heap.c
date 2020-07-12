@@ -2,7 +2,7 @@
  * drivers/staging/android/ion/ion_system_heap.c
  *
  * Copyright (C) 2011 Google, Inc.
- * Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -42,6 +42,7 @@ static const unsigned int orders[] = {9, 8, 4, 0};
 static const unsigned int orders[] = {0};
 #endif
 
+static struct ion_system_heap *system_heap;
 static const int num_orders = ARRAY_SIZE(orders);
 static int order_to_index(unsigned int order)
 {
@@ -123,9 +124,11 @@ static struct page *alloc_buffer_page(struct ion_system_heap *heap,
 		gfp_t gfp_mask = low_order_gfp_flags;
 		if (order)
 			gfp_mask = high_order_gfp_flags;
+
 		page = alloc_pages(gfp_mask, order);
-		ion_pages_sync_for_device(dev, page, PAGE_SIZE << order,
-					  DMA_BIDIRECTIONAL);
+		if (page)
+			ion_pages_sync_for_device(dev, page, PAGE_SIZE << order,
+						  DMA_BIDIRECTIONAL);
 	}
 	if (!page)
 		return 0;
@@ -648,14 +651,13 @@ static struct ion_heap_ops system_heap_ops = {
 };
 
 static int ion_system_heap_debug_show(struct ion_heap *heap, struct seq_file *s,
-				      void *is_simple)
+				      void *unused)
 {
 
 	struct ion_system_heap *sys_heap = container_of(heap,
 							struct ion_system_heap,
 							heap);
 	bool use_seq = s != NULL;
-	bool simple = is_simple == (void *)0x1;
 	unsigned long uncached_total = 0;
 	unsigned long cached_total = 0;
 	unsigned long secure_total = 0;
@@ -664,7 +666,7 @@ static int ion_system_heap_debug_show(struct ion_heap *heap, struct seq_file *s,
 
 	for (i = 0; i < num_orders; i++) {
 		pool = sys_heap->uncached_pools[i];
-		if (use_seq && !simple) {
+		if (use_seq) {
 			seq_printf(s,
 				"%d order %u highmem pages in uncached pool = %lu total\n",
 				pool->high_count, pool->order,
@@ -685,7 +687,7 @@ static int ion_system_heap_debug_show(struct ion_heap *heap, struct seq_file *s,
 
 	for (i = 0; i < num_orders; i++) {
 		pool = sys_heap->cached_pools[i];
-		if (use_seq && !simple) {
+		if (use_seq) {
 			seq_printf(s,
 				"%d order %u highmem pages in cached pool = %lu total\n",
 				pool->high_count, pool->order,
@@ -709,7 +711,7 @@ static int ion_system_heap_debug_show(struct ion_heap *heap, struct seq_file *s,
 				continue;
 			pool = sys_heap->secure_pools[j][i];
 
-			if (use_seq && !simple) {
+			if (use_seq) {
 				seq_printf(s,
 					   "VMID %d: %d order %u highmem pages in secure pool = %lu total\n",
 					   j, pool->high_count, pool->order,
@@ -727,16 +729,6 @@ static int ion_system_heap_debug_show(struct ion_heap *heap, struct seq_file *s,
 			secure_total += (1 << pool->order) * PAGE_SIZE *
 					 pool->low_count;
 		}
-	}
-
-	if (simple) {
-		if (use_seq)
-			seq_printf(s, "SystemHeapPool: %8lu kB\n",
-				(uncached_total + cached_total) >> 10);
-		else
-			printk("SystemHeapPool:%lukB ",
-				(uncached_total + cached_total) >> 10);
-		return 0;
 	}
 
 	if (use_seq) {
@@ -758,13 +750,64 @@ static int ion_system_heap_debug_show(struct ion_heap *heap, struct seq_file *s,
 	return 0;
 }
 
+void show_ion_system_heap_pool_size_locked(struct seq_file *s)
+{
+	unsigned long uncached_total = 0;
+	unsigned long cached_total = 0;
+	unsigned long secure_total = 0;
+	struct ion_page_pool *pool;
+	int i, j;
+
+	if (!system_heap) {
+		pr_err("system_heap_pool is not ready\n");
+		return;
+	}
+
+	for (i = 0; i < num_orders; i++) {
+		pool = system_heap->uncached_pools[i];
+		uncached_total += (1 << pool->order) * PAGE_SIZE *
+			pool->high_count;
+		uncached_total += (1 << pool->order) * PAGE_SIZE *
+			pool->low_count;
+	}
+
+	for (i = 0; i < num_orders; i++) {
+		pool = system_heap->cached_pools[i];
+		cached_total += (1 << pool->order) * PAGE_SIZE *
+			pool->high_count;
+		cached_total += (1 << pool->order) * PAGE_SIZE *
+			pool->low_count;
+	}
+
+	for (i = 0; i < num_orders; i++) {
+		for (j = 0; j < VMID_LAST; j++) {
+			if (!is_secure_vmid_valid(j))
+				continue;
+			pool = system_heap->secure_pools[j][i];
+			secure_total += (1 << pool->order) * PAGE_SIZE *
+					 pool->high_count;
+			secure_total += (1 << pool->order) * PAGE_SIZE *
+					 pool->low_count;
+		}
+	}
+
+	if (s)
+		seq_printf(s, "SystemHeapPool: %8lu kB\n",
+			   (uncached_total + cached_total + secure_total)
+			   >> 10);
+	else
+		pr_cont("SystemHeapPool:%lukB ",
+			(uncached_total + cached_total + secure_total) >> 10);
+}
 
 static void ion_system_heap_destroy_pools(struct ion_page_pool **pools)
 {
 	int i;
 	for (i = 0; i < num_orders; i++)
-		if (pools[i])
+		if (pools[i]) {
 			ion_page_pool_destroy(pools[i]);
+			pools[i] = NULL;
+		}
 }
 
 /**
@@ -793,6 +836,24 @@ static int ion_system_heap_create_pools(struct device *dev,
 err_create_pool:
 	ion_system_heap_destroy_pools(pools);
 	return 1;
+}
+
+void show_ion_system_heap_size(struct seq_file *s)
+{
+	struct ion_heap *heap;
+	unsigned long system_byte = 0;
+
+	if (!system_heap) {
+		pr_err("system_heap is not ready\n");
+		return;
+	}
+
+	heap = &system_heap->heap;
+	system_byte = (unsigned int)atomic_read(&heap->total_allocated);
+	if (s)
+		seq_printf(s, "SystemHeap:     %8lu kB\n", system_byte >> 10);
+	else
+		pr_cont("SystemHeap:%lukB ", system_byte >> 10);
 }
 
 struct ion_heap *ion_system_heap_create(struct ion_platform_heap *data)
@@ -837,6 +898,10 @@ struct ion_heap *ion_system_heap_create(struct ion_platform_heap *data)
 	mutex_init(&heap->split_page_mutex);
 
 	heap->heap.debug_show = ion_system_heap_debug_show;
+	if (!system_heap)
+		system_heap = heap;
+	else
+		pr_err("system_heap had been already created\n");
 	return &heap->heap;
 
 err_create_cached_pools:

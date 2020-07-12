@@ -40,9 +40,9 @@
  * To allow proper structure padding for 64bit/32bit target
  */
 #ifdef __LP64
-#define MDP_LAYER_COMMIT_V1_PAD 3
+#define MDP_LAYER_COMMIT_V1_PAD 2
 #else
-#define MDP_LAYER_COMMIT_V1_PAD 4
+#define MDP_LAYER_COMMIT_V1_PAD 3
 #endif
 
 /**********************************************************************
@@ -125,6 +125,12 @@ DESTINATION SCALER FLAG CONFIGURATION
  */
 #define MDP_DESTSCALER_ENHANCER_UPDATE	0x4
 
+/*
+ * Indicating a partial update to panel ROI. ROI can be
+ * applied anytime when Destination scaler is enabled.
+ */
+#define MDP_DESTSCALER_ROI_ENABLE	0x8
+
 /**********************************************************************
 VALIDATE/COMMIT FLAG CONFIGURATION
 **********************************************************************/
@@ -160,6 +166,9 @@ VALIDATE/COMMIT FLAG CONFIGURATION
 /* Flag to indicate dual partial ROI update */
 #define MDP_COMMIT_PARTIAL_UPDATE_DUAL_ROI	0x20
 
+/* Flag to update brightness when commit */
+#define MDP_COMMIT_UPDATE_BRIGHTNESS		0x40
+
 /* Flag to enable concurrent writeback for the frame */
 #define MDP_COMMIT_CWB_EN 0x800
 
@@ -178,6 +187,77 @@ VALIDATE/COMMIT FLAG CONFIGURATION
 #define MDP_COMMIT_VERSION_1_0		0x00010000
 
 #define OUT_LAYER_COLOR_SPACE
+
+/* From CEA.861.3 */
+#define MDP_HDR_EOTF_SMTPE_ST2084	0x2
+#define MDP_HDR_EOTF_HLG		0x3
+
+/* From Vesa DPv1.4 - Pixel Encoding - Table 2-120 */
+#define MDP_PIXEL_ENCODING_RGB		0x0
+#define MDP_PIXEL_ENCODING_YCBCR_444	0x1
+#define MDP_PIXEL_ENCODING_YCBCR_422	0x2
+#define MDP_PIXEL_ENCODING_YCBCR_420	0x3
+#define MDP_PIXEL_ENCODING_Y_ONLY	0x4
+#define MDP_PIXEL_ENCODING_RAW		0x5
+
+/* From Vesa DPv1.4 - Colorimetry Formats - Table 2-120 */
+/* RGB - used with MDP_DP_PIXEL_ENCODING_RGB */
+#define MDP_COLORIMETRY_RGB_SRGB		0x0
+#define MDP_COLORIMETRY_RGB_WIDE_FIXED_POINT	0x1
+#define MDP_COLORIMETRY_RGB_WIDE_FLOAT_POINT	0x2
+#define MDP_COLORIMETRY_RGB_ADOBE		0x3
+#define MDP_COLORIMETRY_RGB_DPI_P3		0x4
+#define MDP_COLORIMETRY_RGB_CUSTOM		0x5
+#define MDP_COLORIMETRY_RGB_ITU_R_BT_2020	0x6
+
+/* YUV - used with MDP_DP_PIXEL_ENCODING_YCBCR(444 or 422 or 420) */
+#define MDP_COLORIMETRY_YCBCR_ITU_R_BT_601		0x0
+#define MDP_COLORIMETRY_YCBCR_ITU_R_BT_709		0x1
+#define MDP_COLORIMETRY_YCBCR_XV_YCC_601		0x2
+#define MDP_COLORIMETRY_YCBCR_XV_YCC_709		0x3
+#define MDP_COLORIMETRY_YCBCR_S_YCC_601		0x4
+#define MDP_COLORIMETRY_YCBCR_ADOBE_YCC_601		0x5
+#define MDP_COLORIMETRY_YCBCR_ITU_R_BT_2020_YCBCR_CONST	0x6
+#define MDP_COLORIMETRY_YCBCR_ITU_R_BT_2020_YCBCR	0x7
+
+/* Dynamic Range - Table 2-120 */
+/* Full range */
+#define MDP_DYNAMIC_RANGE_VESA	0x0
+/* Limited range */
+#define MDP_DYNAMIC_RANGE_CEA	0x1
+
+/* Bits per component(bpc) for Pixel encoding format RGB from Table 2-120 */
+#define MDP_RGB_6_BPC	0x0
+#define MDP_RGB_8_BPC	0x1
+#define MDP_RGB_10_BPC	0x2
+#define MDP_RGB_12_BPC	0x3
+#define MDP_RGB_16_BPC	0x4
+
+/*
+ * Bits per component(bpc) for Pixel encoding format YCbCr444, YCbCr422,
+ * YCbCr420 and Y only
+ * from Table 2-120
+ */
+#define MDP_YUV_8_BPC	0x1
+#define MDP_YUV_10_BPC	0x2
+#define MDP_YUV_12_BPC	0x3
+#define MDP_YUV_16_BPC	0x4
+
+/* Bits per component(bpc) for Pixel encoding format RAW from Table 2-120 */
+#define MDP_RAW_6_BPC	0x1
+#define MDP_RAW_7_BPC	0x2
+#define MDP_RAW_8_BPC	0x3
+#define MDP_RAW_10_BPC	0x4
+#define MDP_RAW_12_BPC	0x5
+#define MDP_RAW_14_BPC	0x6
+#define MDP_RAW16_BPC	0x7
+
+/* Content Type - Table 2-120 */
+#define MDP_CONTENT_TYPE_NOT_DEFINED	0x0
+#define MDP_CONTENT_TYPE_GRAPHICS		0x1
+#define MDP_CONTENT_TYPE_PHOTO			0x2
+#define MDP_CONTENT_TYPE_VIDEO		0x3
+#define MDP_CONTENT_TYPE_GAME		0x4
 
 /**********************************************************************
 Configuration structures
@@ -351,7 +431,8 @@ struct mdp_input_layer {
 	 */
 	int			error_code;
 
-	/*	 * For source pipes supporting multi-rectangle, this field identifies
+	/*
+	 * For source pipes supporting multi-rectangle, this field identifies
 	 * the rectangle index of the source pipe.
 	 */
 	uint32_t		rect_num;
@@ -416,6 +497,12 @@ struct mdp_destination_scaler_data {
 	 * A userspace pointer points to struct mdp_scale_data_v2.
 	 */
 	uint64_t	__user scale;
+
+	/*
+	 * Panel ROI is used when partial update is required in
+	 * current commit call.
+	 */
+	struct mdp_rect	panel_roi;
 };
 
 /*
@@ -496,6 +583,8 @@ struct mdp_layer_commit_v1 {
 	 */
 	uint32_t		dest_scaler_cnt;
 
+	/* Backlight level that would update when display commit */
+	uint32_t		bl_level;
 	/* MULTI_RESOLUTION
 	 * 0 : WQHD, 1 : FHD, 2 : HD
 	 */
@@ -713,4 +802,49 @@ struct mdp_set_cfg {
 	uint32_t len;
 	uint64_t __user payload;
 };
+
+#define HDR_PRIMARIES_COUNT 3
+
+#define MDP_HDR_STREAM
+
+struct mdp_hdr_stream {
+	uint32_t eotf;
+	uint32_t display_primaries_x[HDR_PRIMARIES_COUNT];
+	uint32_t display_primaries_y[HDR_PRIMARIES_COUNT];
+	uint32_t white_point_x;
+	uint32_t white_point_y;
+	uint32_t max_luminance;
+	uint32_t min_luminance;
+	uint32_t max_content_light_level;
+	uint32_t max_average_light_level;
+	/* DP related */
+	uint32_t pixel_encoding;
+	uint32_t colorimetry;
+	uint32_t range;
+	uint32_t bits_per_component;
+	uint32_t content_type;
+	uint32_t reserved[5];
+};
+
+/* hdr hdmi state takes possible values of 1, 2 and 4 respectively */
+#define HDR_ENABLE  (1 << 0)
+#define HDR_DISABLE (1 << 1)
+#define HDR_RESET   (1 << 2)
+
+/*
+ * HDR Control
+ * This encapsulates the HDR metadata as well as a state control
+ * for the HDR metadata as required by the HDMI spec to send the
+ * relevant metadata depending on the state of the HDR playback.
+ * hdr_state: Controls HDR state, takes values HDR_ENABLE, HDR_DISABLE
+ * and HDR_RESET.
+ * hdr_meta: Metadata sent by the userspace for the HDR clip.
+ */
+
+#define DRM_MSM_EXT_PANEL_HDR_CTRL
+struct mdp_hdr_stream_ctrl {
+	__u8 hdr_state;                   /* HDR state */
+	struct mdp_hdr_stream hdr_stream; /* HDR metadata */
+};
+
 #endif

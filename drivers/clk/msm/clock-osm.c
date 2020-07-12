@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -83,11 +83,13 @@ enum clk_osm_trace_packet_id {
 #define VERSION_REG 0x0
 
 #define OSM_TABLE_SIZE 40
+#define MAX_VIRTUAL_CORNER (OSM_TABLE_SIZE - 1)
 #define MAX_CLUSTER_CNT 2
 #define CORE_COUNT_VAL(val) ((val & GENMASK(18, 16)) >> 16)
 #define SINGLE_CORE 1
 #define MAX_CORE_COUNT 4
 #define LLM_SW_OVERRIDE_CNT 3
+#define OSM_SEQ_MINUS_ONE 0xff
 
 #define ENABLE_REG 0x1004
 #define INDEX_REG 0x1150
@@ -232,6 +234,8 @@ enum clk_osm_trace_packet_id {
 #define MSM8998V2_PWRCL_BOOT_RATE	1555200000
 #define MSM8998V2_PERFCL_BOOT_RATE	1728000000
 
+#define DEBUG_REG_NUM		3
+
 /* ACD registers */
 #define ACD_HW_VERSION		0x0
 #define ACDCR			0x4
@@ -341,6 +345,12 @@ struct osm_entry {
 	long frequency;
 };
 
+const char *clk_panic_reg_names[] = {"WDOG_DOMAIN_PSTATE_STATUS",
+				     "WDOG_PROGRAM_COUNTER",
+				     "APM_STATUS"};
+const int clk_panic_reg_offsets[] = {WDOG_DOMAIN_PSTATE_STATUS,
+				     WDOG_PROGRAM_COUNTER};
+
 static struct dentry *osm_debugfs_base;
 
 struct clk_osm {
@@ -351,6 +361,7 @@ struct clk_osm {
 	struct platform_device *vdd_dev;
 	void *vbases[NUM_BASES];
 	unsigned long pbases[NUM_BASES];
+	void __iomem *debug_regs[DEBUG_REG_NUM];
 	spinlock_t lock;
 
 	u32 cpu_reg_mask;
@@ -358,8 +369,10 @@ struct clk_osm {
 	u32 cluster_num;
 	u32 irq;
 	u32 apm_crossover_vc;
+	u32 apm_threshold_pre_vc;
 	u32 apm_threshold_vc;
 	u32 mem_acc_crossover_vc;
+	u32 mem_acc_threshold_pre_vc;
 	u32 mem_acc_threshold_vc;
 	u32 cycle_counter_reads;
 	u32 cycle_counter_delay;
@@ -595,6 +608,83 @@ static int clk_osm_acd_auto_local_write_reg(struct clk_osm *c, u32 mask)
 	return 0;
 }
 
+static int clk_osm_acd_init(struct clk_osm *c)
+{
+
+	int rc = 0;
+	u32 auto_xfer_mask = 0;
+
+	if (!c->acd_init)
+		return 0;
+
+	c->acd_debugfs_addr = ACD_HW_VERSION;
+
+	/* Program ACD tunable-length delay register */
+	clk_osm_acd_master_write_reg(c, c->acd_td, ACDTD);
+	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACDTD);
+
+	/* Program ACD control register */
+	clk_osm_acd_master_write_reg(c, c->acd_cr, ACDCR);
+	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACDCR);
+
+	/* Program ACD soft start control register */
+	clk_osm_acd_master_write_reg(c, c->acd_sscr, ACDSSCR);
+	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACDSSCR);
+
+	/* Program initial ACD external interface configuration register */
+	clk_osm_acd_master_write_reg(c, c->acd_extint0_cfg, ACD_EXTINT_CFG);
+	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACD_EXTINT_CFG);
+
+	/* Program ACD auto-register transfer control register */
+	clk_osm_acd_master_write_reg(c, c->acd_autoxfer_ctl, ACD_AUTOXFER_CTL);
+
+	/* Ensure writes complete before transfers to local copy */
+	clk_osm_acd_mb(c);
+
+	/* Transfer master copies */
+	rc = clk_osm_acd_auto_local_write_reg(c, auto_xfer_mask);
+	if (rc)
+		return rc;
+
+	/* Switch CPUSS clock source to ACD clock */
+	rc = clk_osm_acd_master_write_through_reg(c, ACD_GFMUX_CFG_SELECT,
+						  ACD_GFMUX_CFG);
+	if (rc)
+		return rc;
+
+	/* Program ACD_DCVS_SW */
+	rc = clk_osm_acd_master_write_through_reg(c,
+				  ACD_DCVS_SW_DCVS_IN_PRGR_SET,
+				  ACD_DCVS_SW);
+	if (rc)
+		return rc;
+
+	rc = clk_osm_acd_master_write_through_reg(c,
+				  ACD_DCVS_SW_DCVS_IN_PRGR_CLEAR,
+				  ACD_DCVS_SW);
+	if (rc)
+		return rc;
+
+	udelay(1);
+
+	/* Program final ACD external interface configuration register */
+	rc = clk_osm_acd_master_write_through_reg(c, c->acd_extint1_cfg,
+						  ACD_EXTINT_CFG);
+	if (rc)
+		return rc;
+
+	/*
+	 * ACDCR, ACDTD, ACDSSCR, ACD_EXTINT_CFG, ACD_GFMUX_CFG
+	 * must be copied from master to local copy on PC exit.
+	 */
+	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACD_GFMUX_CFG);
+	clk_osm_acd_master_write_reg(c, auto_xfer_mask, ACD_AUTOXFER_CFG);
+
+	/* ACD has been initialized and enabled for this cluster */
+	c->acd_init = false;
+	return 0;
+}
+
 static inline int clk_osm_count_ns(struct clk_osm *c, u64 nsec)
 {
 	u64 temp;
@@ -767,6 +857,17 @@ static int clk_osm_set_rate(struct clk *c, unsigned long rate)
 static int clk_osm_enable(struct clk *c)
 {
 	struct clk_osm *cpuclk = to_clk_osm(c);
+	int rc;
+
+	rc = clk_osm_acd_init(cpuclk);
+	if (rc) {
+		pr_err("Failed to initialize ACD for cluster %d, rc=%d\n",
+						cpuclk->cluster_num, rc);
+		return rc;
+	}
+
+	/* Wait for 5 usecs before enabling OSM */
+	udelay(5);
 
 	clk_osm_write_reg(cpuclk, 1, ENABLE_REG);
 
@@ -1417,11 +1518,69 @@ static int clk_osm_resources_init(struct platform_device *pdev)
 			return -ENOMEM;
 		}
 		perfcl_clk.pbases[ACD_BASE] = pbase;
-		pwrcl_clk.acd_debugfs_addr_size = resource_size(res);
+		perfcl_clk.acd_debugfs_addr_size = resource_size(res);
 		perfcl_clk.vbases[ACD_BASE] = vbase;
 		perfcl_clk.acd_init = true;
 	} else {
 		perfcl_clk.acd_init = false;
+	}
+
+	pwrcl_clk.debug_regs[0] = devm_ioremap(&pdev->dev,
+					       pwrcl_clk.pbases[OSM_BASE] +
+					       clk_panic_reg_offsets[0],
+					       0x4);
+	if (!pwrcl_clk.debug_regs[0]) {
+		dev_err(&pdev->dev, "Failed to map %s debug register\n",
+			clk_panic_reg_names[0]);
+		return -ENOMEM;
+	}
+
+	pwrcl_clk.debug_regs[1] = devm_ioremap(&pdev->dev,
+					       pwrcl_clk.pbases[OSM_BASE] +
+					       clk_panic_reg_offsets[1],
+					       0x4);
+	if (!pwrcl_clk.debug_regs[1]) {
+		dev_err(&pdev->dev, "Failed to map %s debug register\n",
+			clk_panic_reg_names[1]);
+		return -ENOMEM;
+	}
+
+	pwrcl_clk.debug_regs[2] = devm_ioremap(&pdev->dev,
+					       pwrcl_clk.apm_ctrl_status,
+					       0x4);
+	if (!pwrcl_clk.debug_regs[2]) {
+		dev_err(&pdev->dev, "Failed to map %s debug register\n",
+			clk_panic_reg_names[2]);
+		return -ENOMEM;
+	}
+
+	perfcl_clk.debug_regs[0] = devm_ioremap(&pdev->dev,
+						perfcl_clk.pbases[OSM_BASE] +
+						clk_panic_reg_offsets[0],
+						0x4);
+	if (!perfcl_clk.debug_regs[0]) {
+		dev_err(&pdev->dev, "Failed to map %s debug register\n",
+			clk_panic_reg_names[0]);
+		return -ENOMEM;
+	}
+
+	perfcl_clk.debug_regs[1] = devm_ioremap(&pdev->dev,
+						perfcl_clk.pbases[OSM_BASE] +
+						clk_panic_reg_offsets[1],
+						0x4);
+	if (!perfcl_clk.debug_regs[1]) {
+		dev_err(&pdev->dev, "Failed to map %s debug register\n",
+			clk_panic_reg_names[1]);
+		return -ENOMEM;
+	}
+
+	perfcl_clk.debug_regs[2] = devm_ioremap(&pdev->dev,
+						perfcl_clk.apm_ctrl_status,
+						0x4);
+	if (!perfcl_clk.debug_regs[2]) {
+		dev_err(&pdev->dev, "Failed to map %s debug register\n",
+			clk_panic_reg_names[2]);
+		return -ENOMEM;
 	}
 
 	vdd_pwrcl = devm_regulator_get(&pdev->dev, "vdd-pwrcl");
@@ -1523,8 +1682,8 @@ static int clk_osm_setup_hw_table(struct clk_osm *c)
 {
 	struct osm_entry *entry = c->osm_table;
 	int i;
-	u32 freq_val, volt_val, override_val, spare_val;
-	u32 table_entry_offset, last_spare, last_virtual_corner = 0;
+	u32 freq_val = 0, volt_val = 0, override_val = 0, spare_val = 0;
+	u32 table_entry_offset = 0, last_spare = 0, last_virtual_corner = 0;
 
 	for (i = 0; i < OSM_TABLE_SIZE; i++) {
 		if (i < c->num_entries) {
@@ -1631,8 +1790,24 @@ static int clk_osm_resolve_crossover_corners(struct clk_osm *c,
 
 		if (corner_volt >= apm_threshold) {
 			c->apm_threshold_vc = c->osm_table[i].virtual_corner;
+			/*
+			 * Handle case where VC 0 has open-loop
+			 * greater than or equal to APM threshold voltage.
+			 */
+			c->apm_threshold_pre_vc = c->apm_threshold_vc ?
+				c->apm_threshold_vc - 1 : OSM_SEQ_MINUS_ONE;
 			break;
 		}
+	}
+
+	/*
+	 * This assumes the OSM table uses corners
+	 * 0 to MAX_VIRTUAL_CORNER - 1.
+	 */
+	if (!c->apm_threshold_vc &&
+	    c->apm_threshold_pre_vc != OSM_SEQ_MINUS_ONE) {
+		c->apm_threshold_vc = MAX_VIRTUAL_CORNER;
+		c->apm_threshold_pre_vc = c->apm_threshold_vc - 1;
 	}
 
 	/* Determine MEM ACC threshold virtual corner */
@@ -1645,8 +1820,29 @@ static int clk_osm_resolve_crossover_corners(struct clk_osm *c,
 			if (corner_volt >= mem_acc_threshold) {
 				c->mem_acc_threshold_vc
 					= c->osm_table[i].virtual_corner;
+				/*
+				 * Handle case where VC 0 has open-loop
+				 * greater than or equal to MEM-ACC threshold
+				 * voltage.
+				 */
+				c->mem_acc_threshold_pre_vc =
+					c->mem_acc_threshold_vc ?
+					c->mem_acc_threshold_vc - 1 :
+					OSM_SEQ_MINUS_ONE;
 				break;
 			}
+		}
+
+		/*
+		 * This assumes the OSM table uses corners
+		 * 0 to MAX_VIRTUAL_CORNER - 1.
+		 */
+		if (!c->mem_acc_threshold_vc && c->mem_acc_threshold_pre_vc
+		    != OSM_SEQ_MINUS_ONE) {
+			c->mem_acc_threshold_vc =
+				MAX_VIRTUAL_CORNER;
+			c->mem_acc_threshold_pre_vc =
+				c->mem_acc_threshold_vc - 1;
 		}
 	}
 
@@ -1903,9 +2099,9 @@ static int clk_osm_set_llm_volt_policy(struct platform_device *pdev)
 
 	/* Enable or disable LLM VOLT DVCS */
 	regval = val | clk_osm_read_reg(&pwrcl_clk, LLM_INTF_DCVS_DISABLE);
-	clk_osm_write_reg(&pwrcl_clk, val, LLM_INTF_DCVS_DISABLE);
+	clk_osm_write_reg(&pwrcl_clk, regval, LLM_INTF_DCVS_DISABLE);
 	regval = val | clk_osm_read_reg(&perfcl_clk, LLM_INTF_DCVS_DISABLE);
-	clk_osm_write_reg(&perfcl_clk, val, LLM_INTF_DCVS_DISABLE);
+	clk_osm_write_reg(&perfcl_clk, regval, LLM_INTF_DCVS_DISABLE);
 
 	/* Wait for the writes to complete */
 	clk_osm_mb(&perfcl_clk, OSM_BASE);
@@ -1998,13 +2194,20 @@ static void clk_osm_program_mem_acc_regs(struct clk_osm *c)
 		 * highest MEM ACC threshold if it is specified instead of the
 		 * fixed mapping in the LUT.
 		 */
-		if (c->mem_acc_threshold_vc) {
-			threshold_vc[2] = c->mem_acc_threshold_vc - 1;
+		if (c->mem_acc_threshold_vc || c->mem_acc_threshold_pre_vc
+		    == OSM_SEQ_MINUS_ONE) {
+			threshold_vc[2] = c->mem_acc_threshold_pre_vc;
 			threshold_vc[3] = c->mem_acc_threshold_vc;
-			if (threshold_vc[1] >= threshold_vc[2])
-				threshold_vc[1] = threshold_vc[2] - 1;
-			if (threshold_vc[0] >= threshold_vc[1])
-				threshold_vc[0] = threshold_vc[1] - 1;
+
+			if (c->mem_acc_threshold_pre_vc == OSM_SEQ_MINUS_ONE) {
+				threshold_vc[1] = threshold_vc[0] =
+					c->mem_acc_threshold_pre_vc;
+			} else {
+				if (threshold_vc[1] >= threshold_vc[2])
+					threshold_vc[1] = threshold_vc[2] - 1;
+				if (threshold_vc[0] >= threshold_vc[1])
+					threshold_vc[0] = threshold_vc[1] - 1;
+			}
 		}
 
 		scm_io_write(c->pbases[OSM_BASE] + SEQ_REG(55),
@@ -2022,7 +2225,8 @@ static void clk_osm_program_mem_acc_regs(struct clk_osm *c)
 	 * Program L_VAL corresponding to the first virtual
 	 * corner with MEM ACC level 3.
 	 */
-	if (c->mem_acc_threshold_vc)
+	if (c->mem_acc_threshold_vc ||
+	    c->mem_acc_threshold_pre_vc == OSM_SEQ_MINUS_ONE)
 		for (i = 0; i < c->num_entries; i++)
 			if (c->mem_acc_threshold_vc == table[i].virtual_corner)
 				scm_io_write(c->pbases[OSM_BASE] + SEQ_REG(32),
@@ -2342,8 +2546,7 @@ static void clk_osm_apm_vc_setup(struct clk_osm *c)
 				  SEQ_REG(8));
 		clk_osm_write_reg(c, c->apm_threshold_vc,
 				  SEQ_REG(15));
-		clk_osm_write_reg(c, c->apm_threshold_vc != 0 ?
-				  c->apm_threshold_vc - 1 : 0xff,
+		clk_osm_write_reg(c, c->apm_threshold_pre_vc,
 				  SEQ_REG(31));
 		clk_osm_write_reg(c, 0x3b | c->apm_threshold_vc << 6,
 				  SEQ_REG(73));
@@ -2367,8 +2570,7 @@ static void clk_osm_apm_vc_setup(struct clk_osm *c)
 		scm_io_write(c->pbases[OSM_BASE] + SEQ_REG(15),
 			     c->apm_threshold_vc);
 		scm_io_write(c->pbases[OSM_BASE] + SEQ_REG(31),
-			     c->apm_threshold_vc != 0 ?
-			     c->apm_threshold_vc - 1 : 0xff);
+			     c->apm_threshold_pre_vc);
 		scm_io_write(c->pbases[OSM_BASE] + SEQ_REG(76),
 			     0x39 | c->apm_threshold_vc << 6);
 	}
@@ -2552,7 +2754,7 @@ static u64 clk_osm_get_cpu_cycle_counter(int cpu)
 	}
 
 	spin_lock_irqsave(&c->lock, flags);
-	val = clk_osm_read_reg(c, OSM_CYCLE_COUNTER_STATUS_REG);
+	val = clk_osm_read_reg_no_log(c, OSM_CYCLE_COUNTER_STATUS_REG);
 
 	if (val < c->prev_cycle_counter) {
 		/* Handle counter overflow */
@@ -2697,7 +2899,7 @@ static ssize_t debugfs_trace_method_get(struct file *file, char __user *buf,
 					size_t count, loff_t *ppos)
 {
 	struct clk_osm *c = file->private_data;
-	int len, rc;
+	int len = 0, rc;
 
 	if (IS_ERR(file) || file == NULL) {
 		pr_err("input error %ld\n", PTR_ERR(file));
@@ -2911,6 +3113,7 @@ static int debugfs_get_debug_reg_addr(void *data, u64 *val)
 	}
 
 	*val = c->acd_debugfs_addr;
+
 	return 0;
 }
 
@@ -3053,114 +3256,19 @@ static int clk_osm_panic_callback(struct notifier_block *nfb,
 				  unsigned long event,
 				  void *data)
 {
-	void __iomem *virt_addr;
-	u32 value, reg;
+	int i;
+	u32 value;
 	struct clk_osm *c = container_of(nfb,
 					 struct clk_osm,
 					 panic_notifier);
 
-	reg = c->pbases[OSM_BASE] + WDOG_DOMAIN_PSTATE_STATUS;
-	virt_addr = ioremap(reg, 0x4);
-	if (virt_addr != NULL) {
-		value = readl_relaxed(virt_addr);
-		pr_err("DOM%d_PSTATE_STATUS[0x%08x]=0x%08x\n", c->cluster_num,
-		       reg, value);
-		iounmap(virt_addr);
-	}
-
-	reg = c->pbases[OSM_BASE] + WDOG_PROGRAM_COUNTER;
-	virt_addr = ioremap(reg, 0x4);
-	if (virt_addr != NULL) {
-		value = readl_relaxed(virt_addr);
-		pr_err("DOM%d_PROGRAM_COUNTER[0x%08x]=0x%08x\n", c->cluster_num,
-		       reg, value);
-		iounmap(virt_addr);
-	}
-
-	virt_addr = ioremap(c->apm_ctrl_status, 0x4);
-	if (virt_addr != NULL) {
-		value = readl_relaxed(virt_addr);
-		pr_err("APM_CTLER_STATUS_%d[0x%08x]=0x%08x\n", c->cluster_num,
-		       c->apm_ctrl_status, value);
-		iounmap(virt_addr);
+	for (i = 0; i < DEBUG_REG_NUM; i++) {
+		value = readl_relaxed(c->debug_regs[i]);
+		pr_err("%s_%d=0x%08x\n", clk_panic_reg_names[i],
+		       c->cluster_num, value);
 	}
 
 	return NOTIFY_OK;
-}
-
-static int clk_osm_acd_init(struct clk_osm *c)
-{
-
-	int rc = 0;
-	u32 auto_xfer_mask = 0;
-
-	if (!c->acd_init)
-		return 0;
-
-	c->acd_debugfs_addr = ACD_HW_VERSION;
-
-	/* Program ACD tunable-length delay register */
-	clk_osm_acd_master_write_reg(c, c->acd_td, ACDTD);
-	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACDTD);
-
-	/* Program ACD control register */
-	clk_osm_acd_master_write_reg(c, c->acd_cr, ACDCR);
-	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACDCR);
-
-	/* Program ACD soft start control register */
-	clk_osm_acd_master_write_reg(c, c->acd_sscr, ACDSSCR);
-	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACDSSCR);
-
-	/* Program initial ACD external interface configuration register */
-	clk_osm_acd_master_write_reg(c, c->acd_extint0_cfg, ACD_EXTINT_CFG);
-	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACD_EXTINT_CFG);
-
-	/* Program ACD auto-register transfer control register */
-	clk_osm_acd_master_write_reg(c, c->acd_autoxfer_ctl, ACD_AUTOXFER_CTL);
-
-	/* Ensure writes complete before transfers to local copy */
-	clk_osm_acd_mb(c);
-
-	/* Transfer master copies */
-	rc = clk_osm_acd_auto_local_write_reg(c, auto_xfer_mask);
-	if (rc)
-		return rc;
-
-	/* Switch CPUSS clock source to ACD clock */
-	rc = clk_osm_acd_master_write_through_reg(c, ACD_GFMUX_CFG_SELECT,
-						  ACD_GFMUX_CFG);
-	if (rc)
-		return rc;
-
-	/* Program ACD_DCVS_SW */
-	rc = clk_osm_acd_master_write_through_reg(c,
-				  ACD_DCVS_SW_DCVS_IN_PRGR_SET,
-				  ACD_DCVS_SW);
-	if (rc)
-		return rc;
-
-	rc = clk_osm_acd_master_write_through_reg(c,
-				  ACD_DCVS_SW_DCVS_IN_PRGR_CLEAR,
-				  ACD_DCVS_SW);
-	if (rc)
-		return rc;
-
-	udelay(1);
-
-	/* Program final ACD external interface configuration register */
-	rc = clk_osm_acd_master_write_through_reg(c, c->acd_extint1_cfg,
-						  ACD_EXTINT_CFG);
-	if (rc)
-		return rc;
-
-	/*
-	 * ACDCR, ACDTD, ACDSSCR, ACD_EXTINT_CFG, ACD_GFMUX_CFG
-	 * must be copied from master to local copy on PC exit.
-	 */
-	auto_xfer_mask |= ACD_REG_RELATIVE_ADDR_BITMASK(ACD_GFMUX_CFG);
-	clk_osm_acd_master_write_reg(c, auto_xfer_mask, ACD_AUTOXFER_CFG);
-
-	return 0;
 }
 
 static unsigned long init_rate = 300000000;
@@ -3185,17 +3293,17 @@ static int cpu_clock_osm_driver_probe(struct platform_device *pdev)
 		msm8998_v2 = true;
 	}
 
+	rc = clk_osm_parse_dt_configs(pdev);
+	if (rc) {
+		dev_err(&pdev->dev, "Unable to parse device tree configurations\n");
+		return rc;
+	}
+
 	rc = clk_osm_resources_init(pdev);
 	if (rc) {
 		if (rc != -EPROBE_DEFER)
 			dev_err(&pdev->dev, "resources init failed, rc=%d\n",
 				rc);
-		return rc;
-	}
-
-	rc = clk_osm_parse_dt_configs(pdev);
-	if (rc) {
-		dev_err(&pdev->dev, "Unable to parse device tree configurations\n");
 		return rc;
 	}
 
@@ -3274,9 +3382,10 @@ static int cpu_clock_osm_driver_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	rc = clk_osm_resolve_crossover_corners(&pwrcl_clk, pdev, NULL);
+	rc = clk_osm_resolve_crossover_corners(&pwrcl_clk, pdev,
+			       "qcom,pwrcl-apcs-mem-acc-threshold-voltage");
 	if (rc)
-		dev_info(&pdev->dev, "No APM crossover corner programmed\n");
+		dev_info(&pdev->dev, "No MEM-ACC crossover corner programmed\n");
 
 	rc = clk_osm_resolve_crossover_corners(&perfcl_clk, pdev,
 				"qcom,perfcl-apcs-mem-acc-threshold-voltage");
@@ -3354,17 +3463,6 @@ static int cpu_clock_osm_driver_probe(struct platform_device *pdev)
 				  "qcom,osm-pll-setup")) {
 		clk_osm_setup_cluster_pll(&pwrcl_clk);
 		clk_osm_setup_cluster_pll(&perfcl_clk);
-	}
-
-	rc = clk_osm_acd_init(&pwrcl_clk);
-	if (rc) {
-		pr_err("failed to initialize ACD for pwrcl, rc=%d\n", rc);
-		return rc;
-	}
-	rc = clk_osm_acd_init(&perfcl_clk);
-	if (rc) {
-		pr_err("failed to initialize ACD for perfcl, rc=%d\n", rc);
-		return rc;
 	}
 
 	spin_lock_init(&pwrcl_clk.lock);

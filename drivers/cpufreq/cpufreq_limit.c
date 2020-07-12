@@ -736,13 +736,13 @@ static int __init cpufreq_limit_init(void)
 	if (ret)
 		return ret;
 
-	if (!cpufreq_global_kobject) {
+	if (cpufreq_global_kobject) {
+		pr_info("%s: sysfs_create_group\n", __func__);
 		ret = sysfs_create_group(cpufreq_global_kobject,
 				&limit_attr_group);
+		if (ret)
+			pr_err("%s: failed\n", __func__);
 	}
-
-	if (ret)
-		cpufreq_put_global_kobject();
 
 	return ret;
 }
@@ -753,7 +753,6 @@ static void __exit cpufreq_limit_exit(void)
 			CPUFREQ_POLICY_NOTIFIER);
 
 	sysfs_remove_group(cpufreq_global_kobject, &limit_attr_group);
-	cpufreq_put_global_kobject();
 }
 
 MODULE_AUTHOR("Minsung Kim <ms925.kim@samsung.com>");

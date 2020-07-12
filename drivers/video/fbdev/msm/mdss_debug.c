@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -43,6 +43,42 @@
 #define NEXT_VALUE_OFFSET 3
 
 #define INVALID_XIN_ID     0xFF
+
+static u32 dsi_dbg_bus_sdm660[] = {
+	0x0001, 0x1001, 0x0001, 0x0011,
+	0x1021, 0x0021, 0x0031, 0x0041,
+	0x0051, 0x0061, 0x3061, 0x0061,
+	0x2061, 0x2061, 0x1061, 0x1061,
+	0x1061, 0x0071, 0x0071, 0x0071,
+	0x0081, 0x0081, 0x00A1, 0x00A1,
+	0x10A1, 0x20A1, 0x30A1, 0x10A1,
+	0x10A1, 0x30A1, 0x20A1, 0x00B1,
+	0x00C1, 0x00C1, 0x10C1, 0x20C1,
+	0x30C1, 0x00D1, 0x00D1, 0x20D1,
+	0x30D1, 0x00E1, 0x00E1, 0x00E1,
+	0x00F1, 0x00F1, 0x0101, 0x0101,
+	0x1101, 0x2101, 0x3101, 0x0111,
+	0x0141, 0x1141, 0x0141, 0x1141,
+	0x1141, 0x0151, 0x0151, 0x1151,
+	0x2151, 0x3151, 0x0161, 0x0161,
+	0x1161, 0x0171, 0x0171, 0x0181,
+	0x0181, 0x0191, 0x0191, 0x01A1,
+	0x01A1, 0x01B1, 0x01B1, 0x11B1,
+	0x21B1, 0x01C1, 0x01C1, 0x11C1,
+	0x21C1, 0x31C1, 0x01D1, 0x01D1,
+	0x01D1, 0x01D1, 0x11D1, 0x21D1,
+	0x21D1, 0x01E1, 0x01E1, 0x01F1,
+	0x01F1, 0x0201, 0x0201, 0x0211,
+	0x0221, 0x0231, 0x0241, 0x0251,
+	0x0281, 0x0291, 0x0281, 0x0291,
+	0x02A1, 0x02B1, 0x02C1, 0x0321,
+	0x0321, 0x1321, 0x2321, 0x3321,
+	0x0331, 0x0331, 0x1331, 0x0341,
+	0x0341, 0x1341, 0x2341, 0x3341,
+	0x0351, 0x0361, 0x0361, 0x1361,
+	0x2361, 0x0371, 0x0381, 0x0391,
+	0x03C1, 0x03D1, 0x03E1, 0x03F1,
+};
 
 static DEFINE_MUTEX(mdss_debug_lock);
 
@@ -181,7 +217,8 @@ static ssize_t panel_debug_base_reg_write(struct file *file,
 			break;
 		}
 		/* End of a hex value in given string */
-		bufp[NEXT_VALUE_OFFSET - 1] = 0;
+		if ((bufp + NEXT_VALUE_OFFSET - 1) < (buf + count))
+			bufp[NEXT_VALUE_OFFSET - 1] = 0;
 	}
 	if (len < PANEL_CMD_MIN_TX_COUNT) {
 		pr_err("wrong input reg len\n");
@@ -417,6 +454,9 @@ static ssize_t mdss_debug_base_offset_write(struct file *file,
 
 	sscanf(buf, "%5x %x", &off, &cnt);
 
+	if (off % sizeof(u32))
+		return -EINVAL;
+
 	if (off > dbg->max_offset)
 		return -EINVAL;
 
@@ -489,6 +529,9 @@ static ssize_t mdss_debug_base_reg_write(struct file *file,
 	if (cnt < 2)
 		return -EFAULT;
 
+	if (off % sizeof(u32))
+		return -EFAULT;
+
 	if (off >= dbg->max_offset)
 		return -EFAULT;
 
@@ -533,6 +576,9 @@ static ssize_t mdss_debug_base_reg_read(struct file *file,
 			mutex_unlock(&mdss_debug_lock);
 			return -ENOMEM;
 		}
+
+		if (dbg->off % sizeof(u32))
+			return -EFAULT;
 
 		ptr = dbg->base + dbg->off;
 		tot = 0;
@@ -1040,7 +1086,7 @@ static ssize_t mdss_debug_perf_bw_limit_read(struct file *file,
 	struct mdss_data_type *mdata = file->private_data;
 	struct mdss_max_bw_settings *temp_settings;
 	int len = 0, i;
-	char buf[256];
+	char buf[256] = {'\0'};
 
 	if (!mdata)
 		return -ENODEV;
@@ -1395,7 +1441,11 @@ static inline struct mdss_mdp_misr_map *mdss_misr_get_map(u32 block_id,
 						(mdata->mdp_rev ==
 							MDSS_MDP_HW_REV_300) ||
 						(mdata->mdp_rev ==
-							MDSS_MDP_HW_REV_301)) {
+							MDSS_MDP_HW_REV_301) ||
+						(mdata->mdp_rev ==
+							MDSS_MDP_HW_REV_320) ||
+						(mdata->mdp_rev ==
+							MDSS_MDP_HW_REV_330)) {
 						ctrl_reg += 0x8;
 						value_reg += 0x8;
 					}
@@ -1785,6 +1835,24 @@ void mdss_misr_crc_collect(struct mdss_data_type *mdata, int block_id,
 		vsync_count += 1;
 	}
 
+}
+
+void mdss_dsi_debug_bus_init(struct mdss_dsi_data *sdata)
+{
+	if (!sdata)
+		return;
+
+	sdata->dbg_bus = NULL;
+	sdata->dbg_bus_size = 0;
+
+	switch (sdata->shared_data->hw_rev) {
+	case MDSS_DSI_HW_REV_201:
+		sdata->dbg_bus = dsi_dbg_bus_sdm660;
+		sdata->dbg_bus_size = ARRAY_SIZE(dsi_dbg_bus_sdm660);
+		break;
+	default:
+		break;
+	}
 }
 
 int mdss_dump_misr_data(char **buf, u32 size)

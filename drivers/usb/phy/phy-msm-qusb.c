@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -47,6 +47,8 @@
 #define FREEZIO_N			BIT(1)
 #define POWER_DOWN			BIT(0)
 
+#define QUSB2PHY_PORT_TEST_CTRL		0xB8
+
 #define QUSB2PHY_PWR_CTRL1		0x210
 #define PWR_CTRL1_CLAMP_N_EN		BIT(1)
 #define PWR_CTRL1_POWR_DOWN		BIT(0)
@@ -70,10 +72,7 @@
 #define QUSB2PHY_PORT_TUNE2             0x84
 #define QUSB2PHY_PORT_TUNE3             0x88
 #define QUSB2PHY_PORT_TUNE4             0x8C
-
-/* In case Efuse register shows zero, use this value */
-#define TUNE2_DEFAULT_HIGH_NIBBLE	0xB
-#define TUNE2_DEFAULT_LOW_NIBBLE	0x3
+#define QUSB2PHY_PORT_TUNE5             0x90
 
 /* Get TUNE2's high nibble value read from efuse */
 #define TUNE2_HIGH_NIBBLE_VAL(val, pos, mask)	((val >> pos) & mask)
@@ -100,9 +99,26 @@
 
 #define QUSB2PHY_REFCLK_ENABLE		BIT(0)
 
+unsigned int tune1;
+module_param(tune1, uint, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(tune1, "QUSB PHY TUNE1");
+
 unsigned int tune2;
 module_param(tune2, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(tune2, "QUSB PHY TUNE2");
+
+unsigned int tune3;
+module_param(tune3, uint, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(tune3, "QUSB PHY TUNE3");
+
+unsigned int tune4;
+module_param(tune4, uint, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(tune4, "QUSB PHY TUNE4");
+
+unsigned int tune5;
+module_param(tune5, uint, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(tune5, "QUSB PHY TUNE5");
+
 
 struct qusb_phy {
 	struct usb_phy		phy;
@@ -127,6 +143,7 @@ struct qusb_phy {
 	u32			tune2_val;
 	int			tune2_efuse_bit_pos;
 	int			tune2_efuse_num_of_bits;
+	int			tune2_efuse_correction;
 
 	bool			power_enabled;
 	bool			clocks_enabled;
@@ -149,6 +166,7 @@ struct qusb_phy {
 	int			*emu_dcm_reset_seq;
 	int			emu_dcm_reset_seq_len;
 	bool			put_into_high_z_state;
+	struct mutex		phy_lock;
 };
 
 static void qusb_phy_enable_clocks(struct qusb_phy *qphy, bool on)
@@ -324,6 +342,7 @@ static int qusb_phy_update_dpdm(struct usb_phy *phy, int value)
 	switch (value) {
 	case POWER_SUPPLY_DP_DM_DPF_DMF:
 		dev_dbg(phy->dev, "POWER_SUPPLY_DP_DM_DPF_DMF\n");
+		mutex_lock(&qphy->phy_lock);
 		if (!qphy->rm_pulldown) {
 			ret = qusb_phy_enable_power(qphy, true);
 			if (ret >= 0) {
@@ -370,14 +389,17 @@ static int qusb_phy_update_dpdm(struct usb_phy *phy, int value)
 				/* Make sure that above write is completed */
 				wmb();
 
-				qusb_phy_enable_clocks(qphy, false);
+				if (qphy->suspended)
+					qusb_phy_enable_clocks(qphy, false);
 			}
 		}
+		mutex_unlock(&qphy->phy_lock);
 
 		break;
 
 	case POWER_SUPPLY_DP_DM_DPR_DMR:
 		dev_dbg(phy->dev, "POWER_SUPPLY_DP_DM_DPR_DMR\n");
+		mutex_lock(&qphy->phy_lock);
 		if (qphy->rm_pulldown) {
 			if (!qphy->cable_connected) {
 				if (qphy->tcsr_clamp_dig_n)
@@ -392,6 +414,7 @@ static int qusb_phy_update_dpdm(struct usb_phy *phy, int value)
 						qphy->rm_pulldown);
 			}
 		}
+		mutex_unlock(&qphy->phy_lock);
 		break;
 
 	default:
@@ -407,6 +430,7 @@ static void qusb_phy_get_tune2_param(struct qusb_phy *qphy)
 {
 	u8 num_of_bits;
 	u32 bit_mask = 1;
+	u8 reg_val;
 
 	pr_debug("%s(): num_of_bits:%d bit_pos:%d\n", __func__,
 				qphy->tune2_efuse_num_of_bits,
@@ -420,9 +444,8 @@ static void qusb_phy_get_tune2_param(struct qusb_phy *qphy)
 
 	/*
 	 * Read EFUSE register having TUNE2 parameter's high nibble.
-	 * If efuse register shows value as 0x0, then use default value
-	 * as 0xB as high nibble. Otherwise use efuse register based
-	 * value for this purpose.
+	 * If efuse register shows value as 0x0, then use previous value
+	 * as it is. Otherwise use efuse register based value for this purpose.
 	 */
 	qphy->tune2_val = readl_relaxed(qphy->tune2_efuse_reg);
 	pr_debug("%s(): bit_mask:%d efuse based tune2 value:%d\n",
@@ -431,12 +454,24 @@ static void qusb_phy_get_tune2_param(struct qusb_phy *qphy)
 	qphy->tune2_val = TUNE2_HIGH_NIBBLE_VAL(qphy->tune2_val,
 				qphy->tune2_efuse_bit_pos, bit_mask);
 
-	if (!qphy->tune2_val)
-		qphy->tune2_val = TUNE2_DEFAULT_HIGH_NIBBLE;
+	/* Update higher nibble of TUNE2 value for better rise/fall times */
+	if (qphy->tune2_efuse_correction && qphy->tune2_val) {
+		if (qphy->tune2_efuse_correction > 5 ||
+				qphy->tune2_efuse_correction < -10)
+			pr_warn("Correction value is out of range : %d\n",
+					qphy->tune2_efuse_correction);
+		else
+			qphy->tune2_val = qphy->tune2_val +
+						qphy->tune2_efuse_correction;
+	}
 
-	/* Get TUNE2 byte value using high and low nibble value */
-	qphy->tune2_val = ((qphy->tune2_val << 0x4) |
-					TUNE2_DEFAULT_LOW_NIBBLE);
+	reg_val = readb_relaxed(qphy->base + QUSB2PHY_PORT_TUNE2);
+	if (qphy->tune2_val) {
+		reg_val  &= 0x0f;
+		reg_val |= (qphy->tune2_val << 4);
+	}
+
+	qphy->tune2_val = reg_val;
 }
 
 static void qusb_phy_write_seq(void __iomem *base, u32 *seq, int cnt,
@@ -544,7 +579,7 @@ static int qusb_phy_init(struct usb_phy *phy)
 	 * and try to read EFUSE value only once i.e. not every USB
 	 * cable connect case.
 	 */
-	if (qphy->tune2_efuse_reg) {
+	if (qphy->tune2_efuse_reg && !tune2) {
 		if (!qphy->tune2_val)
 			qusb_phy_get_tune2_param(qphy);
 
@@ -554,13 +589,29 @@ static int qusb_phy_init(struct usb_phy *phy)
 				qphy->base + QUSB2PHY_PORT_TUNE2);
 	}
 
-	/* If tune2 modparam set, override tune2 value */
-	if (tune2) {
-		pr_debug("%s(): (modparam) TUNE2 val:0x%02x\n",
-						__func__, tune2);
+	/* If tune modparam set, override tune value */
+
+	pr_debug("%s():userspecified modparams TUNEX val:0x%x %x %x %x %x\n",
+				__func__, tune1, tune2, tune3, tune4, tune5);
+	if (tune1)
+		writel_relaxed(tune1,
+				qphy->base + QUSB2PHY_PORT_TUNE1);
+
+	if (tune2)
 		writel_relaxed(tune2,
 				qphy->base + QUSB2PHY_PORT_TUNE2);
-	}
+
+	if (tune3)
+		writel_relaxed(tune3,
+				qphy->base + QUSB2PHY_PORT_TUNE3);
+
+	if (tune4)
+		writel_relaxed(tune4,
+				qphy->base + QUSB2PHY_PORT_TUNE4);
+
+	if (tune5)
+		writel_relaxed(tune5,
+				qphy->base + QUSB2PHY_PORT_TUNE5);
 
 	/* ensure above writes are completed before re-enabling PHY */
 	wmb();
@@ -688,12 +739,33 @@ static int qusb_phy_set_suspend(struct usb_phy *phy, int suspend)
 			writel_relaxed(intr_mask,
 				qphy->base + QUSB2PHY_PORT_INTR_CTRL);
 
+			if (linestate & (LINESTATE_DP | LINESTATE_DM)) {
+				/* enable phy auto-resume */
+				writel_relaxed(0x0C,
+					qphy->base + QUSB2PHY_PORT_TEST_CTRL);
+				/* flush the previous write before next write */
+				wmb();
+				writel_relaxed(0x04,
+					qphy->base + QUSB2PHY_PORT_TEST_CTRL);
+			}
+
+
+			dev_dbg(phy->dev, "%s: intr_mask = %x\n",
+			__func__, intr_mask);
+
+			/* Makes sure that above write goes through */
+			wmb();
+
 			qusb_phy_enable_clocks(qphy, false);
 		} else { /* Disconnect case */
+			mutex_lock(&qphy->phy_lock);
 			/* Disable all interrupts */
 			writel_relaxed(0x00,
 				qphy->base + QUSB2PHY_PORT_INTR_CTRL);
 
+			/* Disable PHY */
+			writel_relaxed(POWER_DOWN,
+				qphy->base + QUSB2PHY_PORT_POWERDOWN);
 			/* Make sure that above write is completed */
 			wmb();
 
@@ -701,7 +773,13 @@ static int qusb_phy_set_suspend(struct usb_phy *phy, int suspend)
 			if (qphy->tcsr_clamp_dig_n)
 				writel_relaxed(0x0,
 					qphy->tcsr_clamp_dig_n);
-			qusb_phy_enable_power(qphy, false);
+			/* Do not disable power rails if there is vote for it */
+			if (!qphy->rm_pulldown)
+				qusb_phy_enable_power(qphy, false);
+			else
+				dev_dbg(phy->dev, "race with rm_pulldown. Keep ldo ON\n");
+			mutex_unlock(&qphy->phy_lock);
+
 			/*
 			 * Set put_into_high_z_state to true so next USB
 			 * cable connect, DPF_DMF request performs PHY
@@ -860,6 +938,9 @@ static int qusb_phy_probe(struct platform_device *pdev)
 						"qcom,tune2-efuse-num-bits",
 						&qphy->tune2_efuse_num_of_bits);
 			}
+			of_property_read_u32(dev->of_node,
+						"qcom,tune2-efuse-correction",
+						&qphy->tune2_efuse_correction);
 
 			if (ret) {
 				dev_err(dev, "DT Value for tune2 efuse is invalid.\n");
@@ -1059,6 +1140,7 @@ static int qusb_phy_probe(struct platform_device *pdev)
 		return PTR_ERR(qphy->vdda18);
 	}
 
+	mutex_init(&qphy->phy_lock);
 	platform_set_drvdata(pdev, qphy);
 
 	qphy->phy.label			= "msm-qusb-phy";
@@ -1087,6 +1169,10 @@ static int qusb_phy_probe(struct platform_device *pdev)
 	ret = qusb_phy_regulator_init(qphy);
 	if (ret)
 		usb_remove_phy(&qphy->phy);
+
+	/* de-assert clamp dig n to reduce leakage on 1p8 upon boot up */
+	if (qphy->tcsr_clamp_dig_n)
+		writel_relaxed(0x0, qphy->tcsr_clamp_dig_n);
 
 	return ret;
 }

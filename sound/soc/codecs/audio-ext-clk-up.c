@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -34,6 +34,7 @@ struct pinctrl_info {
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *sleep;
 	struct pinctrl_state *active;
+	char __iomem *base;
 };
 
 struct audio_ext_ap_clk {
@@ -192,8 +193,10 @@ static int audio_ext_lpass_mclk_prepare(struct clk_hw *hw)
 		pr_err("%s afe_set_digital_codec_core_clock failed\n",
 			__func__);
 		return ret;
-		}
+	}
 
+	if (pnctrl_info->base)
+		iowrite32(1, pnctrl_info->base);
 	return 0;
 }
 
@@ -219,6 +222,8 @@ static void audio_ext_lpass_mclk_unprepare(struct clk_hw *hw)
 	if (ret < 0)
 		pr_err("%s: afe_set_digital_codec_core_clock failed, ret = %d\n",
 			__func__, ret);
+	if (pnctrl_info->base)
+		iowrite32(0, pnctrl_info->base);
 }
 
 static int audio_ext_lpass_mclk2_prepare(struct clk_hw *hw)
@@ -296,6 +301,8 @@ static struct audio_ext_pmi_clk audio_pmi_clk = {
 		.div = 1,
 		.hw.init = &(struct clk_init_data){
 			.name = "audio_ext_pmi_clk",
+			.parent_names = (const char *[]){ "div_clk1" },
+			.num_parents = 1,
 			.ops = &clk_dummy_ops,
 		},
 	},
@@ -308,6 +315,8 @@ static struct audio_ext_pmi_clk audio_pmi_lnbb_clk = {
 		.div = 1,
 		.hw.init = &(struct clk_init_data){
 			.name = "audio_ext_pmi_lnbb_clk",
+			.parent_names = (const char *[]){ "ln_bb_clk2" },
+			.num_parents = 1,
 			.ops = &clk_dummy_ops,
 		},
 	},
@@ -364,19 +373,24 @@ static struct audio_ext_lpass_mclk audio_lpass_mclk2 = {
 
 static struct clk_hw *audio_msm_hws[] = {
 	&audio_pmi_clk.fact.hw,
-	&audio_pmi_lnbb_clk.fact.hw,
 	&audio_ap_clk.fact.hw,
 	&audio_ap_clk2.fact.hw,
 	&audio_lpass_mclk.fact.hw,
 	&audio_lpass_mclk2.fact.hw,
 };
 
+static struct clk_hw *audio_msm_hws1[] = {
+	&audio_pmi_lnbb_clk.fact.hw,
+};
+
 static int audio_get_pinctrl(struct platform_device *pdev,
 			     enum audio_clk_mux mux)
 {
+	struct device *dev =  &pdev->dev;
 	struct pinctrl_info *pnctrl_info;
 	struct pinctrl *pinctrl;
 	int ret;
+	u32 reg;
 
 	switch (mux) {
 	case AP_CLK2:
@@ -389,21 +403,20 @@ static int audio_get_pinctrl(struct platform_device *pdev,
 		pnctrl_info = &audio_lpass_mclk2.pnctrl_info;
 		break;
 	default:
-		dev_err(&pdev->dev, "%s Not a valid MUX ID: %d\n",
+		dev_err(dev, "%s Not a valid MUX ID: %d\n",
 			__func__, mux);
 		return -EINVAL;
 	}
-	pnctrl_info = &audio_ap_clk2.pnctrl_info;
 
 	if (pnctrl_info->pinctrl) {
-		dev_dbg(&pdev->dev, "%s: already requested before\n",
+		dev_dbg(dev, "%s: already requested before\n",
 			__func__);
 		return -EINVAL;
 	}
 
-	pinctrl = devm_pinctrl_get(&pdev->dev);
+	pinctrl = devm_pinctrl_get(dev);
 	if (IS_ERR_OR_NULL(pinctrl)) {
-		dev_dbg(&pdev->dev, "%s: Unable to get pinctrl handle\n",
+		dev_dbg(dev, "%s: Unable to get pinctrl handle\n",
 			__func__);
 		return -EINVAL;
 	}
@@ -411,13 +424,13 @@ static int audio_get_pinctrl(struct platform_device *pdev,
 	/* get all state handles from Device Tree */
 	pnctrl_info->sleep = pinctrl_lookup_state(pinctrl, "sleep");
 	if (IS_ERR(pnctrl_info->sleep)) {
-		dev_err(&pdev->dev, "%s: could not get sleep pinstate\n",
+		dev_err(dev, "%s: could not get sleep pinstate\n",
 			__func__);
 		goto err;
 	}
 	pnctrl_info->active = pinctrl_lookup_state(pinctrl, "active");
 	if (IS_ERR(pnctrl_info->active)) {
-		dev_err(&pdev->dev, "%s: could not get active pinstate\n",
+		dev_err(dev, "%s: could not get active pinstate\n",
 			__func__);
 		goto err;
 	}
@@ -425,10 +438,22 @@ static int audio_get_pinctrl(struct platform_device *pdev,
 	ret = pinctrl_select_state(pnctrl_info->pinctrl,
 				   pnctrl_info->sleep);
 	if (ret) {
-		dev_err(&pdev->dev, "%s: Disable TLMM pins failed with %d\n",
+		dev_err(dev, "%s: Disable TLMM pins failed with %d\n",
 			__func__, ret);
 		goto err;
 	}
+
+	ret = of_property_read_u32(dev->of_node, "qcom,mclk-clk-reg", &reg);
+	if (ret < 0) {
+		dev_dbg(dev, "miss mclk reg\n");
+	} else {
+		pnctrl_info->base = ioremap(reg, sizeof(u32));
+		if (pnctrl_info->base ==  NULL) {
+			dev_err(dev, "%s ioremap failed\n", __func__);
+			goto err;
+		}
+	}
+
 	return 0;
 
 err:
@@ -496,15 +521,31 @@ static int audio_ref_clk_probe(struct platform_device *pdev)
 	if (!clk_data->clks)
 		goto err_clk;
 
-	for (i = 0; i < ARRAY_SIZE(audio_msm_hws); i++) {
-		audio_clk = devm_clk_register(dev, audio_msm_hws[i]);
-		if (IS_ERR(audio_clk)) {
-			dev_err(&pdev->dev,
-				"%s: audio ref clock i = %d register failed\n",
-				__func__, i);
-			return PTR_ERR(audio_clk);
+
+	clk_gpio = of_get_named_gpio(pdev->dev.of_node,
+				     "qcom,audio-ref-clk-gpio", 0);
+	if (clk_gpio > 0) {
+		for (i = 0; i < ARRAY_SIZE(audio_msm_hws); i++) {
+			audio_clk = devm_clk_register(dev, audio_msm_hws[i]);
+			if (IS_ERR(audio_clk)) {
+				dev_err(&pdev->dev,
+					"%s: ref clock: %d register failed\n",
+					__func__, i);
+				return PTR_ERR(audio_clk);
+			}
+			clk_data->clks[i] = audio_clk;
 		}
-		clk_data->clks[i] = audio_clk;
+	} else {
+		for (i = 0; i < ARRAY_SIZE(audio_msm_hws1); i++) {
+			audio_clk = devm_clk_register(dev, audio_msm_hws1[i]);
+			if (IS_ERR(audio_clk)) {
+				dev_err(&pdev->dev,
+					"%s: ref clock: %d register failed\n",
+					__func__, i);
+				return PTR_ERR(audio_clk);
+			}
+			clk_data->clks[i] = audio_clk;
+		}
 	}
 
 	ret = of_clk_add_provider(pdev->dev.of_node,

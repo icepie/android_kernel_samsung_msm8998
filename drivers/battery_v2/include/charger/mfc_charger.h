@@ -161,7 +161,7 @@
 #define MFC_PMA_FOD_5A_REG					0x8A
 #define MFC_PMA_FOD_5B_REG					0x8B
 
-#define MFC_A4WP_FOD_0A_REG					0x0
+#define MFC_A4WP_FOD_0A_REG					0x90
 #define MFC_A4WP_FOD_0B_REG					0x91
 #define MFC_A4WP_FOD_1A_REG					0x92
 #define MFC_A4WP_FOD_1B_REG					0x93
@@ -225,7 +225,7 @@ enum {
 	MFC_VOUT_7V, // 2
 	MFC_VOUT_8V, // 3
 	MFC_VOUT_9V, // 4
-	MFC_VOUT_10V, // 5 
+	MFC_VOUT_10V, // 5
 	MFC_VOUT_5_5V,		/* CC-CV */
 };
 
@@ -653,6 +653,7 @@ struct mfc_charger_platform_data {
 	int wpc_cc_call_vout;
 	int opfq_cnt;
 	int hv_vout_wa;
+	int mst_switch_delay;
 	int wc_cover_rpp;
 	int wc_hv_rpp;
 };

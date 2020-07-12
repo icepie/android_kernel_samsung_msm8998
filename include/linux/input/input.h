@@ -17,8 +17,10 @@
 #undef pr_debug
 #define pr_debug   if(debug_flag) printk
 
-#define MAX_MULTI_TOUCH_EVENTS		3
+#define MAX_MULTI_TOUCH_EVENTS		10
 #define MAX_EVENTS			MAX_MULTI_TOUCH_EVENTS * 10
+
+#define INPUT_BOOSTER_NULL	-1
 
 #define HEADGAGE "******"
 #define TAILGAGE "****  "
@@ -59,6 +61,10 @@
 #endif
 
 #define SET_BOOSTER  { \
+	int freq = -1;\
+	_this->level++; \
+	MAX_T_INPUT_BOOSTER(freq, cpu_freq); \
+	pr_debug("[Input Booster2] %s      set_freq_limit : %d\n", glGage, freq); \
 	set_hmp(_this->param[_this->index].hmp_boost); \
 	set_qos(&_this->cpu_qos, /*PM_QOS_CPU_FREQ_MIN*/PM_QOS_CLUSTER1_FREQ_MIN, _this->param[_this->index].cpu_freq);  \
 	set_qos(&_this->kfc_qos, /*PM_QOS_KFC_FREQ_MIN*/PM_QOS_CLUSTER0_FREQ_MIN, _this->param[_this->index].kfc_freq);  \
@@ -66,6 +72,10 @@
 	set_qos(&_this->int_qos, PM_QOS_DEVICE_THROUGHPUT, _this->param[_this->index].int_freq);  \
 }
 #define REMOVE_BOOSTER  { \
+	int freq = -1;\
+	_this->level = -1; \
+	MAX_T_INPUT_BOOSTER(freq, cpu_freq); \
+	pr_debug("[Input Booster2] %s      set_freq_limit : %d\n", glGage, freq); \
 	set_hmp(0);  \
 	remove_qos(&_this->cpu_qos);  \
 	remove_qos(&_this->kfc_qos);  \
@@ -122,14 +132,47 @@
 
 #elif defined(CONFIG_ARCH_MSM) //______________________________________________________________________________
 
+#include <linux/msm-bus.h>
+#include <linux/msm-bus-board.h>
+
+#define BUS_VOTE_507_MHZ 7500000000
+#define BUS_VOTE_900_MHZ 15000000000
+
+#define TOUCH_REG_BUS_VECTOR_ENTRY(ab_val, ib_val)    \
+    {                        \
+        .src = MSM_BUS_MASTER_AMPSS_M0,        \
+        .dst = MSM_BUS_SLAVE_EBI_CH0,    \
+        .ab = (ab_val),                \
+        .ib = (ib_val),                \
+    }
+
+static struct msm_bus_vectors touch_reg_bus_vectors[] = {
+    TOUCH_REG_BUS_VECTOR_ENTRY(0, 0),
+    TOUCH_REG_BUS_VECTOR_ENTRY(0, BUS_VOTE_507_MHZ),
+    TOUCH_REG_BUS_VECTOR_ENTRY(0, BUS_VOTE_900_MHZ),
+};
+static struct msm_bus_paths touch_reg_bus_usecases[ARRAY_SIZE(touch_reg_bus_vectors)];
+static struct msm_bus_scale_pdata touch_reg_bus_scale_table = {
+    .usecase = touch_reg_bus_usecases,
+    .num_usecases = ARRAY_SIZE(touch_reg_bus_usecases),
+    .name = "touch_bw",
+};
+
+static u32 bus_hdl;
+
 #ifdef USE_HMP_BOOST
 #define set_hmp(level)	 { \
 	if(level != current_hmp_boost) { \
+		if(level == 0){ \
+			level = -current_hmp_boost; \
+			current_hmp_boost = 0; \
+		} else {\
+			current_hmp_boost = level; \
+		} \
 		pr_debug("[Input Booster2] ******      set_hmp : %d ( %s )\n", level, __FUNCTION__); \
-		if (sched_set_boost(level) < 0) {\
+		if (sched_set_boost(level) < 0) { \
 			pr_debug("[Input Booster2] ******            !!! fail to HMP !!!\n"); \
 		} \
-		current_hmp_boost = level; \
 	} \
 }
 #else
@@ -161,18 +204,30 @@ int set_freq_limit(unsigned long id, unsigned int freq)
 #else
 */
 #define SET_BOOSTER  { \
-	pr_debug("[Input Booster2] %s      set_freq_limit : %d\n", glGage, _this->param[_this->index].cpu_freq); \
-	if(_this->param[_this->index].hmp_boost != 0){ \
-		set_hmp(_this->param[_this->index].hmp_boost); \
-	}else{ \
-		set_hmp(-2); \
+	int value = -1;\
+	_this->level++; \
+	MAX_T_INPUT_BOOSTER(value, hmp_boost); \
+	if(value == INPUT_BOOSTER_NULL){ \
+		value = 0; \
 	} \
-	set_freq_limit((_this->change_on_release) ? DVFS_MULTI_TOUCH_ID : DVFS_TOUCH_ID, _this->param[_this->index].cpu_freq);  \
+	set_hmp(value); \
+	MAX_T_INPUT_BOOSTER(value, cpu_freq); \
+	pr_debug("[Input Booster2] %s      set_freq_limit : %d\n", glGage, value); \
+	set_freq_limit(DVFS_TOUCH_ID, value);  \
+	msm_bus_scale_client_update_request(bus_hdl, 1);  /*0 for none, 1 for 507MHz, 2 for 900MHz*/ \
 }
 #define REMOVE_BOOSTER  { \
-	pr_debug("[Input Booster2] %s      set_freq_limit : %d\n", glGage, -1); \
-	set_hmp(-2); \
-	set_freq_limit((_this->change_on_release) ? DVFS_MULTI_TOUCH_ID : DVFS_TOUCH_ID, -1);  \
+	int value = -1;\
+	_this->level = -1; \
+	MAX_T_INPUT_BOOSTER(value, hmp_boost); \
+	if(value == INPUT_BOOSTER_NULL){ \
+		value = 0; \
+	} \
+	set_hmp(value); \
+	MAX_T_INPUT_BOOSTER(value, cpu_freq); \
+	pr_debug("[Input Booster2] %s      set_freq_limit : %d\n", glGage, value); \
+	set_freq_limit(DVFS_TOUCH_ID, value);  \
+	msm_bus_scale_client_update_request(bus_hdl, 0);  /*0 for none, 1 for 507MHz, 2 for 900MHz*/ \
 }
 //#endif
 
@@ -261,6 +316,9 @@ int set_freq_limit(unsigned long id, unsigned int freq)
 	_DEVICE_##_booster.multi_events = 0; \
 	{ \
 		int i; \
+		for(i=0;i<sizeof(_DEVICE_##_booster.param)/sizeof(struct t_input_booster_param);i++){ \
+			_DEVICE_##_booster.level = -1; \
+		} \
 		for(i=0;i<ndevice_in_dt;i++) { \
 			if(device_tree_infor[i].type == _DEVICE_##_booster_dt.type) { \
 				struct t_input_booster_device_tree_gender *dt_gender = &_DEVICE_##_booster_dt; \
@@ -332,6 +390,9 @@ static void input_booster_##_DEVICE_##_set_booster_work_func(struct work_struct 
 #define RUN_BOOSTER(_DEVICE_, _EVENT_) { \
 	if(_DEVICE_##_booster_dt.level > 0) { \
 		_DEVICE_##_booster.event_type = _EVENT_; \
+		if(_EVENT_ == BOOSTER_ON){ \
+			_DEVICE_##_booster.level = -1; \
+		} \
 		(_EVENT_ == BOOSTER_ON)  ? _DEVICE_##_booster.multi_events++ : _DEVICE_##_booster.multi_events--; \
 		schedule_work(&_DEVICE_##_booster.input_booster_set_booster_work); \
 	} \
@@ -520,6 +581,7 @@ struct t_input_booster {
 	int multi_events;
 	int event_type;
 	int change_on_release;
+	int level;
 
 	void (*input_booster_state)(void *__this, int input_booster_event);
 };
@@ -568,16 +630,16 @@ struct t_input_booster_device_tree_gender {
 //______________________________________________________________________________	<<< in DTSI file >>>
 //______________________________________________________________________________	input_booster,type = <4>;	/* BOOSTER_DEVICE_KEYBOARD */
 //______________________________________________________________________________
-struct t_input_booster_device_tree_gender	touch_booster_dt = {2,2,};		// type : 2,  level : 2
-struct t_input_booster_device_tree_gender	multitouch_booster_dt = {3,1,};		// type : 3,  level : 1
 struct t_input_booster_device_tree_gender	key_booster_dt = {0,1,};		// type : 0,  level : 1
 struct t_input_booster_device_tree_gender	touchkey_booster_dt = {1,1,};		// type : 1,  level : 1
+struct t_input_booster_device_tree_gender	touch_booster_dt = {2,2,};		// type : 2,  level : 2
+struct t_input_booster_device_tree_gender	multitouch_booster_dt = {3,1,};		// type : 3,  level : 1
 struct t_input_booster_device_tree_gender	keyboard_booster_dt = {4,1,};		// type : 4,  level : 1
 struct t_input_booster_device_tree_gender	mouse_booster_dt = {5,1,};		// type : 5,  level : 1
 struct t_input_booster_device_tree_gender	mouse_wheel_booster_dt = {6,1,};	// type : 6,  level : 1
-struct t_input_booster_device_tree_gender	pen_booster_dt = {7,1,};		// type : 7,  level : 1
 struct t_input_booster_device_tree_gender	hover_booster_dt = {7,1,};		// type : 7,  level : 1
-struct t_input_booster_device_tree_gender	key_two_booster_dt = {8,1,};			// type : 9,  level : 1
+struct t_input_booster_device_tree_gender	pen_booster_dt = {8,1,};			// type : 8,  level : 1
+struct t_input_booster_device_tree_gender	key_two_booster_dt = {9,1,};			// type : 9,  level : 1
 struct t_input_booster_device_tree_infor	*device_tree_infor = NULL;
 
 int ndevice_in_dt;
@@ -641,17 +703,48 @@ int TouchIDs[MAX_MULTI_TOUCH_EVENTS];
 char *glGage = HEADGAGE;
 int current_hmp_boost = 0;
 
-struct t_input_booster	touch_booster;
-struct t_input_booster	multitouch_booster;
 struct t_input_booster	key_booster;
 struct t_input_booster	touchkey_booster;
+struct t_input_booster	touch_booster;
+struct t_input_booster	multitouch_booster;
 struct t_input_booster	keyboard_booster;
 struct t_input_booster	mouse_booster;
 struct t_input_booster	mouse_wheel_booster;
-struct t_input_booster	pen_booster;
 struct t_input_booster	hover_booster;
+struct t_input_booster	pen_booster;
 struct t_input_booster	key_two_booster;
 
+struct t_input_booster *t_input_boosters[] = {
+	&key_booster,
+	&touchkey_booster,
+	&touch_booster,
+	&multitouch_booster,
+	&keyboard_booster,
+	&mouse_booster,
+	&mouse_wheel_booster,
+	&hover_booster,
+	&pen_booster,
+	&key_two_booster
+};
+
+#define MAX_T_INPUT_BOOSTER(ref, _PARAM_) { \
+		int i = 0; \
+		int max = INPUT_BOOSTER_NULL; \
+		for(i = 0; i < sizeof(t_input_boosters)/sizeof(struct t_input_booster*); i++){ \
+			if( t_input_boosters[i]->level >= 0 && t_input_boosters[i]->level < (int)(sizeof(t_input_boosters[i]->param)/sizeof(struct t_input_booster_param))){ \
+				pr_debug("[Input Booster3] %s booster type : %d    level : %d    value : %d\n", #_PARAM_, i, t_input_boosters[i]->level, t_input_boosters[i]->param[t_input_boosters[i]->level]._PARAM_); \
+				if(max < (int)(t_input_boosters[i]->param[t_input_boosters[i]->level]._PARAM_)){ \
+					max = (int)(t_input_boosters[i]->param[t_input_boosters[i]->level]._PARAM_); \
+				} \
+			} \
+		} \
+		if(max == INPUT_BOOSTER_NULL){ \
+			ref = INPUT_BOOSTER_NULL; \
+		} else { \
+			ref = max; \
+		} \
+		pr_debug("[Input Booster3] %s max value : %d\n", #_PARAM_, max); \
+	} \
 
 int input_count = 0, key_back = 0, key_home = 0, key_recent = 0;
 

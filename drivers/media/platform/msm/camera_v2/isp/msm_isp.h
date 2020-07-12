@@ -66,7 +66,7 @@
 #define MAX_BUFFERS_IN_HW 2
 
 #define MAX_VFE 2
-#define MAX_VFE_IRQ_DEBUG_DUMP_SIZE 10
+#define MAX_VFE_IRQ_DEBUG_DUMP_SIZE 100
 #define MAX_RECOVERY_THRESHOLD  5
 
 struct vfe_device;
@@ -451,7 +451,7 @@ struct msm_vfe_axi_stream {
 
 	uint32_t runtime_num_burst_capture;
 	uint32_t runtime_output_format;
-	enum msm_stream_memory_input_t  memory_input;
+	enum msm_stream_rdi_input_type  rdi_input_type;
 	struct msm_isp_sw_framskip sw_skip;
 	uint8_t sw_ping_pong_bit;
 
@@ -466,6 +466,7 @@ struct msm_vfe_axi_stream {
 	 */
 	uint32_t vfe_mask;
 	uint32_t composite_irq[MSM_ISP_COMP_IRQ_MAX];
+	int lpm_mode;
 };
 
 struct msm_vfe_axi_composite_info {
@@ -493,6 +494,7 @@ struct msm_vfe_src_info {
 	struct timeval time_stamp;
 	enum msm_vfe_dual_hw_type dual_hw_type;
 	struct msm_vfe_dual_hw_ms_info dual_hw_ms_info;
+	uint32_t lpm;
 };
 
 struct msm_vfe_fetch_engine_info {
@@ -592,6 +594,7 @@ struct msm_vfe_tasklet_queue_cmd {
 	uint32_t vfeInterruptStatus1;
 	struct msm_isp_timestamp ts;
 	uint8_t cmd_used;
+	struct vfe_device *vfe_dev;
 };
 
 #define MSM_VFE_TASKLETQ_SIZE 200
@@ -703,17 +706,22 @@ struct msm_vfe_irq_debug_info {
 	uint32_t irq_status0[MAX_VFE];
 	uint32_t irq_status1[MAX_VFE];
 	uint32_t ping_pong_status[MAX_VFE];
+	int irq_dump;
+	int dual;
 };
 
 struct msm_vfe_irq_dump {
-	spinlock_t common_dev_irq_dump_lock;
-	spinlock_t common_dev_tasklet_dump_lock;
 	uint8_t current_irq_index;
-	uint8_t current_tasklet_index;
 	struct msm_vfe_irq_debug_info
 		irq_debug[MAX_VFE_IRQ_DEBUG_DUMP_SIZE];
-	struct msm_vfe_irq_debug_info
-		tasklet_debug[MAX_VFE_IRQ_DEBUG_DUMP_SIZE];
+};
+
+struct msm_vfe_tasklet {
+	spinlock_t tasklet_lock;
+	uint8_t taskletq_idx;
+	struct list_head tasklet_q;
+	struct tasklet_struct tasklet;
+	struct msm_vfe_tasklet_queue_cmd tasklet_queue_cmd[MSM_VFE_TASKLETQ_SIZE];
 };
 
 struct msm_vfe_common_dev_data {
@@ -723,8 +731,7 @@ struct msm_vfe_common_dev_data {
 	struct msm_vfe_axi_stream streams[VFE_AXI_SRC_MAX * MAX_VFE];
 	struct msm_vfe_stats_stream stats_streams[MSM_ISP_STATS_MAX * MAX_VFE];
 	struct mutex vfe_common_mutex;
-	/* Irq debug Info */
-	struct msm_vfe_irq_dump vfe_irq_dump;
+	struct msm_vfe_tasklet tasklets[MAX_VFE + 1];
 };
 
 struct msm_vfe_common_subdev {
@@ -775,15 +782,9 @@ struct vfe_device {
 	struct mutex core_mutex;
 	spinlock_t shared_data_lock;
 	spinlock_t reg_update_lock;
-	spinlock_t tasklet_lock;
 
 	/* Tasklet info */
 	atomic_t irq_cnt;
-	uint8_t taskletq_idx;
-	struct list_head tasklet_q;
-	struct tasklet_struct vfe_tasklet;
-	struct msm_vfe_tasklet_queue_cmd
-		tasklet_queue_cmd[MSM_VFE_TASKLETQ_SIZE];
 
 	/* Data structures */
 	struct msm_vfe_hardware_info *hw_info;
@@ -819,6 +820,11 @@ struct vfe_device {
 	/* irq info */
 	uint32_t irq0_mask;
 	uint32_t irq1_mask;
+
+	/* Store the buf_idx for pd stats RDI stream */
+	uint8_t pd_buf_idx;
+	/* total bandwidth per vfe */
+	uint64_t total_bandwidth;
 	uint32_t bus_err_ign_mask;
 	uint32_t recovery_irq0_mask;
 	uint32_t recovery_irq1_mask;

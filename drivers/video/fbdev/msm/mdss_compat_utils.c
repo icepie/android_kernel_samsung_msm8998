@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  * Copyright (C) 1994 Martin Schaller
  *
  * 2001 - Documented with DocBook
@@ -128,6 +128,7 @@ static void  __copy_atomic_commit_struct(struct mdp_layer_commit  *commit,
 		commit32->commit_v1.input_layer_cnt;
 	commit->commit_v1.left_roi = commit32->commit_v1.left_roi;
 	commit->commit_v1.right_roi = commit32->commit_v1.right_roi;
+	commit->commit_v1.bl_level = commit32->commit_v1.bl_level;
 	memcpy(&commit->commit_v1.reserved, &commit32->commit_v1.reserved,
 		count);
 }
@@ -229,6 +230,8 @@ static struct mdp_input_layer *__create_layer_list(
 		layer->transp_mask = layer32->transp_mask;
 		layer->bg_color = layer32->bg_color;
 		layer->blend_op = layer32->blend_op;
+		layer->alpha = layer32->alpha;
+		layer->color_space = layer32->color_space;
 		layer->src_rect = layer32->src_rect;
 		layer->dst_rect = layer32->dst_rect;
 		layer->buffer = layer32->buffer;
@@ -316,6 +319,8 @@ static int __compat_atomic_commit(struct fb_info *info, unsigned int cmd,
 		ret = -EFAULT;
 		return ret;
 	}
+
+	memset(&commit, 0, sizeof(struct mdp_layer_commit));
 	__copy_atomic_commit_struct(&commit, &commit32);
 
 	if (commit32.commit_v1.output_layer) {

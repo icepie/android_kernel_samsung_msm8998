@@ -337,9 +337,9 @@ static int set_online(int event, int state)
 	}
 
 	if (state)
-		value.intval = POWER_SUPPLY_TYPE_SMART_OTG;
+		value.intval = SEC_BATTERY_CABLE_SMART_OTG;
 	else
-		value.intval = POWER_SUPPLY_TYPE_SMART_NOTG;
+		value.intval = SEC_BATTERY_CABLE_SMART_NOTG;
 
 	psy->desc->set_property(psy, POWER_SUPPLY_PROP_ONLINE, &value);
 

@@ -215,15 +215,22 @@ static inline int msm_pcie_configure_sid(struct device *dev, u32 *sid,
 #endif /* CONFIG_PCI_MSM */
 
 #ifdef CONFIG_SEC_BSP
-int sec_pcie_l1ss_enable(void);
-int sec_pcie_l1ss_disable(void);
+enum l1ss_ctrl_ids {
+	L1SS_SYSFS,
+	L1SS_MST,
+//	L1SS_AUDIO,
+	L1SS_MAX
+};
+
+int sec_pcie_l1ss_enable(int ctrl_id);
+int sec_pcie_l1ss_disable(int ctrl_id);
 #else
-inline int sec_pcie_l1ss_enable(void)
+inline int sec_pcie_l1ss_enable(int ctrl_id)
 {
 	return -ENODEV;
 }
 
-inline int sec_pcie_l1ss_disable(void)
+inline int sec_pcie_l1ss_disable(int ctrl_id)
 {
 	return -ENODEV;
 }

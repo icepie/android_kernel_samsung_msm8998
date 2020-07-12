@@ -99,11 +99,9 @@ void power_on_alarm_init(void)
  * Get the soonest power off alarm timer and set the alarm value into rtc
  * register.
  */
-#ifdef CONFIG_RTC_AUTO_PWRON
-inline void set_power_on_alarm(void) { }
-#else
 void set_power_on_alarm(void)
 {
+#ifndef CONFIG_RTC_AUTO_PWRON
 	int rc;
 	struct timespec wall_time, alarm_ts;
 	long alarm_secs = 0l;
@@ -163,8 +161,8 @@ disable_alarm:
 	rtc_alarm_irq_enable(rtcdev, 0);
 exit:
 	mutex_unlock(&power_on_alarm_lock);
+#endif /* CONFIG_RTC_AUTO_PWRON */
 }
-#endif
 
 static void alarmtimer_triggered_func(void *p)
 {
@@ -226,10 +224,9 @@ rtc_irq_reg_err:
 }
 
 #ifdef CONFIG_RTC_AUTO_PWRON
-extern int rtc_set_bootalarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm);
 /* 0|1234|56|78|90|12 */
 /* 1|2010|01|01|00|00 */
-//en yyyy mm dd hh mm
+/*en yyyy mm dd hh mm */
 #define BOOTALM_BIT_EN       0
 #define BOOTALM_BIT_YEAR     1
 #define BOOTALM_BIT_MONTH    5
@@ -238,94 +235,97 @@ extern int rtc_set_bootalarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm);
 #define BOOTALM_BIT_MIN     11
 #define BOOTALM_BIT_TOTAL   13
 
-int alarm_set_alarm(char* alarm_data)
+int alarm_set_alarm(char *alarm_data)
 {
 	struct rtc_wkalrm alm;
-	int ret;
+	int ret = 0;
 	char buf_ptr[BOOTALM_BIT_TOTAL+1];
 	struct rtc_time     rtc_tm;
 	unsigned long       rtc_sec;
-	unsigned long       rtc_alarm_time;
-	struct timespec     rtc_delta;
-	struct timespec     wall_time;
-	ktime_t             wall_ktm;
-	struct rtc_time     wall_tm;
+	unsigned long       rtc_alm_sec;
+	struct timespec     delta;
+	struct timespec     ktm_ts;
+	struct rtc_time     ktm_tm;
 
 	if (!rtcdev) {
 		printk(
 			"alarm_set_alarm: no RTC, time will be lost on reboot\n");
-		return -1;
+		return -ENXIO;
 	}
 
 	strlcpy(buf_ptr, alarm_data, BOOTALM_BIT_TOTAL+1);
 
 	alm.time.tm_sec = 0;
-	alm.time.tm_min  =  (buf_ptr[BOOTALM_BIT_MIN]    -'0') * 10
-	                  + (buf_ptr[BOOTALM_BIT_MIN+1]  -'0');
-	alm.time.tm_hour =  (buf_ptr[BOOTALM_BIT_HOUR]   -'0') * 10
-	                  + (buf_ptr[BOOTALM_BIT_HOUR+1] -'0');
-	alm.time.tm_mday =  (buf_ptr[BOOTALM_BIT_DAY]    -'0') * 10
-	                  + (buf_ptr[BOOTALM_BIT_DAY+1]  -'0');
-	alm.time.tm_mon  =  (buf_ptr[BOOTALM_BIT_MONTH]  -'0') * 10
-	                  + (buf_ptr[BOOTALM_BIT_MONTH+1]-'0');
-	alm.time.tm_year =  (buf_ptr[BOOTALM_BIT_YEAR]   -'0') * 1000
-	                  + (buf_ptr[BOOTALM_BIT_YEAR+1] -'0') * 100
-	                  + (buf_ptr[BOOTALM_BIT_YEAR+2] -'0') * 10
-	                  + (buf_ptr[BOOTALM_BIT_YEAR+3] -'0');
+	alm.time.tm_min = (buf_ptr[BOOTALM_BIT_MIN]-'0') * 10
+					+ (buf_ptr[BOOTALM_BIT_MIN+1]-'0');
+	alm.time.tm_hour = (buf_ptr[BOOTALM_BIT_HOUR]-'0') * 10
+					+ (buf_ptr[BOOTALM_BIT_HOUR+1]-'0');
+	alm.time.tm_mday = (buf_ptr[BOOTALM_BIT_DAY]-'0') * 10
+					+ (buf_ptr[BOOTALM_BIT_DAY+1]-'0');
+	alm.time.tm_mon  = (buf_ptr[BOOTALM_BIT_MONTH]-'0') * 10
+					+ (buf_ptr[BOOTALM_BIT_MONTH+1]-'0');
+	alm.time.tm_year = (buf_ptr[BOOTALM_BIT_YEAR]-'0') * 1000
+					+ (buf_ptr[BOOTALM_BIT_YEAR+1]-'0') * 100
+					+ (buf_ptr[BOOTALM_BIT_YEAR+2]-'0') * 10
+					+ (buf_ptr[BOOTALM_BIT_YEAR+3]-'0');
 
 	alm.enabled = (*buf_ptr == '1');
+	if (*buf_ptr == '2')
+		alm.enabled = 2;
 
-	pr_info("[SAPA] %s : %s => tm(%d %04d-%02d-%02d %02d:%02d:%02d)\n",
+	pr_info("sapa %s: %s => tm(%d %04d-%02d-%02d %02d:%02d:%02d)\n",
 			__func__, buf_ptr, alm.enabled,
 			alm.time.tm_year, alm.time.tm_mon, alm.time.tm_mday,
 			alm.time.tm_hour, alm.time.tm_min, alm.time.tm_sec);
 
-	if ( alm.enabled ) {
-		/* If time daemon is exist */
+	if (alm.enabled) {
+		/* read kernel time */
+		getnstimeofday(&ktm_ts);
+		ktm_tm = rtc_ktime_to_tm(timespec_to_ktime(ktm_ts));
+		pr_info("set_sapa: <KTM > %4d-%02d-%02d %02d:%02d:%02d\n",
+			ktm_tm.tm_year+1900, ktm_tm.tm_mon+1, ktm_tm.tm_mday,
+			ktm_tm.tm_hour, ktm_tm.tm_min, ktm_tm.tm_sec);
 
 		alm.time.tm_mon -= 1;
 		alm.time.tm_year -= 1900;
+		pr_info("set_sapa: <ALRM> %4d-%02d-%02d %02d:%02d:%02d\n",
+			alm.time.tm_year+1900, alm.time.tm_mon+1, alm.time.tm_mday,
+			alm.time.tm_hour, alm.time.tm_min, alm.time.tm_sec);
 
 		/* read current time */
 		rtc_read_time(rtcdev, &rtc_tm);
 		rtc_tm_to_time(&rtc_tm, &rtc_sec);
-		pr_info("[SAPA] rtc  %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
+		pr_info("set_sapa: <rtc > %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
 			rtc_tm.tm_year, rtc_tm.tm_mon, rtc_tm.tm_mday,
 			rtc_tm.tm_hour, rtc_tm.tm_min, rtc_tm.tm_sec, rtc_sec);
 
-		/* read kernel time */
-		getnstimeofday(&wall_time);
-		wall_ktm = timespec_to_ktime(wall_time);
-		wall_tm = rtc_ktime_to_tm(wall_ktm);
-		pr_info("[SAPA] wall %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
-			wall_tm.tm_year, wall_tm.tm_mon, wall_tm.tm_mday,
-			wall_tm.tm_hour, wall_tm.tm_min, wall_tm.tm_sec, wall_time.tv_sec);
-
 		/* calculate offset */
-		set_normalized_timespec(&rtc_delta,
-					wall_time.tv_sec - rtc_sec,
-					wall_time.tv_nsec);
+		set_normalized_timespec(&delta,
+					ktm_ts.tv_sec - rtc_sec,
+					ktm_ts.tv_nsec);
 
 		/* convert user requested SAPA time to second type */
-		rtc_tm_to_time(&alm.time, &rtc_alarm_time);
+		rtc_tm_to_time(&alm.time, &rtc_alm_sec);
 
 		/* convert to RTC time with user requested SAPA time and offset */
-		rtc_alarm_time -= rtc_delta.tv_sec;
-		rtc_time_to_tm(rtc_alarm_time, &alm.time);
-		pr_info("[SAPA] arlm %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
+		rtc_alm_sec -= delta.tv_sec;
+		if ((alm.enabled % 2) == (rtc_alm_sec % 2)) {
+			rtc_alm_sec++;
+			pr_debug("set_sapa: be adjusted\n");
+		}
+		alm.enabled = 1;
+		rtc_time_to_tm(rtc_alm_sec, &alm.time);
+		pr_info("set_sapa: <alrm> %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
 			alm.time.tm_year, alm.time.tm_mon, alm.time.tm_mday,
-			alm.time.tm_hour, alm.time.tm_min, alm.time.tm_sec, rtc_alarm_time);
+			alm.time.tm_hour, alm.time.tm_min, alm.time.tm_sec, rtc_alm_sec);
 
 	}
 	ret = rtc_set_bootalarm(rtcdev, &alm);
-	if (ret < 0) {
-		printk( "alarm_set_alarm: "
-			"Failed to set ALARM, time will be lost on reboot\n");
-		return -2;
-	}
-	return 0;
+	if (ret < 0)
+		pr_err("%s: Failed to set bootalarm\n", __func__);
+
+	return ret;
 }
-extern int alarm_set_alarm(char* alarm_data);
 #endif /*CONFIG_RTC_AUTO_PWRON*/
 
 static void alarmtimer_rtc_remove_device(struct device *dev,
@@ -479,6 +479,11 @@ static int alarmtimer_suspend(struct device *dev)
 	struct rtc_device *rtc;
 	int i;
 	int ret = 0;
+#ifdef CONFIG_SEC_PM_DEBUG
+	pid_t pid = 0;
+	char task_comm[TASK_COMM_LEN] = {0,};
+	void *func = NULL;
+#endif
 
 	spin_lock_irqsave(&freezer_delta_lock, flags);
 	min = freezer_delta;
@@ -495,6 +500,7 @@ static int alarmtimer_suspend(struct device *dev)
 		struct alarm_base *base = &alarm_bases[i];
 		struct timerqueue_node *next;
 		ktime_t delta;
+		struct alarm *palarm;
 
 		spin_lock_irqsave(&base->lock, flags);
 		next = timerqueue_getnext(&base->timerqueue);
@@ -502,14 +508,32 @@ static int alarmtimer_suspend(struct device *dev)
 		if (!next)
 			continue;
 		delta = ktime_sub(next->expires, base->gettime());
-		if (!min.tv64 || (delta.tv64 < min.tv64))
+
+		palarm = container_of(next, struct alarm, node);
+		pr_info("[%s] cntvct : %lld, gettime : %lld, alarm : %p,"\
+			"alarm->function : %pF, expires : %lld, delta : %lld\n",
+			__func__, arch_counter_get_cntvct(), ktime_to_ns(base->gettime()),
+			palarm, palarm->function, ktime_to_ns(next->expires), ktime_to_ns(delta));
+		if (!min.tv64 || (delta.tv64 < min.tv64)) {
 			min = delta;
+#ifdef CONFIG_SEC_PM_DEBUG
+			if (ktime_to_ns(min) < 2 * NSEC_PER_SEC) {
+				pid = next->pid;
+				strncpy(task_comm, next->task_comm, TASK_COMM_LEN - 1);
+				func = next->func;
+			}
+#endif
+		}
 	}
 	if (min.tv64 == 0)
 		return 0;
 
 	if (ktime_to_ns(min) < 2 * NSEC_PER_SEC) {
 		__pm_wakeup_event(ws, 2 * MSEC_PER_SEC);
+#ifdef CONFIG_SEC_PM_DEBUG
+		pr_err("%s: alarm will be expired in 2 secs[PID:%d(%s), %pf]\n",
+					__func__, pid, task_comm, func);
+#endif
 		return -EBUSY;
 	}
 
@@ -519,13 +543,11 @@ static int alarmtimer_suspend(struct device *dev)
 	now = rtc_tm_to_ktime(tm);
 	now = ktime_add(now, min);
 	if (poweron_alarm) {
-		struct rtc_time tm_val;
-		unsigned long secs;
+		uint64_t msec = 0;
 
-		tm_val = rtc_ktime_to_tm(min);
-		rtc_tm_to_time(&tm_val, &secs);
-		pr_info("alarm: will wake up after %lu secs\n", secs);
-		lpm_suspend_wake_time(secs);
+		msec = ktime_to_ms(min);
+		pr_info("alarm: will wake up after %llu msecs\n", msec);
+		lpm_suspend_wake_time(msec);
 	} else {
 		/* Set alarm, if in the past reject suspend briefly to handle */
 		ret = rtc_timer_start(rtc, &rtctimer, now, ktime_set(0, 0));
@@ -679,7 +701,7 @@ void alarm_start_relative(struct alarm *alarm, ktime_t start)
 {
 	struct alarm_base *base = &alarm_bases[alarm->type];
 
-	start = ktime_add(start, base->gettime());
+	start = ktime_add_safe(start, base->gettime());
 	alarm_start(alarm, start);
 }
 EXPORT_SYMBOL_GPL(alarm_start_relative);
@@ -765,7 +787,7 @@ u64 alarm_forward(struct alarm *alarm, ktime_t now, ktime_t interval)
 		overrun++;
 	}
 
-	alarm->node.expires = ktime_add(alarm->node.expires, interval);
+	alarm->node.expires = ktime_add_safe(alarm->node.expires, interval);
 	return overrun;
 }
 EXPORT_SYMBOL_GPL(alarm_forward);
@@ -953,13 +975,22 @@ static int alarm_timer_set(struct k_itimer *timr, int flags,
 
 	/* start the timer */
 	timr->it.alarm.interval = timespec_to_ktime(new_setting->it_interval);
+
+	/*
+	 * Rate limit to the tick as a hot fix to prevent DOS. Will be
+	 * mopped up later.
+	 */
+	if (timr->it.alarm.interval.tv64 &&
+			ktime_to_ns(timr->it.alarm.interval) < TICK_NSEC)
+		timr->it.alarm.interval = ktime_set(0, TICK_NSEC);
+
 	exp = timespec_to_ktime(new_setting->it_value);
 	/* Convert (if necessary) to absolute time */
 	if (flags != TIMER_ABSTIME) {
 		ktime_t now;
 
 		now = alarm_bases[timr->it.alarm.alarmtimer.type].gettime();
-		exp = ktime_add(now, exp);
+		exp = ktime_add_safe(now, exp);
 	}
 
 	alarm_start(&timr->it.alarm.alarmtimer, exp);

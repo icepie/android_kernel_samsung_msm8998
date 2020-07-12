@@ -25,8 +25,7 @@
 #define INPUT_LOG_BUF_SIZE	512
 
 #ifdef CONFIG_SEC_DEBUG_TSP_LOG
-//#include <linux/sec_debug.h>		/* exynos */
-#include <linux/input/sec_tsp_log.h>	/* qualcomm */
+#include <linux/input/sec_tsp_log.h>
 
 #define input_dbg(mode, dev, fmt, ...)						\
 ({										\
@@ -70,7 +69,23 @@
 		sec_debug_tsp_log_msg(input_log_buf, fmt, ## __VA_ARGS__);	\
 	}									\
 })
+#define input_raw_info(mode, dev, fmt, ...)					\
+({										\
+	static char input_log_buf[INPUT_LOG_BUF_SIZE];				\
+	snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", SECLOG, fmt);	\
+	dev_info(dev, input_log_buf, ## __VA_ARGS__);				\
+	if (mode) {								\
+		if (dev)							\
+			snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", \
+					dev_driver_string(dev), dev_name(dev)); \
+		else								\
+			snprintf(input_log_buf, sizeof(input_log_buf), "NULL"); \
+		sec_debug_tsp_log_msg(input_log_buf, fmt, ## __VA_ARGS__);	\
+		sec_debug_tsp_raw_data_msg(input_log_buf, fmt, ## __VA_ARGS__);	\
+	}									\
+})
 #define input_log_fix()	sec_tsp_log_fix()
+#define input_raw_data_clear() sec_tsp_raw_data_clear()
 #else
 #define input_dbg(mode, dev, fmt, ...)						\
 ({										\
@@ -90,7 +105,9 @@
 	snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", SECLOG, fmt);	\
 	dev_err(dev, input_log_buf, ## __VA_ARGS__);				\
 })
+#define input_raw_info(mode, dev, fmt, ...) input_info(mode, dev, fmt, ## __VA_ARGS__)
 #define input_log_fix()	{}
+#define input_raw_data_clear() {}
 #endif
 
 
@@ -337,6 +354,7 @@ struct input_mask {
 
 #define EVIOCSCLOCKID		_IOW('E', 0xa0, int)			/* Set clockid to be used for timestamps */
 
+#define ABS_MT_PALM		0x3e	/* palm touch */
 /*
  * Switch events
  */

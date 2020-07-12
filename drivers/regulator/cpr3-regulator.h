@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,9 +36,9 @@ struct cpr3_thread;
  * from 0 to 63.  bit_start must be less than or equal to bit_end.
  */
 struct cpr3_fuse_param {
-	unsigned		row;
-	unsigned		bit_start;
-	unsigned		bit_end;
+	unsigned int		row;
+	unsigned int		bit_start;
+	unsigned int		bit_end;
 };
 
 /* Each CPR3 sensor has 16 ring oscillators */
@@ -141,6 +141,9 @@ struct cpr4_sdelta {
  * @use_open_loop:	Boolean indicating that open-loop (i.e CPR disabled) as
  *			opposed to closed-loop operation must be used for this
  *			corner on CPRh controllers.
+ * @ldo_mode_allowed:	Boolean which indicates if LDO mode is allowed for this
+ *			corner. This field is applicable for CPR4 controllers
+ *			that manage LDO300 supply regulator.
  * @sdelta:		The CPR4 controller specific data for this corner. This
  *			field is applicable for CPR4 controllers.
  *
@@ -174,6 +177,7 @@ struct cpr3_corner {
 	u32			irq_en;
 	int			aging_derate;
 	bool			use_open_loop;
+	bool			ldo_mode_allowed;
 	struct cpr4_sdelta	*sdelta;
 };
 
@@ -190,6 +194,18 @@ struct cpr3_corner {
 struct cprh_corner_band {
 	int			corner;
 	struct cpr4_sdelta	*sdelta;
+};
+
+/**
+ * enum cpr3_ldo_type - Constants which define the LDO supply regulator
+ *	types used to manage the subsystem component rail voltage.
+ * %CPR3_LDO_KRYO:	Kryo LDO regulator used to sub-regulate the HMSS
+ *			per-cluster voltage.
+ * %CPR3_LDO300:	LDO regulator used to sub-regulate the GFX voltage.
+ */
+enum cpr3_ldo_type {
+	CPR3_LDO_KRYO	= 0,
+	CPR3_LDO300	= 1,
 };
 
 /**
@@ -275,6 +291,7 @@ struct cprh_corner_band {
  *			participated in the last aggregation event
  * @debug_corner:	Index identifying voltage corner used for displaying
  *			corner configuration values in debugfs
+ * @ldo_type:		LDO regulator type.
  * @ldo_min_headroom_volt: Minimum voltage difference in microvolts required
  *			between the VDD supply voltage and the LDO output in
  *			order for the LDO operate
@@ -358,6 +375,7 @@ struct cpr3_regulator {
 	int			last_closed_loop_corner;
 	bool			aggregated;
 	int			debug_corner;
+	enum cpr3_ldo_type	ldo_type;
 	int			ldo_min_headroom_volt;
 	int			ldo_max_headroom_volt;
 	int			ldo_adjust_volt;
@@ -684,6 +702,13 @@ struct cpr3_panic_regs_info {
  * @aging_possible_val:	Optional value that the masked aging_possible_reg
  *			register must have in order for a CPR aging measurement
  *			to be possible.
+ * @aging_gcnt_scaling_factor: The scaling factor used to derive the gate count
+ *			used for aging measurements. This value is divided by
+ *			1000 when used as shown in the below equation:
+ *			      Aging_GCNT = GCNT_REF * scaling_factor / 1000.
+ *			For example, a value of 1500 specifies that the gate
+ *			count (GCNT) used for aging measurement should be 1.5
+ *			times of reference gate count (GCNT_REF).
  * @step_quot_fixed:	Fixed step quotient value used for target quotient
  *			adjustment if use_dynamic_step_quot is not set.
  *			This parameter is only relevant for CPR4 controllers
@@ -715,6 +740,14 @@ struct cpr3_panic_regs_info {
  * @panic_regs_info:	Array of panic registers information which provides the
  *			list of registers to dump when the device crashes.
  * @panic_notifier:	Notifier block registered to global panic notifier list.
+ * @support_ldo300_vreg: Boolean value which indicates that this CPR controller
+ *			manages an underlying LDO regulator of type LDO300.
+ * @reset_step_quot_loop_en: Boolean value which indicates that this CPR
+ *			controller should be configured to reset step_quot on
+ *			each loop_en = 0 transition. This configuration allows
+ *			the CPR controller to first use the default step_quot
+ *			and then later switch to the run-time calibrated
+ *			step_quot.
  *
  * This structure contains both configuration and runtime state data.  The
  * elements cpr_allowed_sw, use_hw_closed_loop, aggr_corner, cpr_enabled,
@@ -801,6 +834,7 @@ struct cpr3_controller {
 	int			aging_sensor_count;
 	u32			aging_possible_mask;
 	u32			aging_possible_val;
+	u32			aging_gcnt_scaling_factor;
 
 	u32			step_quot_fixed;
 	u32			initial_temp_band;
@@ -815,6 +849,8 @@ struct cpr3_controller {
 	u32			voltage_settling_time;
 	struct cpr3_panic_regs_info *panic_regs_info;
 	struct notifier_block	panic_notifier;
+	bool			support_ldo300_vreg;
+	bool			reset_step_quot_loop_en;
 };
 
 /* Used for rounding voltages to the closest physically available set point. */
@@ -883,6 +919,10 @@ int cpr3_apm_init(struct cpr3_controller *ctrl);
 int cpr3_mem_acc_init(struct cpr3_regulator *vreg);
 void cprh_adjust_voltages_for_apm(struct cpr3_regulator *vreg);
 void cprh_adjust_voltages_for_mem_acc(struct cpr3_regulator *vreg);
+
+int cpr3_adjust_target_quotients(struct cpr3_regulator *vreg,
+			int *fuse_volt_adjust);
+
 int cpr3_save_fused_open_loop_voltage(struct cpr3_regulator *vreg, int *fuse_volt);
 #else
 
@@ -998,7 +1038,6 @@ static inline int cpr3_limit_open_loop_voltages(struct cpr3_regulator *vreg)
 static inline void cpr3_open_loop_voltage_as_ceiling(
 			struct cpr3_regulator *vreg)
 {
-	return;
 }
 
 static inline int cpr3_limit_floor_voltages(struct cpr3_regulator *vreg)
@@ -1008,7 +1047,6 @@ static inline int cpr3_limit_floor_voltages(struct cpr3_regulator *vreg)
 
 static inline void cpr3_print_quots(struct cpr3_regulator *vreg)
 {
-	return;
 }
 
 static inline int cpr3_adjust_fused_open_loop_voltages(
@@ -1061,6 +1099,12 @@ static inline void cprh_adjust_voltages_for_apm(struct cpr3_regulator *vreg)
 
 static inline void cprh_adjust_voltages_for_mem_acc(struct cpr3_regulator *vreg)
 {
+}
+
+static inline int cpr3_adjust_target_quotients(struct cpr3_regulator *vreg,
+			int *fuse_volt_adjust)
+{
+	return 0;
 }
 
 static int cpr3_save_fused_open_loop_voltage(struct cpr3_regulator *vreg, int *fuse_volt)

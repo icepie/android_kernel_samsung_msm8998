@@ -50,6 +50,7 @@ ssize_t send_i2c_cmd_vqe(struct dbmdx_private *p,
 int send_i2c_cmd_boot(struct dbmdx_private *p, u32 command);
 int i2c_verify_boot_checksum(struct dbmdx_private *p,
 	const void *checksum, size_t chksum_len);
+int i2c_verify_chip_id(struct dbmdx_private *p);
 int i2c_common_probe(struct i2c_client *client,
 		const struct i2c_device_id *id);
 

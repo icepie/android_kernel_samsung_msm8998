@@ -86,6 +86,7 @@
 
 
 #define BUCK_ALWAYS_3_2V	0x40
+#define BUCK_ALWAYS_3_4V	0x50
 #define BUCK_ALWAYS_3_5V	0x58
 
 /* S2ABB01 regulator ids */

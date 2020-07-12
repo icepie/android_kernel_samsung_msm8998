@@ -48,7 +48,7 @@ static const char *cmd_string(unsigned long cmd)
 	case EXTERNAL_NOTIFY_MDMBLOCK_POST:
 		return "mdm_block_post";
 	case EXTERNAL_NOTIFY_POWERROLE:
-		return "power_role_notify";		
+		return "power_role_notify";
 	default:
 		return "undefined";
 	}

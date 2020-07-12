@@ -55,26 +55,30 @@
 
 #include "sec_adc.h"
 
-#define SEC_BAT_CURRENT_EVENT_NONE					0x0000
-#define SEC_BAT_CURRENT_EVENT_AFC					0x0001
-#define SEC_BAT_CURRENT_EVENT_CHARGE_DISABLE		0x0002
-#define SEC_BAT_CURRENT_EVENT_SKIP_HEATING_CONTROL	0x0004
-#define SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING		0x0010
-#define SEC_BAT_CURRENT_EVENT_HIGH_TEMP_SWELLING	0x0020
+#define SEC_BAT_CURRENT_EVENT_NONE			0x00000
+#define SEC_BAT_CURRENT_EVENT_AFC			0x00001
+#define SEC_BAT_CURRENT_EVENT_CHARGE_DISABLE		0x00002
+#define SEC_BAT_CURRENT_EVENT_SKIP_HEATING_CONTROL	0x00004
+#define SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING		0x00010
+#define SEC_BAT_CURRENT_EVENT_HIGH_TEMP_SWELLING	0x00020
 #if defined(CONFIG_ENABLE_100MA_CHARGING_BEFORE_USB_CONFIGURED)
-#define SEC_BAT_CURRENT_EVENT_USB_100MA			0x0040
+#define SEC_BAT_CURRENT_EVENT_USB_100MA			0x00040
 #else
-#define SEC_BAT_CURRENT_EVENT_USB_100MA			0x0000
+#define SEC_BAT_CURRENT_EVENT_USB_100MA			0x00000
 #endif
-#define SEC_BAT_CURRENT_EVENT_LOW_TEMP			0x0080
-#define SEC_BAT_CURRENT_EVENT_SWELLING_MODE		(SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING | SEC_BAT_CURRENT_EVENT_LOW_TEMP | SEC_BAT_CURRENT_EVENT_HIGH_TEMP_SWELLING)
-#define SEC_BAT_CURRENT_EVENT_USB_SUPER			0x0100
-#define SEC_BAT_CURRENT_EVENT_CHG_LIMIT			0x0200
-#define SEC_BAT_CURRENT_EVENT_CALL			0x0400
-#define SEC_BAT_CURRENT_EVENT_SLATE			0x0800
-#define SEC_BAT_CURRENT_EVENT_VBAT_OVP			0x1000
-#define SEC_BAT_CURRENT_EVENT_VSYS_OVP			0x2000
-#define SEC_BAT_CURRENT_EVENT_WPC_VOUT_LOCK		0x4000
+#define SEC_BAT_CURRENT_EVENT_LOW_TEMP			0x00080
+#define SEC_BAT_CURRENT_EVENT_SWELLING_MODE		(SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING |\
+				SEC_BAT_CURRENT_EVENT_LOW_TEMP | SEC_BAT_CURRENT_EVENT_HIGH_TEMP_SWELLING)
+#define SEC_BAT_CURRENT_EVENT_USB_SUPER			0x00100
+#define SEC_BAT_CURRENT_EVENT_CHG_LIMIT			0x00200
+#define SEC_BAT_CURRENT_EVENT_CALL			0x00400
+#define SEC_BAT_CURRENT_EVENT_SLATE			0x00800
+#define SEC_BAT_CURRENT_EVENT_VBAT_OVP			0x01000
+#define SEC_BAT_CURRENT_EVENT_VSYS_OVP			0x02000
+#define SEC_BAT_CURRENT_EVENT_WPC_VOUT_LOCK		0x04000
+#define SEC_BAT_CURRENT_EVENT_AICL			0x08000
+#define SEC_BAT_CURRENT_EVENT_HV_DISABLE		0x10000
+#define SEC_BAT_CURRENT_EVENT_SELECT_PDO		0x20000
 
 #define SIOP_EVENT_NONE 	0x0000
 #define SIOP_EVENT_WPC_CALL 	0x0001
@@ -161,6 +165,7 @@ struct sec_battery_info {
 	struct power_supply *psy_ac;
 	struct power_supply *psy_wireless;
 	struct power_supply *psy_ps;
+	struct power_supply *psy_pogo;
 	unsigned int irq;
 
 	int pd_usb_attached;
@@ -201,9 +206,10 @@ struct sec_battery_info {
 	int voltage_avg;		/* average voltage (mV) */
 	int voltage_ocv;		/* open circuit voltage (mV) */
 	int current_now;		/* current (mA) */
-	int inbat_adc;          /* inbat adc */	
+	int inbat_adc;          /* inbat adc */
 	int current_avg;		/* average current (mA) */
 	int current_max;		/* input current limit (mA) */
+	int charge_counter;		/* remaining capacity (uAh) */
 	int current_adc;
 
 	unsigned int capacity;			/* SOC (%) */
@@ -236,6 +242,11 @@ struct sec_battery_info {
 	struct cisd cisd;
 	bool skip_cisd;
 	bool usb_overheat_check;
+	int prev_volt;
+	int prev_temp;
+	int prev_jig_on;
+	int enable_update_data;
+	int prev_chg_on;
 #endif
 
 	/* battery check */
@@ -263,6 +274,7 @@ struct sec_battery_info {
 	unsigned int chg_limit;
 	unsigned int chg_limit_recovery_cable;
 	unsigned int vbus_chg_by_siop;
+	unsigned int vbus_chg_by_full;
 	unsigned int mix_limit;
 	unsigned int vbus_limit;
 
@@ -283,11 +295,11 @@ struct sec_battery_info {
 
 	int temp_adc;
 	int temp_ambient_adc;
-	int usb_temp_adc;	
+	int usb_temp_adc;
 	int chg_temp_adc;
 	int wpc_temp_adc;
 	int coil_temp_adc;
-	int slave_chg_temp_adc;	
+	int slave_chg_temp_adc;
 
 	int temp_highlimit_threshold;
 	int temp_highlimit_recovery;
@@ -359,6 +371,8 @@ struct sec_battery_info {
 	bool wc_pack_max_curr;
 
 	int wire_status;
+	/* pogo status */
+	int pogo_status;
 
 	/* wearable charging */
 	int ps_status;
@@ -392,7 +406,6 @@ struct sec_battery_info {
 #endif
 #if defined(CONFIG_CALC_TIME_TO_FULL)
 	int timetofull;
-	bool complete_timetofull;
 	struct delayed_work timetofull_work;
 #endif
 	struct delayed_work slowcharging_work;
@@ -421,12 +434,6 @@ struct sec_battery_info {
 	unsigned long prev_safety_time;
 	unsigned long expired_time;
 	unsigned long cal_safety_time;
-#if defined(CONFIG_BATTERY_SBM_DATA)
-	struct mutex sbmlock;
-	bool sbm_data;
-	char* strSbmData;
-	char* strSbmDataB;
-#endif
 	int fg_reset;
 };
 
@@ -479,7 +486,7 @@ enum {
 	BATT_TEMP_AVER,
 	BATT_TEMP_ADC_AVER,
 	USB_TEMP,
-	USB_TEMP_ADC,	
+	USB_TEMP_ADC,
 	BATT_CHG_TEMP,
 	BATT_CHG_TEMP_ADC,
 	SLAVE_CHG_TEMP,
@@ -567,8 +574,10 @@ enum {
 #endif
 	WC_VOUT,
 	WC_VRECT,
+#if defined(CONFIG_WIRELESS_CHARGER_HIGH_VOLTAGE)
 	BATT_HV_WIRELESS_STATUS,
 	BATT_HV_WIRELESS_PAD_CTRL,
+#endif
 	WC_OP_FREQ,
 	WC_CMD_INFO,
 	BATT_TUNE_FLOAT_VOLTAGE,
@@ -605,9 +614,8 @@ enum {
 	CISD_WIRE_COUNT,
 	CISD_WC_DATA,
 	CISD_WC_DATA_JSON,
-#endif	
-#if defined(CONFIG_BATTERY_SBM_DATA)
-	SBM_DATA,
+	PREV_BATTERY_DATA,
+	PREV_BATTERY_INFO,
 #endif
 	SAFETY_TIMER_SET,
 	BATT_SWELLING_CONTROL,
@@ -644,18 +652,12 @@ extern bool sec_bat_check_step_charging(struct sec_battery_info *battery);
 #endif
 
 #if defined(CONFIG_UPDATE_BATTERY_DATA)
-extern int sec_battery_update_data(const char* file_path);
+extern int sec_battery_update_data(const char *file_path);
 #endif
 
 #if defined(CONFIG_BATTERY_CISD)
 extern bool sec_bat_cisd_check(struct sec_battery_info *battery);
 extern void sec_battery_cisd_init(struct sec_battery_info *battery);
-#endif
-#if defined(CONFIG_BATTERY_SBM_DATA)
-extern bool sec_bat_add_sbm_data(struct sec_battery_info *battery, int data_type);
-extern void sec_bat_get_sbm_data_string(union power_supply_propval *val);
-extern void sec_bat_init_sbm(struct sec_battery_info *battery);
-extern void sec_bat_exit_sbm(struct sec_battery_info *battery);
 #endif
 
 #endif /* __SEC_BATTERY_H */

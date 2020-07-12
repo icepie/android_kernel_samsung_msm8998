@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -143,7 +143,6 @@ struct msm_vidc_format {
 	char name[MAX_NAME_LENGTH];
 	u8 description[32];
 	u32 fourcc;
-	int num_planes;
 	int type;
 	u32 (*get_frame_size)(int plane, u32 height, u32 width);
 };
@@ -165,6 +164,8 @@ struct msm_video_device {
 struct session_prop {
 	u32 width[MAX_PORT_NUM];
 	u32 height[MAX_PORT_NUM];
+	u32 num_planes[MAX_PORT_NUM];
+	u32 extradata[MAX_PORT_NUM];
 	u32 fps;
 	u32 bitrate;
 };
@@ -276,7 +277,6 @@ struct msm_vidc_inst {
 	struct completion completions[SESSION_MSG_END - SESSION_MSG_START + 1];
 	struct v4l2_ctrl **cluster;
 	struct v4l2_fh event_handler;
-	struct msm_smem *extradata_handle;
 	bool in_reconfig;
 	u32 reconfig_width;
 	u32 reconfig_height;
@@ -355,7 +355,7 @@ struct buffer_info *device_to_uvaddr(struct msm_vidc_list *buf_list,
 int buf_ref_get(struct msm_vidc_inst *inst, struct buffer_info *binfo);
 int buf_ref_put(struct msm_vidc_inst *inst, struct buffer_info *binfo);
 int output_buffer_cache_invalidate(struct msm_vidc_inst *inst,
-				struct buffer_info *binfo);
+		struct buffer_info *binfo, struct v4l2_buffer *b);
 int qbuf_dynamic_buf(struct msm_vidc_inst *inst,
 			struct buffer_info *binfo);
 int unmap_and_deregister_buf(struct msm_vidc_inst *inst,
@@ -369,7 +369,7 @@ struct msm_smem *msm_smem_alloc(void *clt, size_t size, u32 align, u32 flags,
 void msm_smem_free(void *clt, struct msm_smem *mem);
 void msm_smem_delete_client(void *clt);
 int msm_smem_cache_operations(void *clt, struct msm_smem *mem,
-		enum smem_cache_ops);
+		enum smem_cache_ops, int size);
 struct msm_smem *msm_smem_user_to_kernel(void *clt, int fd, u32 offset,
 				enum hal_buffer buffer_type);
 struct context_bank_info *msm_smem_get_context_bank(void *clt,

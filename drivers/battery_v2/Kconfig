@@ -309,6 +309,17 @@ config FUELGAUGE_S2MU003
 	 Say Y to include support
 	 for S.LSI S2MU003 fuel gauge driver.
 
+config FUELGAUGE_S2MU004
+	tristate "S2MU004 fuel gauge driver"
+	default n
+	depends on (MFD_S2MU004) && I2C
+	help
+	 Say Y here to enable support for the S2MU004 fuelgauge.
+	 S2MU004 includes pmic, led, haptic, flash.
+	 You have to define MFD_S2MU004 to use fuelgauge.
+	 This driver source code implemented
+	 all functions for S2MU004 fuelgauge.
+
 config PREVENT_SOC_JUMP
 	tristate "prevent soc jump at full-charged"
 	default n
@@ -559,11 +570,30 @@ config CHARGER_SMB1351
          The SMB1351 is a slave charger that extends
          the current capability of an existing charging solution.
 
+config CHARGER_S2MU004
+	tristate "S2MU004 charger support"
+	depends on (MFD_S2MU004) && I2C
+	help
+	  Say Y here to enable support for the S2MU004 charger.
+	  S2MU004 includes pmic, led, haptic, flash.
+	  You have to define MFD_S2MU004 to use charger.
+	  This driver source code implemented
+	  all functions for S2MU004 charger.
+
 config WIRELESS_CHARGER_HIGH_VOLTAGE
 	tristate "high voltage wireless charger"
 	depends on BATTERY_SAMSUNG && I2C
 	help
 	  Say Y here to enable support for the wireless charger charger
+	  driver.
+
+config WIRELESS_NO_HV
+	tristate "wireless no hv"
+	depends on BATTERY_SAMSUNG && I2C
+	help
+	  Say Y here
+	  to disable
+	  HV wireless charging
 	  driver.
 
 config CS100_JPNCONCEPT
@@ -695,13 +725,6 @@ config BATTERY_AGE_FORECAST
 	depends on BATTERY_SWELLING
 	help
 	  Say Y to use calc time to full function.
-
-config BATTERY_SBM_DATA
-	tristate "battery manager data"
-	default n
-	depends on BATTERY_SAMSUNG
-	help
-	Say Y to use update battery manager data
 
 config ENG_BATTERY_CONCEPT
        bool "enable temp block"

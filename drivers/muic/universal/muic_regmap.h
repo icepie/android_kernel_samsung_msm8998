@@ -102,6 +102,9 @@ struct vendor_ops {
 	int (*get_switch)(struct regmap_desc  *);
 	void (*set_switch)(struct regmap_desc  *, int);
 	void (*set_manual_usb_path)(struct regmap_desc  *);
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+	void (*set_manual_audio_path)(struct regmap_desc  *);
+#endif
 	void (*set_adc_scan_mode)(struct regmap_desc  *, int);
 	int (*get_adc_scan_mode)(struct regmap_desc  *);
 	void (*set_jig_on)(struct regmap_desc *, int);

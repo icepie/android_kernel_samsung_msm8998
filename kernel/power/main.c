@@ -42,11 +42,18 @@ int unregister_pm_notifier(struct notifier_block *nb)
 }
 EXPORT_SYMBOL_GPL(unregister_pm_notifier);
 
-int pm_notifier_call_chain(unsigned long val)
+int __pm_notifier_call_chain(unsigned long val, int nr_to_call, int *nr_calls)
 {
-	int ret = blocking_notifier_call_chain(&pm_chain_head, val, NULL);
+	int ret;
+
+	ret = __blocking_notifier_call_chain(&pm_chain_head, val, NULL,
+						nr_to_call, nr_calls);
 
 	return notifier_to_errno(ret);
+}
+int pm_notifier_call_chain(unsigned long val)
+{
+	return __pm_notifier_call_chain(val, -1, NULL);
 }
 
 /* If set, devices may be suspended and resumed asynchronously. */
@@ -284,13 +291,7 @@ static ssize_t pm_wakeup_irq_show(struct kobject *kobj,
 	return pm_wakeup_irq ? sprintf(buf, "%u\n", pm_wakeup_irq) : -ENODATA;
 }
 
-static ssize_t pm_wakeup_irq_store(struct kobject *kobj,
-					struct kobj_attribute *attr,
-					const char *buf, size_t n)
-{
-	return -EINVAL;
-}
-power_attr(pm_wakeup_irq);
+power_attr_ro(pm_wakeup_irq);
 
 #else /* !CONFIG_PM_SLEEP_DEBUG */
 static inline void pm_print_times_init(void) {}
@@ -769,14 +770,7 @@ static ssize_t pm_trace_dev_match_show(struct kobject *kobj,
 	return show_trace_dev_match(buf, PAGE_SIZE);
 }
 
-static ssize_t
-pm_trace_dev_match_store(struct kobject *kobj, struct kobj_attribute *attr,
-			 const char *buf, size_t n)
-{
-	return -EINVAL;
-}
-
-power_attr(pm_trace_dev_match);
+power_attr_ro(pm_trace_dev_match);
 
 #endif /* CONFIG_PM_TRACE */
 
@@ -805,6 +799,7 @@ power_attr(pm_freeze_timeout);
 #endif	/* CONFIG_FREEZER*/
 
 #ifdef CONFIG_SEC_PM
+#ifndef CONFIG_MACH_KELLYLTE_CHN_OPEN
 extern int qpnp_set_resin_wk_int(int en);
 static int volkey_wakeup = 1;
 static ssize_t volkey_wakeup_show(struct kobject *kobj,
@@ -834,6 +829,7 @@ static ssize_t volkey_wakeup_store(struct kobject *kobj,
 }
 
 power_attr(volkey_wakeup);
+#endif
 
 int poff_status;
 static ssize_t rtc_status_show(struct kobject *kobj,
@@ -919,7 +915,9 @@ static struct attribute * g[] = {
 	&pm_freeze_timeout_attr.attr,
 #endif
 #ifdef CONFIG_SEC_PM
+#ifndef CONFIG_MACH_KELLYLTE_CHN_OPEN
 	&volkey_wakeup_attr.attr,
+#endif
 	&rtc_status_attr.attr,
 #endif
 #if defined(CONFIG_FOTA_LIMIT)

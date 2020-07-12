@@ -131,21 +131,21 @@ config ESE_SECURE
 
 config ESE_SPI_GPIO_START
         int "ese start num"
-        default 0
+        default -1
         help
           eSE Driver.
           This driver provides support for ESE products.
 
 config ESE_SPI_GPIO_END
         int "ese end num"
-        default 0
+        default -1
         help
           eSE Driver.
           This driver provides support for ESE products.
 
 config ESE_SECURE_SPI_PORT
         int "ese bus num"
-        default 0
+        default 99
         help
           eSE Driver.
           This driver provides support for ESE products.
@@ -160,3 +160,4 @@ config SEC_NFC
 	  Say Y here to compile support for SAMSUNG NFC driver into the
 	  kernel.
 
+source "drivers/nfc/nfc_logger/Kconfig"

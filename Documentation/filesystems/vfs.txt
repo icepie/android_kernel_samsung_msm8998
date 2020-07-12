@@ -600,6 +600,7 @@ struct address_space_operations {
 	/* put migration-failed page back to right list */
 	void (*putback_page) (struct page *);
 	int (*launder_page) (struct page *);
+
 	int (*is_partially_uptodate) (struct page *, unsigned long,
 					unsigned long);
 	void (*is_dirty_writeback) (struct page *, bool *, bool *);

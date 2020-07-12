@@ -21,6 +21,7 @@ enum driver_chip {
 	CHIP_MAXIM,
 	CHIP_DRVXXX,
 	CHIP_ISAXXX,
+	CHIP_S2MU004,
 };
 
 enum freq_type {
@@ -168,6 +169,9 @@ extern void max77854_vibtonz_en(bool en);
 #endif
 #if defined(CONFIG_MOTOR_DRV_SM5720)
 extern void sm5720_vibtonz_en(bool en);
+#endif
+#if defined(CONFIG_MOTOR_S2MU004)
+extern void s2mu004_vibtonz_en(bool en);
 #endif
 
 #endif  /* _VIBRATOR_H */

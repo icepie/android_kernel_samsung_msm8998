@@ -57,7 +57,10 @@ usb_hw_param_print[USB_CCIC_HW_PARAM_MAX][MAX_HWPARAM_STRING] = {
 	{"CC_DEX"},
 	{"CC_WTIME"},
 	{"CC_WVBUS"},
+	{"CC_WVTIME"},
 	{"CC_CSHORT"},
+	{"M_AFCERR"},
+	{"M_DCDTMO"},
 	{"CC_VER"},
 };
 #endif
@@ -309,6 +312,9 @@ static ssize_t usb_hw_param_show(struct device *dev,
 	p_param = get_hw_param(n, USB_CCIC_WATER_VBUS_COUNT);
 	if (p_param)
 		*p_param += get_waterChg_count();
+	p_param = get_hw_param(n, USB_CCIC_WATER_VBUS_TIME_DURATION);
+	if (p_param)
+		*p_param += get_wVbus_duration();
 	p_param = get_hw_param(n, USB_CCIC_VERSION);
 	if (p_param)
 		*p_param = show_ccic_version();
@@ -357,13 +363,13 @@ static ssize_t usb_hw_param_store(
 		if (token)
 			prev_hw_param[index] = strtoull(token, NULL, 10);
 
-		if (!token || (prev_hw_param[index]>HWPARAM_DATA_LIMIT))
+		if (!token || (prev_hw_param[index] > HWPARAM_DATA_LIMIT))
 			goto error;
 	}
 
-	for (index = 0; index < (USB_CCIC_HW_PARAM_MAX - 1); index++) {
+	for (index = 0; index < (USB_CCIC_HW_PARAM_MAX - 1); index++)
 		*(get_hw_param(n, index)) += prev_hw_param[index];
-	}
+
 	pr_info("%s - ret : %zu\n", __func__, ret);
 error:
 	return ret;
@@ -396,6 +402,9 @@ static ssize_t hw_param_show(struct device *dev,
 	p_param = get_hw_param(n, USB_CCIC_WATER_VBUS_COUNT);
 	if (p_param)
 		*p_param += get_waterChg_count();
+	p_param = get_hw_param(n, USB_CCIC_WATER_VBUS_TIME_DURATION);
+	if (p_param)
+		*p_param += get_wVbus_duration();
 	p_param = get_hw_param(n, USB_CCIC_VERSION);
 	if (p_param)
 		*p_param = show_ccic_version();

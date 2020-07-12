@@ -53,6 +53,7 @@ struct sec_multi_charger_platform_data {
 	int sub_charger_condition_current_max;
 	unsigned int *sub_charger_condition_online;
 	unsigned int sub_charger_condition_online_size;
+	unsigned int sub_charger_condition_current_margin;
 };
 
 struct sec_multi_charger_info {

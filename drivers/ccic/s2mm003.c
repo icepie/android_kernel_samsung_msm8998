@@ -1119,8 +1119,10 @@ static int s2mm003_usbpd_probe(struct i2c_client *i2c,
 #if defined(CONFIG_OF)
 	if (i2c->dev.of_node)
 		of_s2mm003_usbpd_dt(&i2c->dev, usbpd_data);
-	else
+	else {
 		dev_err(&i2c->dev, "not found ccic dt! ret:%d\n", ret);
+		return -ENODEV;
+	}
 #endif
 	ret = gpio_request(usbpd_data->irq_gpio, "s2mm003_irq");
 	if (ret)

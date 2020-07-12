@@ -19,6 +19,7 @@
 #include <asm/bug.h>
 #include <asm/proc-fns.h>
 
+#include <asm/bug.h>
 #include <asm/memory.h>
 #include <asm/pgtable-hwdef.h>
 
@@ -255,6 +256,34 @@ static inline void rkp_inv_cache(u64 addr)
 #endif /* CONFIG_TIMA_RKP */
 static inline void set_pte(pte_t *ptep, pte_t pte)
 {
+#ifdef CONFIG_ARM64_STRICT_BREAK_BEFORE_MAKE
+	pteval_t old = pte_val(*ptep);
+	pteval_t new = pte_val(pte);
+
+	/* Only problematic if valid -> valid */
+	if (!(old & new & PTE_VALID))
+		goto pte_ok;
+
+	/* Changing attributes should go via an invalid entry */
+	if (WARN_ON((old & PTE_ATTRINDX_MASK) != (new & PTE_ATTRINDX_MASK)))
+		goto pte_bad;
+
+	/* Change of OA is only an issue if one mapping is writable */
+	if (!(old & new & PTE_RDONLY) &&
+	    WARN_ON(pte_pfn(*ptep) != pte_pfn(pte)))
+		goto pte_bad;
+
+	goto pte_ok;
+
+pte_bad:
+	*ptep = __pte(0);
+	dsb(ishst);
+	asm("tlbi	vmalle1is");
+	dsb(ish);
+	isb();
+pte_ok:
+#endif
+
 #ifdef CONFIG_TIMA_RKP
 	if (pte && rkp_is_pg_dbl_mapped((u64)(pte))){	
 		panic("TIMA RKP : Double mapping Detected pte = 0x%llx ptep = %p", (u64)pte, ptep);
@@ -262,7 +291,6 @@ static inline void set_pte(pte_t *ptep, pte_t pte)
         }
 	if (rkp_is_pte_protected((u64)ptep)) {
 		rkp_flush_cache((u64)ptep);
-		dump_stack();
 		rkp_call(RKP_PTE_SET, (unsigned long)ptep, pte_val(pte), 0, 0, 0);
 		rkp_flush_cache((u64)ptep);
 	} else {

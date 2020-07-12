@@ -31,6 +31,19 @@ Copyright (C) 2015, Samsung Electronics. All rights reserved.
 
 #define BF_TYPE 0x4D42             /* "MB" */
 
+DEFINE_SPINLOCK(ss_xlock);
+
+static struct ss_dbg_xlog {
+	struct ss_tlog logs[SS_XLOG_ENTRY];
+	u32 first;
+	u32 last;
+	u32 curr;
+	struct dentry *ss_xlog;
+	u32 xlog_enable;
+	u32 panic_on_err;
+} ss_dbg_xlog;
+
+
 struct BITMAPFILEHEADER                 /**** BMP file header structure ****/
 {
 	unsigned short bfType;           /* Magic number for file */
@@ -50,6 +63,193 @@ struct BITMAPFILEHEADER                 /**** BMP file header structure ****/
 	unsigned int   biClrUsed;        /* Number of colors used */
 	unsigned int   biClrImportant;   /* Number of important colors */
 } __packed;
+
+/************************************************************
+*
+*		Samsung XLOG & DUMP Function
+*
+**************************************************************/
+
+void mdss_samsung_xlog(const char *name, int flag, ...)
+{
+	unsigned long flags;
+	int i, val = 0;
+	va_list args;
+	struct ss_tlog *log;
+
+	spin_lock_irqsave(&ss_xlock, flags);
+	log = &ss_dbg_xlog.logs[ss_dbg_xlog.curr];
+	log->time = ktime_to_us(ktime_get());
+	log->name = name;
+	log->pid = current->pid;
+
+	va_start(args, flag);
+	for (i = 0; i < SS_XLOG_MAX_DATA; i++) {
+		val = va_arg(args, int);
+		if (val == DATA_LIMITER)
+			break;
+
+		log->data[i] = val;
+	}
+	va_end(args);
+	log->data_cnt = i;
+	ss_dbg_xlog.curr = (ss_dbg_xlog.curr + 1) % SS_XLOG_ENTRY;
+	ss_dbg_xlog.last++;
+
+	spin_unlock_irqrestore(&ss_xlock, flags);
+}
+
+static bool __mdss_samsung_dump_xlog_calc_range(void)
+{
+	static u32 next;
+	bool need_dump = true;
+	unsigned long flags;
+	struct ss_dbg_xlog *xlog = &ss_dbg_xlog;
+
+	spin_lock_irqsave(&ss_xlock, flags);
+
+	xlog->first = next;
+
+	if (xlog->last == xlog->first) {
+		need_dump = false;
+		goto dump_exit;
+	}
+
+	if (xlog->last < xlog->first) {
+		xlog->first %= SS_XLOG_ENTRY;
+		if (xlog->last < xlog->first)
+			xlog->last += SS_XLOG_ENTRY;
+	}
+
+	if ((xlog->last - xlog->first) > SS_XLOG_ENTRY) {
+		pr_warn("xlog buffer overflow before dump: %d\n",
+			xlog->last - xlog->first);
+		xlog->first = xlog->last - SS_XLOG_ENTRY;
+	}
+
+	next = xlog->first + 1;
+
+dump_exit:
+	spin_unlock_irqrestore(&ss_xlock, flags);
+
+	return need_dump;
+}
+
+static ssize_t mdss_samsung_xlog_dump_entry(char *xlog_buf, ssize_t xlog_buf_size)
+{
+	int i;
+	ssize_t off = 0;
+	struct ss_tlog *log;
+	unsigned long flags;
+
+	spin_lock_irqsave(&ss_xlock, flags);
+
+	log = &ss_dbg_xlog.logs[ss_dbg_xlog.first %
+		SS_XLOG_ENTRY];
+
+	off = snprintf((xlog_buf + off), (xlog_buf_size - off),
+		"[%5llu.%6llu]:", log->time/1000000, log->time%1000000);
+
+	if (off < SS_XLOG_BUF_ALIGN_TIME) {
+		memset((xlog_buf + off), 0x20, (SS_XLOG_BUF_ALIGN_TIME - off));
+		off = SS_XLOG_BUF_ALIGN_TIME;
+	}
+
+	off += snprintf((xlog_buf + off), (xlog_buf_size - off), "%s => ",
+		log->name);
+
+	for (i = 0; i < log->data_cnt; i++)
+		off += snprintf((xlog_buf + off), (xlog_buf_size - off),
+			"%x ", log->data[i]);
+
+	off += snprintf((xlog_buf + off), (xlog_buf_size - off), "\n");
+
+	spin_unlock_irqrestore(&ss_xlock, flags);
+
+	return off;
+}
+
+void mdss_samsung_dump_xlog(void)
+{
+	char xlog_buf[SS_XLOG_BUF_MAX]={0,};
+
+	pr_info("============ Start Samsung XLOG ============\n");
+
+	while (__mdss_samsung_dump_xlog_calc_range()) {
+		mdss_samsung_xlog_dump_entry(xlog_buf, SS_XLOG_BUF_MAX);
+		pr_info("%s", xlog_buf);
+	}
+
+	pr_info("============ Finish Samsung XLOG ============\n");
+}
+
+static ssize_t mdss_samsung_xlog_dump_read(struct file *file, char __user *buff,
+		size_t count, loff_t *ppos)
+{
+	ssize_t len = 0;
+	char xlog_buf[SS_XLOG_BUF_MAX];
+
+	if (__mdss_samsung_dump_xlog_calc_range()) {
+		len = mdss_samsung_xlog_dump_entry(xlog_buf, SS_XLOG_BUF_MAX);
+		if (copy_to_user(buff, xlog_buf, len))
+			return -EFAULT;
+		*ppos += len;
+	}
+
+	return len;
+}
+
+static int mdss_samsung_xlog_dump_show(struct seq_file *s, void *unused)
+{
+	ssize_t len = 0;
+	char xlog_buf[SS_XLOG_BUF_MAX];
+
+	if (__mdss_samsung_dump_xlog_calc_range()) {
+		len = mdss_samsung_xlog_dump_entry(xlog_buf, SS_XLOG_BUF_MAX);
+		seq_printf(s, "%s", xlog_buf);
+	}
+
+	return len;
+}
+
+static int mdss_samsung_xlog_dump_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mdss_samsung_xlog_dump_show, inode->i_private);
+}
+
+void mdss_samsung_store_xlog_panic_dbg(void)
+{
+	int last, i;
+	ssize_t len = 0;
+	char err_buf[SS_XLOG_PANIC_DBG_LENGH] = {0,};
+	struct ss_tlog *log;
+	struct ss_dbg_xlog *xlog = &ss_dbg_xlog;
+
+	last = xlog->last;
+	if (last)
+		last --;
+
+	while (last >= 0) {
+		log = &ss_dbg_xlog.logs[last % SS_XLOG_ENTRY];
+		len += snprintf((err_buf + len), (sizeof(err_buf) - len), "[%llu.%3llu]%s=>",
+			log->time/1000000, log->time%1000000, log->name);
+		if (len >= SS_XLOG_PANIC_DBG_LENGH)
+			goto end;
+		for (i = 0; i < log->data_cnt; i++) {
+			len += snprintf((err_buf + len), (sizeof(err_buf) - len),
+				"%x ", log->data[i]);
+			if (len >= SS_XLOG_PANIC_DBG_LENGH)
+				goto end;
+		}
+		last--;
+	}
+end:
+	pr_info("%s:%s\n", __func__, err_buf);
+#ifdef CONFIG_SEC_DEBUG
+	sec_debug_store_additional_dbg(DBG_2_DISPLAY_ERR, 0, "%s", err_buf);
+#endif
+
+}
 
 /************************************************************
 *
@@ -304,7 +504,7 @@ int mdss_samsung_read_rddpm(struct samsung_display_driver_data *vdd)
 	} else
 		LCD_ERR("no rddpm read cmds..\n");
 
-	return 0;
+	return (int)rddpm;
 }
 
 int mdss_samsung_read_rddsm(struct samsung_display_driver_data *vdd)
@@ -332,7 +532,7 @@ int mdss_samsung_read_rddsm(struct samsung_display_driver_data *vdd)
 	} else
 		LCD_ERR("no rddsm read cmds..\n");
 
-	return 0;
+	return (int)rddsm;
 }
 
 int mdss_samsung_read_errfg(struct samsung_display_driver_data *vdd)
@@ -375,7 +575,7 @@ int mdss_samsung_read_errfg(struct samsung_display_driver_data *vdd)
 	} else
 		LCD_ERR("no errfg read cmds..\n");
 
-	return 0;
+	return (int)err_fg;
 }
 
 int mdss_samsung_read_dsierr(struct samsung_display_driver_data *vdd)
@@ -405,7 +605,7 @@ int mdss_samsung_read_dsierr(struct samsung_display_driver_data *vdd)
 	} else
 		LCD_ERR("no dsi err read cmds..\n");
 
-	return 0;
+	return (int)dsi_err;
 }
 
 int mdss_samsung_read_self_diag(struct samsung_display_driver_data *vdd)
@@ -475,7 +675,9 @@ int mdss_samsung_dsi_te_check(struct samsung_display_driver_data *vdd)
 		}
 
 		if (te_count == te_max) {
-			LCD_ERR("LDI doesn't generate TE, ddi recovery start.");
+			LCD_ERR("LDI doesn't generate TE, Panel Recovery start.");
+			SS_XLOG(0xbad);
+			inc_dpui_u32_field(DPUI_KEY_QCT_NO_TE, 1);
 			return 1;
 		} else
 			LCD_ERR("LDI generate TE\n");
@@ -937,6 +1139,12 @@ static struct file_operations panel_dump_ops = {
 	.read = mdss_samsung_dump_regs_debug,
 };
 
+static struct file_operations xlog_dump_ops = {
+	.open = mdss_samsung_xlog_dump_open,
+	.read = mdss_samsung_xlog_dump_read,
+	.release = single_release,
+};
+
 /*
  * Debugfs related functions
  */
@@ -948,13 +1156,14 @@ static ssize_t mdss_samsung_panel_lpm_ctrl_debug(struct file *file,
 	struct mdss_dsi_ctrl_pdata *ctrl;
 	int mode, ret = count;
 	char buf[10];
+	size_t buf_size = min(count, sizeof(buf) - 1);
 
 	if (IS_ERR_OR_NULL(vdd)) {
 		ret = -EFAULT;
 		goto end;
 	}
 
-	if (copy_from_user(buf, user_buf, count)) {
+	if (copy_from_user(buf, user_buf, buf_size)) {
 		ret = -EFAULT;
 		goto end;
 	}
@@ -1095,6 +1304,7 @@ static void mdss_sasmung_panel_debug_create(struct samsung_display_driver_data *
 
 
 	/* Create file on debugfs on dump */
+	debugfs_create_file("xlog_dump", 0644, debug_data->dump, vdd, &xlog_dump_ops);
 	debugfs_create_file("reg_dump", 0600, debug_data->dump,	vdd, &panel_dump_ops);
 	debugfs_create_bool("print_cmds", 0600, debug_data->dump, &debug_data->print_cmds);
 	debugfs_create_bool("panic_on_pptimeout", 0600, debug_data->dump, &debug_data->panic_on_pptimeout);
@@ -1115,6 +1325,73 @@ static void mdss_sasmung_panel_debug_create(struct samsung_display_driver_data *
 	/* Create file on debugfs on hw_info */
 	/* TBD */
 }
+
+static bool ss_read_debug_partition(struct lcd_debug_t *value)
+{
+	return read_debug_partition(debug_index_lcd_debug_info, (void *)value);
+}
+
+static bool ss_write_debug_partition(struct lcd_debug_t *value)
+{
+	return write_debug_partition(debug_index_lcd_debug_info, (void *)value);
+}
+
+void ss_inc_ftout_debug(char *name)
+{
+	struct lcd_debug_t lcd_debug;
+
+	memset(&lcd_debug, 0, sizeof(struct lcd_debug_t));
+	ss_read_debug_partition(&lcd_debug);
+	lcd_debug.ftout.count += 1;
+	strncpy(lcd_debug.ftout.name, name, MAX_FTOUT_NAME);
+	ss_write_debug_partition(&lcd_debug);
+}
+
+#ifdef CONFIG_DISPLAY_USE_INFO
+static int dpci_notifier_callback(struct notifier_block *self,
+				 unsigned long event, void *data)
+{
+	ssize_t len = 0;
+	char tbuf[SS_XLOG_DPCI_LENGTH] = {0,};
+	struct lcd_debug_t lcd_debug;
+
+	/* 1. Read */
+	ss_read_debug_partition(&lcd_debug);
+	LCD_INFO("Read Result FTOUT_CNT=%d, FTOUT_NAME=%s\n", lcd_debug.ftout.count, lcd_debug.ftout.name);
+
+	/* 2. Make String */
+	if (lcd_debug.ftout.count) {
+		len += snprintf((tbuf + len), (SS_XLOG_DPCI_LENGTH - len),
+			"FTOUT CNT=%d ", lcd_debug.ftout.count);
+		len += snprintf((tbuf + len), (SS_XLOG_DPCI_LENGTH - len),
+			"NAME=%s ", lcd_debug.ftout.name);
+	}
+	if (samsung_get_vdd()->dsi_errors) {
+		len += snprintf((tbuf + len), (SS_XLOG_DPCI_LENGTH - len),
+		"dsierr-%llx ", samsung_get_vdd()->dsi_errors);
+	}
+
+	/* 3. Info Clear */
+	samsung_get_vdd()->dsi_errors = 0;
+	memset((void *)&lcd_debug, 0, sizeof(struct lcd_debug_t));
+	ss_write_debug_partition(&lcd_debug);
+
+	set_dpui_field(DPUI_KEY_QCT_SSLOG, tbuf, len);
+
+	return 0;
+}
+
+static int ss_register_dpci(struct samsung_display_driver_data *vdd)
+{
+	int ret;
+	memset(&vdd->dpci_notif, 0,
+			sizeof(vdd->dpci_notif));
+	vdd->dpci_notif.notifier_call = dpci_notifier_callback;
+
+	ret = dpui_logging_register(&vdd->dpci_notif, DPUI_TYPE_CTRL);
+	return ret;
+}
+#endif
 
 int mdss_sasmung_panel_debug_init(struct samsung_display_driver_data *vdd)
 {
@@ -1203,6 +1480,10 @@ int mdss_sasmung_panel_debug_init(struct samsung_display_driver_data *vdd)
 end:
 	if (ret && !IS_ERR_OR_NULL(debug_data->root))
 			debugfs_remove_recursive(debug_data->root);
+
+#ifdef CONFIG_DISPLAY_USE_INFO
+	ss_register_dpci(vdd);
+#endif
 
 	return ret;
 }

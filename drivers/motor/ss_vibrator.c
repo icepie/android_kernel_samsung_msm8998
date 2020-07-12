@@ -288,6 +288,11 @@ static void max778xx_haptic_en(struct ss_vib *vib, bool onoff)
 		sm5720_vibtonz_en(onoff);
 		break;
 #endif
+#if defined(CONFIG_MOTOR_S2MU004)
+	case CHIP_S2MU004:
+		s2mu004_vibtonz_en(onoff);
+		break;
+#endif
 	default:
 		break;
 	}
@@ -295,8 +300,9 @@ static void max778xx_haptic_en(struct ss_vib *vib, bool onoff)
 
 static void set_vibrator(struct ss_vib *vib)
 {
+#if !defined(CONFIG_MOTOR_S2MU004)
 	struct pinctrl *motor_pinctrl;
-
+#endif
 	pr_info("[VIB]: %s, value[%d]\n", __func__, vib->state);
 	if (vib->state) {
 		wake_lock(&vib_wake_lock);
@@ -304,6 +310,7 @@ static void set_vibrator(struct ss_vib *vib)
 #if defined(CONFIG_SLPI_MOTOR)
 		setSensorCallback(true, vib->timevalue);
 #endif
+#if !defined(CONFIG_MOTOR_S2MU004)
 		motor_pinctrl = devm_pinctrl_get_select(vib->dev, "tlmm_motor_active");
 		if (IS_ERR(motor_pinctrl)) {
 			if (PTR_ERR(motor_pinctrl) == -EPROBE_DEFER)
@@ -312,6 +319,9 @@ static void set_vibrator(struct ss_vib *vib)
 			pr_debug("[VIB]: Target does not use pinctrl\n");
 			motor_pinctrl = NULL;
 		}
+#else
+		max778xx_haptic_en(vib, true);
+#endif
 #if defined(CONFIG_BOOST_POWER_SHARE)
 		boost_power_on(vib, BOOST_REQUESTER_MOTOR, 1);
 #else 
@@ -323,6 +333,7 @@ static void set_vibrator(struct ss_vib *vib)
 		gpio_set_value(vib->vib_pwm_gpio, VIBRATION_ON);
 		hrtimer_start(&vib->vib_timer, ktime_set(vib->timevalue / 1000, (vib->timevalue % 1000) * 1000000),HRTIMER_MODE_REL);
 	} else {
+#if !defined(CONFIG_MOTOR_S2MU004)
 		motor_pinctrl = devm_pinctrl_get_select(vib->dev, "tlmm_motor_suspend");
 		if (IS_ERR(motor_pinctrl)) {
 			if (PTR_ERR(motor_pinctrl) == -EPROBE_DEFER)
@@ -332,7 +343,9 @@ static void set_vibrator(struct ss_vib *vib)
 			motor_pinctrl = NULL;
 		}
 		gpio_set_value(vib->vib_pwm_gpio, VIBRATION_OFF);
-
+#else
+		max778xx_haptic_en(vib, false);
+#endif
 		if (vib->flag_en_gpio)
 			gpio_set_value(vib->vib_en_gpio, VIBRATION_OFF);
 #if defined(CONFIG_BOOST_POWER_SHARE)
@@ -464,10 +477,14 @@ static int ss_vibrator_suspend(struct device *dev)
 
 static int ss_vibrator_resume(struct device *dev)
 {
+#if !defined(CONFIG_MOTOR_S2MU004)
 	struct ss_vib *vib = dev_get_drvdata(dev);
 
 	pr_info("[VIB]: %s\n", __func__);
 	max778xx_haptic_en(vib, true);
+#else
+	pr_info("[VIB]: %s do nothing with s2mu004 haptic\n", __func__);
+#endif
 
 	return 0;
 }

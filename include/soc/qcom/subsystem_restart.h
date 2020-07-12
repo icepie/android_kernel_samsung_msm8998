@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,6 +18,7 @@
 #include <linux/interrupt.h>
 
 struct subsys_device;
+extern struct bus_type subsys_bus_type;
 
 enum {
 	RESET_SOC = 0,
@@ -25,11 +26,18 @@ enum {
 	RESET_LEVEL_MAX
 };
 
+enum crash_status {
+	CRASH_STATUS_NO_CRASH = 0,
+	CRASH_STATUS_ERR_FATAL,
+	CRASH_STATUS_WDOG_BITE,
+};
+
 #ifdef CONFIG_SENSORS_SSC
 enum {
 	SSR_ERROR_FATAL = 0,
 	SSR_WDOG_BITE,
 	SSR_BY_AP,
+	SSR_WITHOUT_PANIC = 99,
 };
 #endif
 
@@ -57,6 +65,8 @@ struct module;
  * @sysmon_shutdown_ret: Return value for the call to sysmon_send_shutdown
  * @system_debug: If "set", triggers a device restart when the
  * subsystem's wdog bite handler is invoked.
+ * @ignore_ssr_failure: SSR failures are usually fatal and results in panic. If
+ * set will ignore failure.
  * @edge: GLINK logical name of the subsystem
  */
 struct subsys_desc {
@@ -94,6 +104,7 @@ struct subsys_desc {
 	u32 sysmon_pid;
 	int sysmon_shutdown_ret;
 	bool system_debug;
+	bool ignore_ssr_failure;
 	const char *edge;
 #ifdef CONFIG_SENSORS_SSC
 	int gpio_sensor_ldo;
@@ -102,7 +113,7 @@ struct subsys_desc {
 
 /**
  * struct notif_data - additional notif information
- * @crashed: indicates if subsystem has crashed
+ * @crashed: indicates if subsystem has crashed due to wdog bite or err fatal
  * @enable_ramdump: ramdumps disabled if set to 0
  * @enable_mini_ramdumps: enable flag for minimized critical-memory-only
  * ramdumps
@@ -110,7 +121,7 @@ struct subsys_desc {
  * @pdev: subsystem platform device pointer
  */
 struct notif_data {
-	bool crashed;
+	enum crash_status crashed;
 	int enable_ramdump;
 	int enable_mini_ramdumps;
 	bool no_auth;
@@ -133,8 +144,10 @@ extern struct subsys_device *subsys_register(struct subsys_desc *desc);
 extern void subsys_unregister(struct subsys_device *dev);
 
 extern void subsys_default_online(struct subsys_device *dev);
-extern void subsys_set_crash_status(struct subsys_device *dev, bool crashed);
-extern bool subsys_get_crash_status(struct subsys_device *dev);
+extern void subsys_set_crash_status(struct subsys_device *dev,
+					enum crash_status crashed);
+extern enum crash_status subsys_get_crash_status(struct subsys_device *dev);
+extern void subsys_set_error(struct subsys_device *dev, const char *error_msg);
 #ifdef CONFIG_SENSORS_SSC
 extern void subsys_set_ssr_reason(struct subsys_device *dev, int ssr_reason);
 extern int subsys_get_ssr_reason(struct subsys_device *dev);
@@ -198,9 +211,10 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 static inline void subsys_unregister(struct subsys_device *dev) { }
 
 static inline void subsys_default_online(struct subsys_device *dev) { }
+static inline void subsys_set_crash_status(struct subsys_device *dev,
+						enum crash_status crashed) { }
 static inline
-void subsys_set_crash_status(struct subsys_device *dev, bool crashed) { }
-static inline bool subsys_get_crash_status(struct subsys_device *dev)
+enum crash_status subsys_get_crash_status(struct subsys_device *dev)
 {
 	return false;
 }

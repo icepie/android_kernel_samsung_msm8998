@@ -40,6 +40,16 @@ struct msm_cam_bus_pscale_data {
 struct msm_cam_bus_pscale_data g_cv[CAM_BUS_CLIENT_MAX];
 
 
+#define CAM_MAX_SHARED_CLK_INFO 10
+#define CAM_MAX_SHARED_CLK_NAME 20
+
+struct shared_clk_info {
+	char clk_name[CAM_MAX_SHARED_CLK_NAME];
+};
+struct shared_clk_info g_shared_clk_info[CAM_MAX_SHARED_CLK_INFO];
+uint8_t g_shared_clk_cnt;
+
+
 /* Get all clocks from DT */
 static int msm_camera_get_clk_info_internal(struct device *dev,
 			struct msm_cam_clk_info **clk_info,
@@ -442,8 +452,19 @@ int msm_camera_s_clk_enable(struct device *dev,
 				for(j = 0; j < shared_ctrl->clk_info_size; j++) {
 					if (!strcmp(shared_ctrl->clk_info[j].clk_name,
 					    clk_info[i].clk_name)) {
-						skip_flag = true;
-						break;
+					    if (g_shared_clk_cnt >= CAM_MAX_SHARED_CLK_INFO) {
+						    pr_info("[POWER_DBG] g_shared_clk_cnt(%d) reached MAX!!\n",
+						        g_shared_clk_cnt);
+						    g_shared_clk_cnt = CAM_MAX_SHARED_CLK_INFO - 1;
+					    }
+					    strncpy(g_shared_clk_info[g_shared_clk_cnt].clk_name,
+						    clk_info[i].clk_name, strlen(clk_info[i].clk_name));
+					    CDBG("[POWER_DBG] g_shared_clk_cnt(%d) clk name %s\n",
+					        g_shared_clk_cnt,
+					        g_shared_clk_info[g_shared_clk_cnt].clk_name);
+					    ++g_shared_clk_cnt;
+					    skip_flag = true;
+					    break;
 					}
 				}
 				if (skip_flag) {
@@ -503,11 +524,17 @@ int msm_camera_s_clk_enable(struct device *dev,
 	} else {
 		for (i = num_clk - 1; i >= 0; i--) {
 			if (clk_ptr[i] != NULL) {
-				if (shared_ctrl) {
+				if (g_shared_clk_cnt > 0) {
 					skip_flag = false;
-					for(j = 0; j < shared_ctrl->clk_info_size; j++) {
-					    if (!strcmp(shared_ctrl->clk_info[j].clk_name,
+					for(j = 0; j < g_shared_clk_cnt; j++) {
+					    if (!strcmp(g_shared_clk_info[j].clk_name,
 					        clk_info[i].clk_name)) {
+					        CDBG("[POWER_DBG] g_shared_clk_cnt(%d) clk name %s\n",
+					            (g_shared_clk_cnt - 1),
+					            g_shared_clk_info[j].clk_name);
+					        --g_shared_clk_cnt;
+					        if (g_shared_clk_cnt == 0)
+					            CDBG("[POWER_DBG] g_shared_clk_info flushed!!\n");
 					        skip_flag = true;
 					        break;
 					    }

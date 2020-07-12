@@ -14149,6 +14149,8 @@ static struct cipher_testvec cast6_xts_dec_tv_template[] = {
 #define AES_DEC_TEST_VECTORS 4
 #define AES_CBC_ENC_TEST_VECTORS 5
 #define AES_CBC_DEC_TEST_VECTORS 5
+#define AES_HEH_ENC_TEST_VECTORS 4
+#define AES_HEH_DEC_TEST_VECTORS 4
 #define HMAC_MD5_ECB_CIPHER_NULL_ENC_TEST_VECTORS 2
 #define HMAC_MD5_ECB_CIPHER_NULL_DEC_TEST_VECTORS 2
 #define HMAC_SHA1_ECB_CIPHER_NULL_ENC_TEST_VEC 2
@@ -21796,7 +21798,7 @@ static struct aead_testvec aes_ccm_enc_tv_template[] = {
 			  "\x09\x75\x9a\x9b\x3c\x9b\x27\x39",
 		.klen	= 32,
 		.iv	= "\x03\xf9\xd9\x4e\x63\xb5\x3d\x9d"
-			  "\x43\xf6\x1e\x50",
+			  "\x43\xf6\x1e\x50\0\0\0\0",
 		.assoc	= "\x57\xf5\x6b\x8b\x57\x5c\x3d\x3b"
 			  "\x13\x02\x01\x0c\x83\x4c\x96\x35"
 			  "\x8e\xd6\x39\xcf\x7d\x14\x9b\x94"

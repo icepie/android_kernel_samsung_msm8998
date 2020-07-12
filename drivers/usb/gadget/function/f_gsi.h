@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -93,6 +93,14 @@ enum connection_state {
 	STATE_SUSPENDED
 };
 
+enum gsi_ctrl_notify_state {
+	GSI_CTRL_NOTIFY_NONE,
+	GSI_CTRL_NOTIFY_CONNECT,
+	GSI_CTRL_NOTIFY_SPEED,
+	GSI_CTRL_NOTIFY_OFFLINE,
+	GSI_CTRL_NOTIFY_RESPONSE_AVAILABLE,
+};
+
 #define MAXQUEUELEN 128
 struct event_queue {
 	u8 event[MAXQUEUELEN];
@@ -107,9 +115,10 @@ struct gsi_ntb_info {
 };
 
 struct gsi_ctrl_pkt {
-	void			*buf;
-	int			len;
-	struct list_head	list;
+	void				*buf;
+	int				len;
+	enum gsi_ctrl_notify_state	type;
+	struct list_head		list;
 };
 
 struct gsi_function_bind_info {
@@ -147,22 +156,13 @@ struct gsi_function_bind_info {
 	u32 notify_buf_len;
 };
 
-enum gsi_ctrl_notify_state {
-	GSI_CTRL_NOTIFY_NONE,
-	GSI_CTRL_NOTIFY_CONNECT,
-	GSI_CTRL_NOTIFY_SPEED,
-	GSI_CTRL_NOTIFY_OFFLINE,
-	GSI_CTRL_NOTIFY_RESPONSE_AVAILABLE,
-};
-
 struct gsi_ctrl_port {
 	char name[GSI_CTRL_NAME_LEN];
 	struct miscdevice ctrl_device;
 
 	struct usb_ep *notify;
 	struct usb_request *notify_req;
-	int notify_state;
-	atomic_t notify_count;
+	bool notify_req_queued;
 
 	atomic_t ctrl_online;
 
@@ -184,6 +184,7 @@ struct gsi_ctrl_port {
 	unsigned copied_from_modem;
 	unsigned modem_to_host;
 	unsigned cpkt_drop_cnt;
+	unsigned get_encap_cnt;
 };
 
 struct gsi_data_port {
@@ -191,7 +192,6 @@ struct gsi_data_port {
 	struct usb_ep *out_ep;
 	struct usb_gsi_request in_request;
 	struct usb_gsi_request out_request;
-	struct usb_gadget *gadget;
 	int (*ipa_usb_notify_cb)(enum ipa_usb_notify_event, void *driver_data);
 	struct ipa_usb_teth_params ipa_init_params;
 	int in_channel_handle;
@@ -227,6 +227,7 @@ struct gsi_data_port {
 
 struct f_gsi {
 	struct usb_function function;
+	struct usb_gadget *gadget;
 	enum ipa_usb_teth_prot prot_id;
 	int ctrl_id;
 	int data_id;
@@ -305,8 +306,13 @@ static struct usb_interface_descriptor rmnet_gsi_interface_desc = {
 	.bDescriptorType =	USB_DT_INTERFACE,
 	.bNumEndpoints =	3,
 	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+	.bInterfaceSubClass =	0xE0,
+	.bInterfaceProtocol =	0x01,
+#else
 	.bInterfaceSubClass =	USB_CLASS_VENDOR_SPEC,
 	.bInterfaceProtocol =	USB_CLASS_VENDOR_SPEC,
+#endif
 	/* .iInterface = DYNAMIC */
 };
 
@@ -563,7 +569,7 @@ static struct usb_endpoint_descriptor rndis_gsi_fs_out_desc = {
 };
 
 static struct usb_descriptor_header *gsi_eth_fs_function[] = {
-	(struct usb_descriptor_header *) &gsi_eth_fs_function,
+	(struct usb_descriptor_header *) &rndis_gsi_iad_descriptor,
 	/* control interface matches ACM, not Ethernet */
 	(struct usb_descriptor_header *) &rndis_gsi_control_intf,
 	(struct usb_descriptor_header *) &rndis_gsi_header_desc,
@@ -725,7 +731,7 @@ static struct usb_rndis_mtu_avd_descriptor rndis_avd_descriptor = {
 };
 
 static struct usb_descriptor_header *gsi_vzw_eth_fs_function[] = {
-	(struct usb_descriptor_header *) &gsi_eth_fs_function,
+	(struct usb_descriptor_header *) &rndis_gsi_iad_descriptor,
 	/* control interface matches ACM, not Ethernet */
 	(struct usb_descriptor_header *) &rndis_gsi_control_intf,
 	(struct usb_descriptor_header *) &rndis_gsi_header_desc,

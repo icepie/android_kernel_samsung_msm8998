@@ -83,8 +83,6 @@
 #include <linux/export.h>
 #include <linux/msg.h>
 #include <linux/shm.h>
-#include <linux/pft.h>
-#include <linux/pfk.h>
 
 // [ SEC_SELINUX_PORTING_COMMON
 #include <linux/delay.h>
@@ -99,6 +97,10 @@
 #include "netlabel.h"
 #include "audit.h"
 #include "avc_ss.h"
+
+// [ SEC_SELINUX_PORTING_COMMON
+static DEFINE_MUTEX(selinux_sdcardfs_lock);
+// ] SEC_SELINUX_PORTING_COMMON
 
 #ifdef CONFIG_RKP_NS_PROT
 extern unsigned int cmp_ns_integrity(void);
@@ -854,6 +856,7 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 		sbsec->flags |= SE_SBPROC | SE_SBGENFS;
 
 	if (!strcmp(sb->s_type->name, "debugfs") ||
+	    !strcmp(sb->s_type->name, "tracefs") ||
 	    !strcmp(sb->s_type->name, "sysfs") ||
 // [ SEC_SELINUX_PORTING_COMMON
 	    !strcmp(sb->s_type->name, "configfs") ||
@@ -1924,15 +1927,9 @@ static int may_create(struct inode *dir,
 	if (rc)
 		return rc;
 
-	rc = avc_has_perm(newsid, sbsec->sid,
+	return avc_has_perm(newsid, sbsec->sid,
 			    SECCLASS_FILESYSTEM,
 			    FILESYSTEM__ASSOCIATE, &ad);
-	if (rc)
-		return rc;
-
-	rc = pft_inode_mknod(dir, dentry, 0, 0);
-
-	return rc;
 }
 
 /* Check whether a task can create a key. */
@@ -1988,14 +1985,7 @@ static int may_link(struct inode *dir,
 		return 0;
 	}
 
-	rc = avc_has_perm(sid, isec->sid, isec->sclass, av, &ad);
-	if (rc)
-		return rc;
-
-	if (kind == MAY_UNLINK)
-		rc = pft_inode_unlink(dir, dentry);
-
-	return rc;
+	return avc_has_perm(sid, isec->sid, isec->sclass, av, &ad);
 }
 
 static inline int may_rename(struct inode *old_dir,
@@ -2946,21 +2936,33 @@ static int selinux_sb_kern_mount(struct super_block *sb, int flags, void *data)
 	struct common_audit_data ad;
 	int rc;
 
+	// [ SEC_SELINUX_PORTING_COMMON
+	if((strcmp(sb->s_type->name,"sdcardfs")) == 0)
+		mutex_lock(&selinux_sdcardfs_lock);
+
 #ifdef CONFIG_RKP_KDP	
 	if ((rc = security_integrity_current()))
 		return rc;
 #endif  /* CONFIG_RKP_KDP */
+
 	rc = superblock_doinit(sb, data);
 	if (rc)
-		return rc;
+		goto out;
 
 	/* Allow all mounts performed by the kernel */
 	if (flags & MS_KERNMOUNT)
-		return 0;
+		goto out;
 
 	ad.type = LSM_AUDIT_DATA_DENTRY;
 	ad.u.dentry = sb->s_root;
-	return superblock_has_perm(cred, sb, FILESYSTEM__MOUNT, &ad);
+	rc = superblock_has_perm(cred, sb, FILESYSTEM__MOUNT, &ad);
+
+out:
+	if((strcmp(sb->s_type->name,"sdcardfs")) == 0)
+		mutex_unlock(&selinux_sdcardfs_lock);
+	// ] SEC_SELINUX_PORTING_COMMON
+	
+	return rc;
 }
 
 static int selinux_sb_statfs(struct dentry *dentry)
@@ -3114,31 +3116,14 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
 
 static int selinux_inode_create(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
-	int ret;
-
 #ifdef CONFIG_RKP_KDP
 	int rc;
 
 	if ((rc = security_integrity_current()))
 		return rc;
 #endif  /* CONFIG_RKP_KDP */
-	ret = pft_inode_create(dir, dentry, mode);
-	if (ret < 0)
-		return ret;
 
 	return may_create(dir, dentry, SECCLASS_FILE);
-}
-
-static int selinux_inode_post_create(struct inode *dir, struct dentry *dentry,
-					umode_t mode)
-{
-#ifdef CONFIG_RKP_KDP
-	int rc;
-
-	if ((rc = security_integrity_current()))
-		return rc;
-#endif  /* CONFIG_RKP_KDP */
-	return pft_inode_post_create(dir, dentry, mode);
 }
 
 static int selinux_inode_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_dentry)
@@ -3209,15 +3194,11 @@ static int selinux_inode_mknod(struct inode *dir, struct dentry *dentry, umode_t
 static int selinux_inode_rename(struct inode *old_inode, struct dentry *old_dentry,
 				struct inode *new_inode, struct dentry *new_dentry)
 {
+#ifdef CONFIG_RKP_KDP
 	int rc;
-	#ifdef CONFIG_RKP_KDP
 	if ((rc = security_integrity_current()))
 		return rc;
 #endif  /* CONFIG_RKP_KDP */
-
-	rc = pft_inode_rename(old_inode, old_dentry, new_inode, new_dentry);
-	if (rc)
-		return rc;
 
 	return may_rename(old_inode, old_dentry, new_inode, new_dentry);
 }
@@ -3388,9 +3369,6 @@ static int selinux_inode_getattr(const struct path *path)
 static int selinux_inode_setotherxattr(struct dentry *dentry, const char *name)
 {
 	const struct cred *cred = current_cred();
-
-	if (pft_inode_set_xattr(dentry, name, NULL, 0, 0) < 0)
-		return -EACCES;
 
 	if (!strncmp(name, XATTR_SECURITY_PREFIX,
 		     sizeof XATTR_SECURITY_PREFIX - 1)) {
@@ -3687,7 +3665,6 @@ static int selinux_file_permission(struct file *file, int mask)
 	struct file_security_struct *fsec = file->f_security;
 	struct inode_security_struct *isec = inode->i_security;
 	u32 sid = current_sid();
-	int ret;
 #ifdef CONFIG_RKP_KDP
 	int rc;
 
@@ -3698,10 +3675,6 @@ static int selinux_file_permission(struct file *file, int mask)
 	if (!mask)
 		/* No permission to check.  Existence test. */
 		return 0;
-
-	ret = pft_file_permission(file, mask);
-	if (ret < 0)
-		return ret;
 
 	if (sid == fsec->sid && fsec->isid == isec->sid &&
 	    fsec->pseqno == avc_policy_seqno())
@@ -4055,7 +4028,6 @@ static int selinux_file_open(struct file *file, const struct cred *cred)
 {
 	struct file_security_struct *fsec;
 	struct inode_security_struct *isec;
-	int ret;
 
 #ifdef CONFIG_RKP_KDP
 	int rc;
@@ -4063,10 +4035,6 @@ static int selinux_file_open(struct file *file, const struct cred *cred)
 	if ((rc = security_integrity_current()))
 		return rc;
 #endif  /* CONFIG_RKP_KDP */
-
-	ret = pft_file_open(file, cred);
-	if (ret < 0)
-		return ret;
 
 	fsec = file->f_security;
 	isec = file_inode(file)->i_security;
@@ -4088,17 +4056,6 @@ static int selinux_file_open(struct file *file, const struct cred *cred)
 	 * This check is not redundant - do not remove.
 	 */
 	return file_path_has_perm(cred, file, open_file_to_av(file));
-}
-
-static int selinux_file_close(struct file *file)
-{
-#ifdef CONFIG_RKP_KDP
-	int rc;
-	if ((rc = security_integrity_current()))
-		return rc;
-#endif  /* CONFIG_RKP_KDP */
-
-	return pft_file_close(file);
 }
 
 /* task security operations */
@@ -6733,7 +6690,7 @@ static int selinux_setprocattr(struct task_struct *p,
 		return error;
 
 	/* Obtain a SID for the context, if one was specified. */
-	if (size && str[1] && str[1] != '\n') {
+	if (size && str[0] && str[0] != '\n') {
 		if (str[size-1] == '\n') {
 			str[size-1] = 0;
 			size--;
@@ -7051,7 +7008,6 @@ RKP_RO_AREA static struct security_hook_list selinux_hooks[] = {
 	LSM_HOOK_INIT(inode_free_security, selinux_inode_free_security),
 	LSM_HOOK_INIT(inode_init_security, selinux_inode_init_security),
 	LSM_HOOK_INIT(inode_create, selinux_inode_create),
-	LSM_HOOK_INIT(inode_post_create, selinux_inode_post_create),
 	LSM_HOOK_INIT(inode_link, selinux_inode_link),
 	LSM_HOOK_INIT(inode_unlink, selinux_inode_unlink),
 	LSM_HOOK_INIT(inode_symlink, selinux_inode_symlink),
@@ -7088,7 +7044,6 @@ RKP_RO_AREA static struct security_hook_list selinux_hooks[] = {
 	LSM_HOOK_INIT(file_receive, selinux_file_receive),
 
 	LSM_HOOK_INIT(file_open, selinux_file_open),
-	LSM_HOOK_INIT(file_close, selinux_file_close),
 
 	LSM_HOOK_INIT(task_create, selinux_task_create),
 	LSM_HOOK_INIT(cred_alloc_blank, selinux_cred_alloc_blank),

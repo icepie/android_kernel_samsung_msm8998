@@ -21,6 +21,7 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/pm_runtime.h>
+#include <linux/kthread.h>
 
 #include "sde_rotator_base.h"
 #include "sde_rotator_util.h"
@@ -184,7 +185,8 @@ struct sde_rot_hw_resource {
 };
 
 struct sde_rot_queue {
-	struct workqueue_struct *rot_work_queue;
+	struct kthread_worker rot_kw;
+	struct task_struct *rot_thread;
 	struct sde_rot_timeline *timeline;
 	struct sde_rot_hw_resource *hw;
 };
@@ -195,8 +197,8 @@ struct sde_rot_entry_container {
 	u32 count;
 	atomic_t pending_count;
 	atomic_t failed_count;
-	struct workqueue_struct *retireq;
-	struct work_struct *retire_work;
+	struct kthread_worker *retire_kw;
+	struct kthread_work *retire_work;
 	struct sde_rot_entry *entries;
 };
 
@@ -205,8 +207,8 @@ struct sde_rot_file_private;
 
 struct sde_rot_entry {
 	struct sde_rotation_item item;
-	struct work_struct commit_work;
-	struct work_struct done_work;
+	struct kthread_work commit_work;
+	struct kthread_work done_work;
 	struct sde_rot_queue *commitq;
 	struct sde_rot_queue *fenceq;
 	struct sde_rot_queue *doneq;
@@ -427,6 +429,21 @@ int sde_rotator_validate_request(struct sde_rot_mgr *rot_dev,
 	struct sde_rot_entry_container *req);
 
 int sde_rotator_clk_ctrl(struct sde_rot_mgr *mgr, int enable);	
+
+void sde_rotator_cancel_all_requests(struct sde_rot_mgr *mgr,
+	struct sde_rot_file_private *private);
+
+/* sde_rotator_resource_ctrl_enabled - check if resource control is enabled
+ * @mgr: Pointer to rotator manager
+ * Return: true if enabled; false otherwise
+ */
+static inline int sde_rotator_resource_ctrl_enabled(struct sde_rot_mgr *mgr)
+{
+	return mgr->regulator_enable;
+}
+
+void sde_rotator_cancel_all_requests(struct sde_rot_mgr *mgr,
+	struct sde_rot_file_private *private);
 
 static inline void sde_rot_mgr_lock(struct sde_rot_mgr *mgr)
 {

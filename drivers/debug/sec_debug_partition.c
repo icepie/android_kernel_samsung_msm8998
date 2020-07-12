@@ -18,6 +18,7 @@
 #include <linux/delay.h>
 
 #include <linux/qcom/sec_debug.h>
+#include <linux/qcom/sec_debug_summary.h>
 #include <linux/qcom/sec_debug_partition.h>
 
 static DEFINE_MUTEX(debug_partition_mutex);
@@ -46,7 +47,7 @@ static void debug_partition_operation(struct work_struct *work)
 	int flag = (sched_data->direction == PARTITION_WR) ? (O_RDWR | O_SYNC) : O_RDONLY;
 
 	if (!sched_data->value) {
-		pr_err("%s %p %x %d %d - value is NULL!!\n", __func__, 
+		pr_err("%s %p %x %d %d - value is NULL!!\n", __func__,
 			sched_data->value, sched_data->offset,
 			sched_data->size, sched_data->direction);
 		sched_data->error = -1;
@@ -203,7 +204,7 @@ bool init_debug_partition(void)
 			msleep(1000);
 		}
 		mutex_lock(&debug_partition_mutex);
-	
+
 		memset(&init_reset_header, 0, sizeof(struct debug_reset_header));
 		init_reset_header.magic = DEBUG_PARTITION_MAGIC;
 
@@ -303,6 +304,26 @@ bool read_debug_partition(enum debug_partition_index index, void *value)
 			wait_for_completion(&sched_debug_data.work);
 			mutex_unlock(&debug_partition_mutex);
 			break;
+		case debug_index_lcd_debug_info:
+			mutex_lock(&debug_partition_mutex);
+			sched_debug_data.value = value;
+			sched_debug_data.offset = SEC_DEBUG_LCD_DEBUG_OFFSET;
+			sched_debug_data.size = sizeof(struct lcd_debug_t);
+			sched_debug_data.direction = PARTITION_RD;
+			schedule_work(&sched_debug_data.debug_partition_work);
+			wait_for_completion(&sched_debug_data.work);
+			mutex_unlock(&debug_partition_mutex);
+			break;
+		case debug_index_modem_info:
+			mutex_lock(&debug_partition_mutex);
+			sched_debug_data.value = value;
+			sched_debug_data.offset = SEC_DEBUG_RESET_MODEM_OFFSET;
+			sched_debug_data.size = sizeof(struct sec_debug_summary_data_modem);
+			sched_debug_data.direction = PARTITION_RD;
+			schedule_work(&sched_debug_data.debug_partition_work);
+			wait_for_completion(&sched_debug_data.work);
+			mutex_unlock(&debug_partition_mutex);
+			break;
 		default:
 			return false;
 	}
@@ -336,6 +357,16 @@ bool write_debug_partition(enum debug_partition_index index, void *value)
 		case debug_index_reset_summary:
 			// do nothing.
 			break;
+		case debug_index_lcd_debug_info:
+			mutex_lock(&debug_partition_mutex);
+			sched_debug_data.value = (struct lcd_debug_t *)value;
+			sched_debug_data.offset = SEC_DEBUG_LCD_DEBUG_OFFSET;
+			sched_debug_data.size = sizeof(struct lcd_debug_t);
+			sched_debug_data.direction = PARTITION_WR;
+			schedule_work(&sched_debug_data.debug_partition_work);
+			wait_for_completion(&sched_debug_data.work);
+			mutex_unlock(&debug_partition_mutex);
+			break;
 		default:
 			return false;
 	}
@@ -343,6 +374,41 @@ bool write_debug_partition(enum debug_partition_index index, void *value)
 	return ret;
 }
 EXPORT_SYMBOL(write_debug_partition);
+
+static bool init_lcd_debug_data(void)
+{
+	int ret = true, retry = 0;
+	struct lcd_debug_t lcd_debug;
+
+	pr_info("%s start\n", __func__);
+
+	memset((void *)&lcd_debug, 0, sizeof(struct lcd_debug_t));
+
+	pr_info("%s lcd_debug size[%ld]\n", __func__, sizeof(struct lcd_debug_t));
+
+	do {
+		if (retry++) {
+			pr_err("%s : will retry...\n", __func__);
+			msleep(1000);
+		}
+
+		mutex_lock(&debug_partition_mutex);
+
+		sched_debug_data.value = &lcd_debug;
+		sched_debug_data.offset = SEC_DEBUG_LCD_DEBUG_OFFSET;
+		sched_debug_data.size = sizeof(struct lcd_debug_t);
+		sched_debug_data.direction = PARTITION_WR;
+
+		schedule_work(&sched_debug_data.debug_partition_work);
+		wait_for_completion(&sched_debug_data.work);
+
+		mutex_unlock(&debug_partition_mutex);
+	} while (sched_debug_data.error);
+
+	pr_info("%s end\n",__func__);
+
+	return ret;
+}
 
 static bool init_ap_health_data(void)
 {
@@ -396,7 +462,7 @@ ap_health_t* ap_health_data_read(void)
 		goto out;
 
 	read_debug_partition(debug_index_ap_health, (void *)&ap_health_data);
-	
+
 	if (ap_health_data.header.magic != AP_HEALTH_MAGIC ||
 		ap_health_data.header.version != AP_HEALTH_VER ||
 		ap_health_data.header.size != sizeof(ap_health_t) ||
@@ -405,6 +471,7 @@ ap_health_t* ap_health_data_read(void)
 		ap_health_data.spare_magic3 != AP_HEALTH_MAGIC ||
 		is_boot_recovery == 1) {
 		init_ap_health_data();
+		init_lcd_debug_data();
 	}
 
 	ap_health_initialized = 1;
@@ -442,7 +509,7 @@ static void debug_partition_do_notify(struct work_struct *work)
 	return;
 }
 
-static int dbg_partitioni_panic_prepare(struct notifier_block *nb,
+static int dbg_partition_panic_prepare(struct notifier_block *nb,
 		unsigned long event, void *data)
 {
 	in_panic = 1;
@@ -450,7 +517,7 @@ static int dbg_partitioni_panic_prepare(struct notifier_block *nb,
 }
 
 static struct notifier_block dbg_partition_panic_notifier_block = {
-	.notifier_call = dbg_partitioni_panic_prepare,
+	.notifier_call = dbg_partition_panic_prepare,
 };
 
 static int __init sec_debug_partition_init(void)
@@ -470,10 +537,10 @@ static int __init sec_debug_partition_init(void)
 	dbg_part_wq = create_singlethread_workqueue("glink_lbsrv");
 	if (!dbg_part_wq) {
 		pr_err("%s: fail to create dbg_part_wq!\n", __func__);
-		return -EFAULT; 
+		return -EFAULT;
 	}
 	atomic_notifier_chain_register(&panic_notifier_list, &dbg_partition_panic_notifier_block);
-	
+
 	driver_initialized = 1;
 	schedule_delayed_work(&dbg_partition_notify_work, 2 * HZ);
 	pr_info("%s: end\n", __func__);

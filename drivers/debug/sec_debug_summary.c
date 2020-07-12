@@ -74,6 +74,8 @@ int sec_debug_save_die_info(const char *str, struct pt_regs *regs)
 		"%pS", (void *)regs->ARM_PT_REG_LR);
 
 #ifdef CONFIG_USER_RESET_DEBUG
+	sec_debug_store_extc_idx(false);
+
 	if (sec_debug_reset_ex_info) {
 		p_ex_info = &sec_debug_reset_ex_info->kern_ex_info.info;
 		if (p_ex_info->cpu == -1) {
@@ -117,6 +119,8 @@ int sec_debug_save_panic_info(const char *str, unsigned long caller)
 		task_pid_nr(current));
 
 #ifdef CONFIG_USER_RESET_DEBUG
+	sec_debug_store_extc_idx(false);
+
 	if (sec_debug_reset_ex_info) {
 		p_ex_info = &sec_debug_reset_ex_info->kern_ex_info.info;
 		if (p_ex_info->cpu == -1) {
@@ -127,6 +131,8 @@ int sec_debug_save_panic_info(const char *str, unsigned long caller)
 			snprintf(p_ex_info->task_name,
 				sizeof(p_ex_info->task_name), "%s", current->comm);
 			p_ex_info->ktime = local_clock();
+			snprintf(p_ex_info->pc,
+				sizeof(p_ex_info->pc), "%pS", (void *)(caller-0x4));
 			snprintf(p_ex_info->lr,
 				sizeof(p_ex_info->lr), "%pS", (void *)caller);
 			slen = snprintf(p_ex_info->panic_buf,
@@ -397,9 +403,6 @@ int sec_debug_is_modem_seperate_debug_ssr(void)
 int summary_set_task_info(struct sec_debug_summary_data_apss *apss)
 {
 	extern struct task_struct init_task;
-#ifdef CONFIG_RKP_CFP_ROPP_SYSREGKEY
-	extern unsigned long ropp_master_key;
-#endif
 
 	apss->task.stack_size = THREAD_SIZE;
 	apss->task.start_sp = THREAD_START_SP;
@@ -439,12 +442,8 @@ int summary_set_task_info(struct sec_debug_summary_data_apss *apss)
 
 	apss->task.init_task = (uint64_t)&init_task;
 #ifdef CONFIG_RKP_CFP_ROPP_SYSREGKEY
-	apss->task.ropp.master_key_pa = __pa(&ropp_master_key);
-	apss->task.ropp.master_key_val = ropp_master_key;
 	apss->task.ropp.magic = 0x50504F52;
 #else
-	apss->task.ropp.master_key_pa = 0x0;
-	apss->task.ropp.master_key_val = 0x0;
 	apss->task.ropp.magic = 0x0;
 #endif
 
@@ -465,13 +464,23 @@ void summary_set_lpm_info_cci(uint64_t phy_addr)
 }
 #endif
 
+void * sec_debug_summary_get_modem(void)
+{
+	if (secdbg_summary) {
+		return (void *)&secdbg_summary->priv.modem;
+	} else {
+		pr_info("%s : secdbg_summary is null.\n", __func__);
+		return NULL;
+	}
+}
+
 int __init sec_debug_summary_init(void)
 {
 #ifdef CONFIG_SEC_DEBUG_VERBOSE_SUMMARY_HTML
 	short i;
 #endif
 
-	pr_info("%s: SMEM_ID_VENDOR0=0x%x size=0x%lx\n",
+	pr_info("%s: SMEM_ID_VENDOR2=0x%x size=0x%lx\n",
 		__func__,  (unsigned int)SMEM_ID_VENDOR2,
 		sizeof(struct sec_debug_summary));
 

@@ -77,7 +77,7 @@ static struct mdev_desc_t {
 	int ccic_evt_roleswap; /* check rprd role swap event */
 	int ccic_evt_dcdcnt; /* count dcd timeout */
 	int ccic_powerrole;
-	
+
 	int mdev; /* attached dev */
 }mdev_desc;
 
@@ -250,7 +250,7 @@ void muic_set_otg_state(muic_data_t *pmuic, int state)
 
 	if (pvendor && pvendor->enable_chgdet)
 		pvendor->enable_chgdet(pmuic->regmapdesc, 0);
-	
+
 	if (state == CCIC_RPRD_STATE) {
 		pdesc->ccic_evt_rprd = 1;
 
@@ -322,8 +322,8 @@ int mdev_continue_for_TA_USB(muic_data_t *pmuic, int mdev)
 {
 	struct mdev_desc_t *pdesc = &mdev_desc;
 	struct vendor_ops *pvendor = pmuic->regmapdesc->vendorops;
-	int i;
 	int vbus = mdev_get_vbus(pmuic);
+
 #if defined(CONFIG_SEC_FACTORY)
 	if ((pmuic->attached_dev == ATTACHED_DEV_JIG_UART_OFF_MUIC || pmuic->attached_dev == ATTACHED_DEV_JIG_UART_OFF_VB_OTG_MUIC)
 			&& mdev == ATTACHED_DEV_UNKNOWN_MUIC
@@ -357,6 +357,13 @@ int mdev_continue_for_TA_USB(muic_data_t *pmuic, int mdev)
 		pmuic->is_dcdtmr_intr = false;
 	}
 
+	/* In case of vbus conflict */
+	if (pdesc->mdev == ATTACHED_DEV_OTG_MUIC && pmuic->attached_dev == ATTACHED_DEV_USB_MUIC) {
+		pr_info("%s:%s: Forced Detach!\n", __func__, MUIC_DEV_NAME);
+		muic_notifier_detach_attached_dev(pmuic->attached_dev);
+		return 1;
+	}
+
 	if (!muic_is_ccic_supported_dev(pmuic, mdev)) {
 		pr_info("%s:%s: NOT supported(%d).\n", __func__, MUIC_DEV_NAME, mdev);
 		
@@ -376,25 +383,19 @@ int mdev_continue_for_TA_USB(muic_data_t *pmuic, int mdev)
 		}
 	}
 
-	/* Some delays for CCIC's Noti. When VBUS comes in to MUIC */
-	for (i = 0; i < 4; i++) {
-		pr_info("%s:%s: Checking RID (%dth)....\n",
-				MUIC_DEV_NAME,__func__, i + 1);
+	pr_info("%s:%s: Checking RID\n", MUIC_DEV_NAME,__func__);
 
-		/* Do not continue if this is an RID */
-		if (pdesc->ccic_evt_rid || pdesc->ccic_evt_rprd) {
-			pr_info("%s:%s: Not a TA or USB -> discarded.\n",
-					MUIC_DEV_NAME,__func__);
-			if (pdesc->ccic_evt_rid) {
-				vbus = mdev_get_vbus(pmuic);
-				mdev_handle_factory_jig(pmuic, pdesc->ccic_evt_rid, vbus);
-			}
-			pmuic->legacy_dev = 0;
-
-			return 0;
+	/* Do not continue if this is an RID */
+	if (pdesc->ccic_evt_rid || pdesc->ccic_evt_rprd) {
+		pr_info("%s:%s: Not a TA or USB -> discarded.\n",
+				MUIC_DEV_NAME,__func__);
+		if (pdesc->ccic_evt_rid) {
+			vbus = mdev_get_vbus(pmuic);
+			mdev_handle_factory_jig(pmuic, pdesc->ccic_evt_rid, vbus);
 		}
+		pmuic->legacy_dev = 0;
 
-		msleep(50);
+		return 0;
 	}
 
 	pmuic->legacy_dev = mdev;
@@ -452,14 +453,11 @@ static int mdev_handle_legacy_TA_USB(muic_data_t *pmuic)
 	pr_info("%s: vbvolt:%d legacy_dev:%d\n", __func__,
 			vbvolt, pmuic->legacy_dev);
 
-	/* 1. Run a charger detection algorithm manually if necessary. */
-	msleep(200);
-
-	/* 2. Get the result by polling or via an interrupt */
+	/* 1. Get the result via an interrupt */
 	mdev = muic_get_chgtyp_to_mdev(pmuic);
 	pr_info("%s: detected legacy_dev=%d\n", __func__, mdev);
 
-	/* 3. Noti. if supported. */
+	/* 2. Noti. if supported. */
 	if (!muic_is_ccic_supported_dev(pmuic, mdev)) {
 		pr_info("%s: Unsupported legacy_dev=%d\n", __func__, mdev);
 		return 0;
@@ -514,23 +512,6 @@ static int rid_to_mdev_with_vbus(muic_data_t *pmuic, int rid, int vbus)
 	return mdev;
 }
 
-static bool mdev_is_valid_RID_OPEN(muic_data_t *pmuic, int vbus)
-{
-	int i, retry = 5;
-
-	if (vbus)
-		return true;
-
-	for (i = 0; i < retry; i++) {
-		pr_info("%s: %dth ...\n", __func__, i);
-		msleep(10);
-		if (mdev_get_vbus(pmuic))
-			return 1;
-	}
-
-	return 0;
-}
-
 static int muic_handle_ccic_ATTACH(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *pnoti)
 {
 	struct mdev_desc_t *pdesc = &mdev_desc;
@@ -566,7 +547,7 @@ static int muic_handle_ccic_ATTACH(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *p
 			return 0;
 		}
 
-		if (mdev_is_valid_RID_OPEN(pmuic, vbus))
+		if (mdev_get_vbus(pmuic))
 			pr_info("%s: Valid VBUS-> handled in irq handler\n", __func__);
 		else
 			pr_info("%s: No VBUS-> doing nothing.\n", __func__);
@@ -576,18 +557,17 @@ static int muic_handle_ccic_ATTACH(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *p
 		/* To prevent damage by RP0 Cable, AFC should be progress after ccic_attach */
 		pmuic->is_ccic_attach = true;
 
-#if !defined(CONFIG_SUPPORT_QC30)
+#if defined(CONFIG_MUIC_HV) && !defined(CONFIG_SUPPORT_QC30)
 		/* W/A for late ccic attach */
 		if (pmuic->retry_afc) {
 			pmuic->retry_afc = false;
 			pr_info("%s: Retry to AFC because of ccic_attach, RP Info = %d\n", __func__, pmuic->ccic_rp);
 
-			switch(pmuic->ccic_rp) {
+			switch (pmuic->ccic_rp) {
 			case Rp_56K:
 				sm5720_afc_restart();
 				break;
 			case Rp_Abnormal:
-			default:
 				pr_info("%s:%s Working SBU-Vbus Short W/A\n", MUIC_DEV_NAME, __func__);
 				pmuic->pdata->afc_limit_voltage = true;
 				pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_NONE_MUIC;
@@ -597,8 +577,10 @@ static int muic_handle_ccic_ATTACH(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *p
 				pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_TA_MUIC;
 				muic_notifier_attach_attached_dev(pmuic->attached_dev);
 				break;
+			default:
+				break;
 			}
-			
+
 			return 0;
 		}
 #endif
@@ -729,7 +711,7 @@ static int muic_handle_ccic_RID(muic_data_t *pmuic, CC_NOTI_RID_TYPEDEF *pnoti)
 	case RID_UNDEFINED:
 		vbus = mdev_get_vbus(pmuic);
 		if (pdesc->ccic_evt_attached == MUIC_CCIC_NOTI_ATTACH &&
-			mdev_is_valid_RID_OPEN(pmuic, vbus)) {
+			mdev_get_vbus(pmuic)) {
 			if (pmuic->pdata->jig_uart_cb)
 				pmuic->pdata->jig_uart_cb(0);
 				/*
@@ -760,14 +742,38 @@ static int muic_handle_ccic_WATER(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *pn
 	if (pnoti->attach == CCIC_NOTIFY_ATTACH) {
 		pr_info("%s: Water detect\n", __func__);
 		pmuic->afc_water_disable = true;
-
+#if defined(CONFIG_MUIC_HV)
 		sm5720_afc_set_voltage(AFC_5V);
+#endif
 	} else {
 		pr_info("%s: Undefined notification, Discard\n", __func__);
 	}
 
 	return 0;
 }
+
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+static int muic_handle_ccic_EARJACK(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *pnoti)
+{
+	pr_info("%s: src:%d dest:%d id:%d attach:%d cable_type:%d rprd:%d\n", __func__,
+		pnoti->src, pnoti->dest, pnoti->id, pnoti->attach, pnoti->cable_type, pnoti->rprd);
+
+	if (pnoti->attach == CCIC_NOTIFY_ATTACH) {
+		pr_info("%s: Type-C Analog Headset attach\n", __func__);
+		
+		set_manual_audio_path(pmuic);
+		pmuic->attached_dev = ATTACHED_DEV_EARJACK_MUIC;
+		return 0;
+	} 
+	if(pnoti->attach == CCIC_NOTIFY_DETACH){
+		pr_info("%s: Type-C Analog Headset detach\n", __func__);
+		mdev_handle_ccic_detach(pmuic);
+	}else{
+		pr_info("%s: Undefined notification, Discard\n", __func__);
+	}
+	return 0;
+}
+#endif
 
 static int muic_handle_ccic_notification(struct notifier_block *nb,
 				unsigned long action, void *data)
@@ -807,6 +813,8 @@ static int muic_handle_ccic_notification(struct notifier_block *nb,
 
 	mdev_show_status(pmuic);
 
+	mutex_lock(&pmuic->muic_mutex);
+
 	switch (pnoti->id) {
 	case CCIC_NOTIFY_ID_ATTACH:
 		pr_info("%s: CCIC_NOTIFY_ID_ATTACH: %s\n", __func__,
@@ -821,6 +829,13 @@ static int muic_handle_ccic_notification(struct notifier_block *nb,
 		pr_info("%s: CCIC_NOTIFY_ID_WATER\n", __func__);
 		muic_handle_ccic_WATER(pmuic, (CC_NOTI_ATTACH_TYPEDEF *)pnoti);
 		break;
+#if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
+	case CCIC_NOTIFY_ID_EARJACK:
+		pr_info("%s: CCIC_NOTIFY_ID_EARJACK\n", __func__);
+		muic_handle_ccic_EARJACK(pmuic, (CC_NOTI_ATTACH_TYPEDEF *)pnoti);
+		//mdev_com_to(pmuic, MUIC_PATH_AUDIO);
+		break;
+#endif		
 	default:
 		pr_info("%s: Undefined Noti. ID\n", __func__);
 		return NOTIFY_DONE;
@@ -828,7 +843,7 @@ static int muic_handle_ccic_notification(struct notifier_block *nb,
 
 	mdev_show_status(pmuic);
 
-	muic_print_reg_dump(pmuic);
+	mutex_unlock(&pmuic->muic_mutex);
 
 	return NOTIFY_DONE;
 }

@@ -40,7 +40,7 @@ Copyright (C) 2012, Samsung Electronics. All rights reserved.
 #define MDNIE_COLOR_BLINDE_CMD_SIZE 18
 #define MDNIE_COLOR_BLINDE_HBM_CMD_SIZE 24
 #define COORDINATE_DATA_SIZE 6
-#define MDNIE_NIGHT_MODE_CMD_SIZE 24
+#define MDNIE_SCR_CMD_SIZE 24
 
 extern char mdnie_app_name[][NAME_STRING_MAX];
 extern char mdnie_mode_name[][NAME_STRING_MAX];
@@ -129,6 +129,8 @@ enum HDR {
 	HDR_1,
 	HDR_2,
 	HDR_3,
+	HDR_4,
+	HDR_5,
 	HDR_MAX
 };
 
@@ -138,6 +140,40 @@ enum LIGHT_NOTIFICATION {
 	LIGHT_NOTIFICATION_MAX,
 };
 
+enum COLOR_LENS {
+	COLOR_LENS_OFF = 0,
+	COLOR_LENS_ON,
+	COLOR_LENS_MAX
+};
+
+enum COLOR_LENS_COLOR {
+	COLOR_LENS_COLOR_BLUE = 0,
+	COLOR_LENS_COLOR_AZURE,
+	COLOR_LENS_COLOR_CYAN,
+	COLOR_LENS_COLOR_SPRING_GREEN,
+	COLOR_LENS_COLOR_GREEN,
+	COLOR_LENS_COLOR_CHARTREUSE_GREEN,
+	COLOR_LENS_COLOR_YELLOW,
+	COLOR_LENS_COLOR_ORANGE,
+	COLOR_LENS_COLOR_RED,
+	COLOR_LENS_COLOR_ROSE,
+	COLOR_LENS_COLOR_MAGENTA,
+	COLOR_LENS_COLOR_VIOLET,
+	COLOR_LENS_COLOR_MAX
+};
+
+enum COLOR_LENS_LEVEL {
+	COLOR_LENS_LEVEL_20P = 0,
+	COLOR_LENS_LEVEL_25P,
+	COLOR_LENS_LEVEL_30P,
+	COLOR_LENS_LEVEL_35P,
+	COLOR_LENS_LEVEL_40P,
+	COLOR_LENS_LEVEL_45P,
+	COLOR_LENS_LEVEL_50P,
+	COLOR_LENS_LEVEL_55P,
+	COLOR_LENS_LEVEL_60P,
+	COLOR_LENS_LEVEL_MAX,
+};
 
 struct mdnie_lite_tun_type {
 	enum BYPASS mdnie_bypass;
@@ -156,14 +192,13 @@ struct mdnie_lite_tun_type {
 	char scr_white_green;
 	char scr_white_blue;
 
-	int scr_white_balanced_red;
-	int scr_white_balanced_green;
-	int scr_white_balanced_blue;
-
 	int night_mode_enable;
 	int night_mode_index;
-
 	int ldu_mode_index;
+
+	int color_lens_enable;
+	int color_lens_color;
+	int color_lens_level;
 
 	int index;
 	struct list_head used_list;
@@ -229,6 +264,10 @@ struct mdnie_lite_tune_data {
 	char *DSI0_TDMB_AUTO_MDNIE_2;
 	char *DSI0_NIGHT_MODE_MDNIE_1;
 	char *DSI0_NIGHT_MODE_MDNIE_2;
+	char *DSI0_NIGHT_MODE_MDNIE_SCR;
+	char *DSI0_COLOR_LENS_MDNIE_1;
+	char *DSI0_COLOR_LENS_MDNIE_2;
+	char *DSI0_COLOR_LENS_MDNIE_SCR;
 
 	struct dsi_cmd_desc *DSI0_BYPASS_MDNIE;
 	struct dsi_cmd_desc *DSI0_NEGATIVE_MDNIE;
@@ -287,6 +326,7 @@ struct mdnie_lite_tune_data {
 	struct dsi_cmd_desc *DSI0_TDMB_MOVIE_MDNIE;
 	struct dsi_cmd_desc *DSI0_TDMB_AUTO_MDNIE;
 	struct dsi_cmd_desc *DSI0_NIGHT_MODE_MDNIE;
+	struct dsi_cmd_desc *DSI0_COLOR_LENS_MDNIE;
 
 	struct dsi_cmd_desc *(*mdnie_tune_value_dsi0)[MAX_MODE][MAX_OUTDOOR_MODE];
 	struct dsi_cmd_desc **hmt_color_temperature_tune_value_dsi0;
@@ -305,14 +345,17 @@ struct mdnie_lite_tune_data {
 	int dsi0_max_adjust_ldu;
 	char *dsi0_night_mode_table;
 	int dsi0_max_night_mode_index;
+	char *dsi0_color_lens_table;
 	int dsi0_scr_step_index;
 	char dsi0_white_default_r;
 	char dsi0_white_default_g;
 	char dsi0_white_default_b;
-	int dsi0_white_rgb_enabled;
 	char dsi0_white_ldu_r;
 	char dsi0_white_ldu_g;
 	char dsi0_white_ldu_b;
+	int dsi0_white_balanced_r;
+	int dsi0_white_balanced_g;
+	int dsi0_white_balanced_b;
 
 /*******************************************
 *					DSI1 DATA
@@ -350,6 +393,10 @@ struct mdnie_lite_tune_data {
 	char *DSI1_TDMB_AUTO_MDNIE_2;
 	char *DSI1_NIGHT_MODE_MDNIE_1;
 	char *DSI1_NIGHT_MODE_MDNIE_2;
+	char *DSI1_NIGHT_MODE_MDNIE_SCR;
+	char *DSI1_COLOR_LENS_MDNIE_1;
+	char *DSI1_COLOR_LENS_MDNIE_2;
+	char *DSI1_COLOR_LENS_MDNIE_SCR;
 
 	struct dsi_cmd_desc *DSI1_BYPASS_MDNIE;
 	struct dsi_cmd_desc *DSI1_NEGATIVE_MDNIE;
@@ -408,6 +455,7 @@ struct mdnie_lite_tune_data {
 	struct dsi_cmd_desc *DSI1_TDMB_MOVIE_MDNIE;
 	struct dsi_cmd_desc *DSI1_TDMB_AUTO_MDNIE;
 	struct dsi_cmd_desc *DSI1_NIGHT_MODE_MDNIE;
+	struct dsi_cmd_desc *DSI1_COLOR_LENS_MDNIE;
 
 	struct dsi_cmd_desc *(*mdnie_tune_value_dsi1)[MAX_MODE][MAX_OUTDOOR_MODE];
 	struct dsi_cmd_desc **hmt_color_temperature_tune_value_dsi1;
@@ -426,14 +474,17 @@ struct mdnie_lite_tune_data {
 	int dsi1_max_adjust_ldu;
 	char *dsi1_night_mode_table;
 	int dsi1_max_night_mode_index;
+	char *dsi1_color_lens_table;
 	int dsi1_scr_step_index;
 	char dsi1_white_default_r;
 	char dsi1_white_default_g;
 	char dsi1_white_default_b;
-	int dsi1_white_rgb_enabled;
 	char dsi1_white_ldu_r;
 	char dsi1_white_ldu_g;
 	char dsi1_white_ldu_b;
+	int dsi1_white_balanced_r;
+	int dsi1_white_balanced_g;
+	int dsi1_white_balanced_b;
 };
 
 /* COMMON FUNCTION*/

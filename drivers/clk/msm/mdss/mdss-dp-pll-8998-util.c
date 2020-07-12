@@ -128,10 +128,10 @@ int vco_divided_clk_set_div(struct div_clk *clk, int div)
 	auxclk_div = MDSS_PLL_REG_R(dp_res->phy_base, DP_PHY_VCO_DIV);
 	auxclk_div &= ~0x03;	/* bits 0 to 1 */
 
-	auxclk_div |= 1; /* Default divider */
-
 	if (div == 4)
 		auxclk_div |= 2;
+	else
+		auxclk_div |= 1; /* Default divider */
 
 	MDSS_PLL_REG_W(dp_res->phy_base,
 			DP_PHY_VCO_DIV, auxclk_div);

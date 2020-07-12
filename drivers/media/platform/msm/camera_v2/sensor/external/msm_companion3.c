@@ -81,10 +81,13 @@
 #define MSM_COMP_DRV_NAME                    "msm_companion"
 #define MSM_COMP_POLL_RETRIES		20
 #if 0
-static const char* ISP_COMPANION_BINARY_PATH = "/data/log/CamFW_Companion.bin";
+static const char *ISP_COMPANION_BINARY_PATH = "/data/log/CamFW_Companion.bin";
 #else
-static const char* ISP_COMPANION_BINARY_PATH = "/data/media/0/CamFW_Companion.bin";
+static const char *ISP_COMPANION_BINARY_PATH = "/data/media/0/CamFW_Companion.bin";
 #endif
+
+//  Enable to use default FW and master set file at /sdcard folder for test purpose only.
+//#define USE_C3_FW_AT_SDCARD_FOLDER
 
 extern struct regulator *pwr_binning_reg;
 
@@ -93,8 +96,8 @@ extern int poweroff_charging;
 #endif
 int wdr_mode;
 
-bool retention_mode = 0;
-bool retention_mode_pwr = 0;
+bool retention_mode;
+bool retention_mode_pwr;
 uint32_t fw_crc_retention;
 uint32_t fw_crc_size_retention;
 #ifdef HW_CRC
@@ -182,10 +185,10 @@ static int msm_companion_append_string(uint8_t *str, int offset, uint8_t *substr
 	return 1;
 }
 
-static int msm_companion_fw_binary_set(struct companion_device *companion_dev, struct companion_fw_binary_param fw_bin,
-	uint8_t *sensor_name)
+static int msm_companion_fw_binary_set(struct companion_device *companion_dev, struct companion_fw_binary_param fw_bin)
 {
 	long ret = 0;
+	uint8_t sensor_name[64] = {0,};
 
 	// Setting fw binary
 	if (fw_bin.size != 0 && fw_bin.buffer != NULL) {
@@ -220,8 +223,15 @@ static int msm_companion_fw_binary_set(struct companion_device *companion_dev, s
 		pr_err("[syscamera][%s::%d][Error] Failed to copy version info from user-space\n", __FUNCTION__, __LINE__);
 		return -EFAULT;
 	}
+	if (copy_from_user(sensor_name, fw_bin.sensor_name, 64)) {
+		pr_err("[syscamera][%s::%d][Error] Failed to copy sensor name from user-space\n",
+			__FUNCTION__, __LINE__);
+		return -EFAULT;
+	}
 
-	pr_err("[%s:%d] Version string from EEPROM = %s, bin size = %d", __FUNCTION__, __LINE__, companion_dev->eeprom_fw_ver, companion_dev->eeprom_fw_bin_size);
+	pr_err("[%s:%d] Version string from EEPROM = %s, bin size = %d, sensor name %s",
+		__FUNCTION__, __LINE__, companion_dev->eeprom_fw_ver,
+		companion_dev->eeprom_fw_bin_size, sensor_name);
 
 	//Updating path for fw binary (companion_fw_path + sensor_version + companion_fw_name + sensor_name + extension)
 	{
@@ -258,20 +268,18 @@ static int msm_companion_fw_binary_set(struct companion_device *companion_dev, s
 					pr_err("[syscamera][%s::%d][Error] fail to appending path string\n", __FUNCTION__, __LINE__);
 					return -EFAULT;
 				}
-				offset+= size;
+				offset += size;
 
-				if (fw_n != FW_NAME_MASTER)
-				{
+				if (fw_n != FW_NAME_MASTER) {
 					// Add sensor version to string
 					size = msm_companion_get_string_length(sensor_version);
 					//pr_err("[syscamera][%s::%d] offset = %d, size = %d\n", __FUNCTION__, __LINE__, offset, size);
 
-					if(msm_companion_append_string(fw_name[fw_p][fw_n], offset, sensor_version, size) == 0)
-					{
+					if (msm_companion_append_string(fw_name[fw_p][fw_n], offset, sensor_version, size) == 0) {
 						pr_err("[syscamera][%s::%d][Error] fail to appending sensor version string\n", __FUNCTION__, __LINE__);
 						return -EFAULT;
 					}
-					offset+= size;
+					offset += size;
 				}
 
 				// Add name to string
@@ -281,10 +289,9 @@ static int msm_companion_fw_binary_set(struct companion_device *companion_dev, s
 					pr_err("[syscamera][%s::%d][Error] fail to appending fw name string\n", __FUNCTION__, __LINE__);
 					return -EFAULT;
 				}
-				offset+= size;
+				offset += size;
 
-				if (fw_n != FW_NAME_MASTER)
-				{
+				if (fw_n != FW_NAME_MASTER) {
 				   // Add sensor name to string
 				   size = msm_companion_get_string_length(sensor_name);
 				   //pr_err("[syscamera][%s::%d] offset = %d, size = %d\n", __FUNCTION__, __LINE__, offset, size);
@@ -293,7 +300,7 @@ static int msm_companion_fw_binary_set(struct companion_device *companion_dev, s
 						pr_err("[syscamera][%s::%d][Error] fail to appending sensor name string\n", __FUNCTION__, __LINE__);
 						return -EFAULT;
 					}
-					offset+= size;
+					offset += size;
 				}
 
 				// Add extension to string
@@ -303,7 +310,7 @@ static int msm_companion_fw_binary_set(struct companion_device *companion_dev, s
 					pr_err("[syscamera][%s::%d][Error] fail to appending extension string\n", __FUNCTION__, __LINE__);
 					return -EFAULT;
 				}
-				offset+= size;
+				offset += size;
 
 				if (fw_p == FW_PATH_SD && fw_n == FW_NAME_ISP)
 					snprintf(fw_name[fw_p][fw_n], 64, "%s", ISP_COMPANION_BINARY_PATH);
@@ -347,7 +354,7 @@ static int msm_companion_set_cal_tbl(struct companion_device *companion_dev, str
 	}
 
 	// Copy table from user-space area
-	if (copy_from_user(companion_dev->companion_cal_tbl, (void *)cal_tbl.reg_setting, sizeof(struct msm_camera_i2c_reg_array)* cal_tbl.size)) {
+	if (copy_from_user(companion_dev->companion_cal_tbl, (void *)cal_tbl.reg_setting, sizeof(struct msm_camera_i2c_reg_array) * cal_tbl.size)) {
 		pr_err("[syscamera][%s::%d] failed to copy mode table from user-space\n", __FUNCTION__, __LINE__);
 		kfree(companion_dev->companion_cal_tbl);
 		companion_dev->companion_cal_tbl = NULL;
@@ -402,8 +409,7 @@ static int msm_companion_compare_FW_crc(struct companion_device *companion_dev)
 
 	pr_info("[syscamera][%s::%d] companion : 0x%08X vs AP : 0x%08X\n", __FUNCTION__, __LINE__, *crc_param.CRC, fw_crc_retention);
 
-	if (*crc_param.CRC != fw_crc_retention)
-	{
+	if (*crc_param.CRC != fw_crc_retention) {
 		msm_camera_fw_check('F', CHECK_COMPANION_FW); //F: Fail
 		pr_err("[syscamera][%s::%d] msm_companion_get_crc failed.\n", __FUNCTION__, __LINE__);
 		return -EFAULT;
@@ -416,12 +422,12 @@ static int msm_companion_cal_data_write(struct companion_device *companion_dev)
 {
 	int ret = 0; //, idx;
 	struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
-	struct msm_camera_i2c_reg_array * cal_tbl = companion_dev->companion_cal_tbl;
+	struct msm_camera_i2c_reg_array *cal_tbl = companion_dev->companion_cal_tbl;
 
 	pr_info("[syscamera][%s::%d] writing cal table to companion chip hw (cal_tbl_size = %d)\n",
 		__FUNCTION__, __LINE__, companion_dev->companion_cal_tbl_size);
 
-	if(cal_tbl == NULL) {
+	if (cal_tbl == NULL) {
 		pr_err("[syscamera][%s::%d] cal table is empty. returning function.\n", __FUNCTION__, __LINE__);
 		return -EINVAL;
 	}
@@ -451,7 +457,7 @@ static int msm_companion_cal_data_write(struct companion_device *companion_dev)
 		spi_buffer[1] = 0x6F;
 		spi_buffer[2] = 0x12;
 
-		for (idx = 2, i = 3; i < spi_trans_size; idx ++, i += 2) {
+		for (idx = 2, i = 3; i < spi_trans_size; idx++, i += 2) {
 			buffer_16 = (uint16_t *)&spi_buffer[i];
 			*buffer_16 = cal_tbl[idx].reg_data;
 
@@ -471,7 +477,7 @@ static int msm_companion_cal_data_write(struct companion_device *companion_dev)
 		CDBG_SPI("%s:%d addr = 0x%X, write = 0x%08X\n", __FUNCTION__, __LINE__, cal_tbl[2].reg_addr, cal_tbl[2].reg_data);
 		CDBG_SPI("%s:%d addr = 0x%X, write = 0x%08X\n", __FUNCTION__, __LINE__, cal_tbl[3].reg_addr, cal_tbl[3].reg_data);
 
-		for (i = 0; i < spi_trans_size; i ++)
+		for (i = 0; i < spi_trans_size; i++)
 			CDBG_SPI("%s:%d spi_buffer[%d] = 0x%04X\n", __FUNCTION__, __LINE__, i, spi_buffer[i]);
 
 		memset(&tx, 0, sizeof(struct spi_transfer));
@@ -709,8 +715,8 @@ static int msm_companion_pll_init(struct companion_device *companion_dev)
 
 	// Read Device ID
 	ret = client->i2c_func_tbl->i2c_read(client, 0x0000, &read_value, MSM_CAMERA_I2C_WORD_DATA);
-        comp_fac_i2c_check = ret;
-        comp_fac_valid_check = read_value;
+	comp_fac_i2c_check = ret;
+	comp_fac_valid_check = read_value;
 	if (ret < 0) {
 		pr_err("[syscamera][%s::%d][PID::0x%4x][ret::%ld] I2C read fail \n", __FUNCTION__, __LINE__, read_value, ret);
 		return -EIO;
@@ -905,7 +911,7 @@ static int msm_companion_release_arm_reset(struct companion_device *companion_de
 	}
 
 	/* Recovery code for the ARM go fail */
-	while((read_value == 0xA0) && (loop_cnt < 2)) {
+	while ((read_value == 0xA0) && (loop_cnt < 2)) {
 		gpio_set_value_cansleep(GPIO_COMP_RSTN, GPIO_OUT_LOW); // COMP_RSTN_OFF
 		usleep_range(2000, 4000);
 		gpio_set_value_cansleep(GPIO_COMP_RSTN, GPIO_OUT_HIGH); // COMP_RSTN_ON
@@ -914,7 +920,7 @@ static int msm_companion_release_arm_reset(struct companion_device *companion_de
 		//write FW
 		pr_err("[syscamera::RECOVERY][%s::%d][Write FW]\n", __FUNCTION__, __LINE__);
 		ret = msm_companion_fw_write(companion_dev);
-		if(ret < 0) {
+		if (ret < 0) {
 			pr_err("[syscamera][%s::%d] error on loading firmware\n", __FUNCTION__, __LINE__);
 			return -EFAULT;
 		}
@@ -979,12 +985,12 @@ static int msm_companion_release_arm_reset(struct companion_device *companion_de
 	return 0;
 }
 
-int msm_companion_sysfs_fw_version_write(const char* eeprom_ver, const char* phone_ver, const char* load_ver)
+int msm_companion_sysfs_fw_version_write(const char *eeprom_ver, const char *phone_ver, const char *load_ver)
 {
 	int ret = 0;
 	char fw_ver[37] = "NULL NULL NULL\n";
 
-	if(strcmp(phone_ver, "") == 0)
+	if (strcmp(phone_ver, "") == 0)
 		snprintf(fw_ver, sizeof(fw_ver), "%s NULL %s\n", eeprom_ver, load_ver);
 	else
 		snprintf(fw_ver, sizeof(fw_ver), "%s %s %s\n", eeprom_ver, phone_ver, load_ver);
@@ -1024,7 +1030,7 @@ static int msm_companion_fw_write(struct companion_device *companion_dev)
 	struct spi_transfer tx;
 	char *sd_fw_isp_path = NULL;
 	char *cc_fw_isp_path = NULL;
-	uint8_t iter = 0, crc_pass = 0;
+	uint8_t iter = 0, crc_pass = 0, max_iter = 3;
 	uint32_t crc_cal = ~0;
 	uint16_t read_value = 0xFFFF;
 
@@ -1064,11 +1070,13 @@ static int msm_companion_fw_write(struct companion_device *companion_dev)
 	pr_err("[syscamera][%s::%d] sd path = %s, cc path = %s\n", __FUNCTION__, __LINE__, sd_fw_isp_path, cc_fw_isp_path);
 	pr_err("[syscamera][%s::%d] cc_fw_isp_path = %s, cc_master_isp_path = %s\n", __FUNCTION__, __LINE__, fw_name[FW_PATH_CC][FW_NAME_ISP], fw_name[FW_PATH_CC][FW_NAME_MASTER]);
 
-	for(iter = 0; iter < 3; iter ++) {
+	for (iter = 0; iter < max_iter; iter++) {
+#ifdef USE_C3_FW_AT_SDCARD_FOLDER
 		isp_filp = filp_open(sd_fw_isp_path, O_RDONLY, 0);
 		if (IS_ERR(isp_filp)) {
 			pr_err("[syscamera]%s does not exist, err %ld, search next path.\n",
 					sd_fw_isp_path, PTR_ERR(isp_filp));
+#endif
 			isp_filp = filp_open(cc_fw_isp_path, O_RDONLY, 0);
 			if (IS_ERR(isp_filp)) {
 				pr_err("[syscamera]failed to open %s, err %ld\n",
@@ -1078,13 +1086,25 @@ static int msm_companion_fw_write(struct companion_device *companion_dev)
 			} else {
 				CDBG("[syscamera]open success : %s\n", cc_fw_isp_path);
 			}
+#ifdef USE_C3_FW_AT_SDCARD_FOLDER
 		} else {
 			CDBG("[syscamera]open success : %s\n", sd_fw_isp_path);
 		}
+#endif
 
 		isp_size = isp_filp->f_path.dentry->d_inode->i_size;
 		isp_fsize = isp_size - isp_vsize;
 		CDBG_FW("[syscamera]ISP size %d, fsize %d Bytes\n", isp_size, isp_fsize);
+		if(isp_size < 16) {
+			pr_err("fatal : invalid file size, %d Bytes\n", isp_size);
+
+			if(iter == max_iter-1) {
+				ret = -EIO;
+				goto isp_filp_ferr;
+			} else {
+				continue;
+			}
+		}
 
 		/* version info is located at the end of 16byte of the buffer. */
 		isp_vbuf = vmalloc(isp_size);
@@ -1107,9 +1127,9 @@ static int msm_companion_fw_write(struct companion_device *companion_dev)
 			goto isp_filp_ferr_iter;
 		}
 #ifdef CONFIG_MSM_CC_DEBUG
-		for (arr_idx = 0 ; arr_idx < isp_fsize ; arr_idx ++) {
+		for (arr_idx = 0 ; arr_idx < isp_fsize ; arr_idx++) {
 			CDBG_FW("%02x", isp_fbuf[arr_idx]);
-			if(((arr_idx % 8)==0) && (arr_idx != 0)) {
+			if (((arr_idx % 8) == 0) && (arr_idx != 0)) {
 				CDBG_FW("\n");
 			}
 		}
@@ -1155,23 +1175,23 @@ isp_filp_verr_iter:
 		}
 	}
 
-	if(crc_pass == 0)
+	if (crc_pass == 0)
 		goto isp_filp_ferr;
 
 	// Multi module support
 isp_check_multimodule:
 	CDBG("[syscamera][%s::%d][fs version = %s, eeprom version = %s]\n", __FUNCTION__, __LINE__, fs_fw_version, companion_dev->eeprom_fw_ver);
-	if(companion_dev->eeprom_fw_bin != NULL && companion_dev->eeprom_fw_bin_size != 0) {
+	if (companion_dev->eeprom_fw_bin != NULL && companion_dev->eeprom_fw_bin_size != 0) {
 		// HW version check
-		for(i = 0; i < 5; i++)
-			if(fs_fw_version[i] != companion_dev->eeprom_fw_ver[i])
+		for (i = 0; i < 5; i++)
+			if (fs_fw_version[i] != companion_dev->eeprom_fw_ver[i])
 				isEepromFwUsed = 1;
 
 		// SW version check
-		if(isEepromFwUsed != 1) {
-			for(i = 5; i < 9; i++) {
-				if(fs_fw_version[i] != companion_dev->eeprom_fw_ver[i]) {
-					if(fs_fw_version[i] < companion_dev->eeprom_fw_ver[i]) {
+		if (isEepromFwUsed != 1) {
+			for (i = 5; i < 9; i++) {
+				if (fs_fw_version[i] != companion_dev->eeprom_fw_ver[i]) {
+					if (fs_fw_version[i] < companion_dev->eeprom_fw_ver[i]) {
 						isEepromFwUsed = 1;
 						break;
 					} else {
@@ -1188,7 +1208,7 @@ isp_check_multimodule:
 	pr_info("[syscamera][%s::%d][fs version = %s, eeprom version = %s, isEepromUsed = %d]\n", __FUNCTION__, __LINE__,
 				fs_fw_version, companion_dev->eeprom_fw_ver, isEepromFwUsed);
 
-	if(isEepromFwUsed) {
+	if (isEepromFwUsed) {
 		buf_backup = isp_fbuf;
 		size_backup = isp_fsize;
 
@@ -1244,7 +1264,7 @@ isp_check_multimodule:
 #ifndef USE_STATIC_BUF
 	spi_isp_buf = kmalloc(spi_isp_buf_size, GFP_KERNEL | GFP_DMA);
 
-	if (!spi_isp_buf){
+	if (!spi_isp_buf) {
 		pr_err("[syscamera][%s::%d][Err::kmalloc spi_isp_buf is NULL]\n", __FUNCTION__, __LINE__);
 		ret = -EIO;
 		goto isp_filp_ferr;
@@ -1267,7 +1287,7 @@ isp_check_multimodule:
 	spi_isp_buf = NULL;
 #endif
 
-	if(isEepromFwUsed) {
+	if (isEepromFwUsed) {
 		isp_fbuf = buf_backup;
 		isp_fsize = size_backup;
 	}
@@ -1311,13 +1331,13 @@ isp_check_multimodule:
 isp_filp_ferr:
 //isp_filp_verr:
 #ifndef USE_STATIC_BUF
-	if (spi_isp_buf){
+	if (spi_isp_buf) {
 		kfree(spi_isp_buf);
 		spi_isp_buf = NULL;
 	}
 #endif
 
-	if(isEepromFwUsed) {
+	if (isEepromFwUsed) {
 		isp_fbuf = buf_backup;
 		isp_fsize = size_backup;
 	}
@@ -1365,21 +1385,26 @@ static int msm_companion_master_write(struct companion_device *companion_dev)
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
 
+#ifdef USE_C3_FW_AT_SDCARD_FOLDER
 	cc_filp = filp_open(fw_name[FW_PATH_SD][FW_NAME_MASTER], O_RDONLY, 0);
 	if (IS_ERR(cc_filp)) {
 		pr_err("[syscamera]%s does not exist, err %ld, search next path.\n",
 				fw_name[FW_PATH_SD][FW_NAME_MASTER], PTR_ERR(cc_filp));
+#endif
 		cc_filp = filp_open(fw_name[FW_PATH_CC][FW_NAME_MASTER], O_RDONLY, 0);
 		if (IS_ERR(cc_filp)) {
 			pr_err("[syscamera]failed to open %s, err %ld\n",
 					fw_name[FW_PATH_CC][FW_NAME_MASTER], PTR_ERR(cc_filp));
+			cc_filp = NULL;
 			goto cc_filp_ferr;
 		} else {
 			pr_err("[syscamera]open success : %s\n", fw_name[FW_PATH_CC][FW_NAME_MASTER]);
 		}
+#ifdef USE_C3_FW_AT_SDCARD_FOLDER
 	} else {
 		pr_err("[syscamera]open success : %s\n", fw_name[FW_PATH_SD][FW_NAME_MASTER]);
 	}
+#endif
 
 	if (!cc_filp) {
 		pr_err("cc_flip is NULL\n");
@@ -1400,7 +1425,7 @@ static int msm_companion_master_write(struct companion_device *companion_dev)
 		ret = -EIO;
 		goto cc_filp_verr;
 	}
-	CDBG_FW("[master-version]%s\n",cc_vbuf);
+	CDBG_FW("[master-version]%s\n", cc_vbuf);
 	/* Concord set */
 	cc_fbuf = vmalloc(cc_fsize);
 	cc_filp->f_pos = 0;	//swap
@@ -1411,9 +1436,9 @@ static int msm_companion_master_write(struct companion_device *companion_dev)
 		goto cc_filp_ferr;
 	}
 #ifdef CONFIG_MSM_CC_DEBUG
-	for (arr_idx = 0 ; arr_idx < cc_fsize ; arr_idx ++) {
+	for (arr_idx = 0 ; arr_idx < cc_fsize ; arr_idx++) {
 		CDBG_FW("%02x", cc_fbuf[arr_idx]);
-		if(((arr_idx % 15)==0) && (arr_idx != 0)) {
+		if (((arr_idx % 15) == 0) && (arr_idx != 0)) {
 			CDBG_FW("\n");
 		}
 	}
@@ -1493,7 +1518,8 @@ cc_filp_verr:
 	return -EFAULT;
 }
 
-static int msm_companion_get_crc(struct companion_device *companion_dev, struct companion_crc_check_param crc_param, int callByKernel) {
+static int msm_companion_get_crc(struct companion_device *companion_dev, struct companion_crc_check_param crc_param, int callByKernel)
+{
 	int ret = 0;
 	struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
 	int i;
@@ -1545,7 +1571,7 @@ static int msm_companion_get_crc(struct companion_device *companion_dev, struct 
 		uint16_t polling = 0;
 		ret += client->i2c_func_tbl->i2c_read(
 				client, CRC_FINISH, &polling, MSM_CAMERA_I2C_WORD_DATA);
-		if(polling == 0x0001) {
+		if (polling == 0x0001) {
 			CDBG("[syscamera][%s::%d] break the loop after %d tries.\n", __FUNCTION__, __LINE__, i);
 			break;
 		}
@@ -1607,16 +1633,17 @@ static int msm_companion_get_crc(struct companion_device *companion_dev, struct 
 	return ret;
 }
 
-static int msm_companion_stream_on(struct msm_camera_i2c_client *companion_i2c_dev, uint16_t enable)
+static int msm_companion_stream_on(struct msm_camera_i2c_client *companion_i2c_dev)
 {
 	int ret = 0;
 
-	pr_info("[syscamera][%s::%d][E][enable::%d][wdr_mode::%d]\n", __FUNCTION__, __LINE__, enable, wdr_mode);
+	pr_info("[syscamera][%s::%d][E][wdr_mode::%d]\n", __FUNCTION__, __LINE__, wdr_mode);
+
 	//wdr mode setting
 	if (wdr_mode == 0) {	// WDR off
 		CDBG("[syscamera][%s::%d][E][WDR : %d]\n", __FUNCTION__, __LINE__, wdr_mode);
 		ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
-				companion_i2c_dev, LOWER(api_otf_WdrMode) , 0x0000, MSM_CAMERA_I2C_WORD_DATA);
+				companion_i2c_dev, LOWER(api_otf_WdrMode), 0x0000, MSM_CAMERA_I2C_WORD_DATA);
 
 		ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
 				companion_i2c_dev, LOWER(api_otf_PowerMode), 0x0000, MSM_CAMERA_I2C_WORD_DATA);
@@ -1626,7 +1653,7 @@ static int msm_companion_stream_on(struct msm_camera_i2c_client *companion_i2c_d
 	} else if (wdr_mode == 1) { // WDR On
 		CDBG("[syscamera][%s::%d][E][WDR : %d]\n", __FUNCTION__, __LINE__, wdr_mode);
 		ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
-				companion_i2c_dev, LOWER(api_otf_WdrMode) , 0x0001, MSM_CAMERA_I2C_WORD_DATA);
+				companion_i2c_dev, LOWER(api_otf_WdrMode), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 
 		ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
 				companion_i2c_dev, LOWER(api_otf_PowerMode), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
@@ -1636,7 +1663,7 @@ static int msm_companion_stream_on(struct msm_camera_i2c_client *companion_i2c_d
 	} else if (wdr_mode == 2) { // WDR Auto
 		CDBG("[syscamera][%s::%d][E][WDR : %d]\n", __FUNCTION__, __LINE__, wdr_mode);
 		ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
-				companion_i2c_dev, LOWER(api_otf_WdrMode) , 0x0001, MSM_CAMERA_I2C_WORD_DATA);
+				companion_i2c_dev, LOWER(api_otf_WdrMode), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 
 		ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
 				companion_i2c_dev, LOWER(api_otf_PowerMode), 0x0002, MSM_CAMERA_I2C_WORD_DATA);
@@ -1644,26 +1671,43 @@ static int msm_companion_stream_on(struct msm_camera_i2c_client *companion_i2c_d
 		ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
 				companion_i2c_dev, LOWER(HOST_INTRP_ChangeConfig), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 	}
-	wdr_mode = -1;
 
 	// a clk control needs to be enabled 03.Dec.2013
 	ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
-			companion_i2c_dev, 0x6800, enable, MSM_CAMERA_I2C_WORD_DATA);
+			companion_i2c_dev, 0x6800, 0x1, MSM_CAMERA_I2C_WORD_DATA);
 
-	if(ret < 0) {
-		pr_err("[syscamera][%s::%d][Error on streaming control][enable::%d]\n", __FUNCTION__, __LINE__, enable);
+	if (ret < 0) {
+		pr_err("[syscamera][%s::%d][Error on streaming control]\n", __FUNCTION__, __LINE__);
 	}
 
 	return ret;
 }
 
+static int msm_companion_stream_off(struct msm_camera_i2c_client *companion_i2c_dev)
+{
+	int ret = 0;
+
+	wdr_mode = -1;
+
+	pr_info("[syscamera][%s::%d][E][wdr_mode::%d]\n", __FUNCTION__, __LINE__, wdr_mode);
+
+	// a clk control needs to be enabled 03.Dec.2013
+	ret = companion_i2c_dev->i2c_func_tbl->i2c_write(
+			companion_i2c_dev, 0x6800, 0x0, MSM_CAMERA_I2C_WORD_DATA);
+
+	if (ret < 0) {
+		pr_err("[syscamera][%s::%d][Error on streaming control]\n", __FUNCTION__, __LINE__);
+	}
+
+	return ret;
+}
 
 static int msm_companion_set_mode(struct companion_device *companion_dev, struct msm_camera_i2c_reg_setting mode_setting)
 {
 	int ret = 0, idx;
 	uint16_t read_value = 0xFFFF;
 	struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
-	struct msm_camera_i2c_reg_array * mode_tbl;
+	struct msm_camera_i2c_reg_array *mode_tbl;
 
 	// Allocate memory for the mode table
 	mode_tbl = (struct msm_camera_i2c_reg_array *)kmalloc(sizeof(struct msm_camera_i2c_reg_array) * mode_setting.size, GFP_KERNEL);
@@ -1673,7 +1717,7 @@ static int msm_companion_set_mode(struct companion_device *companion_dev, struct
 	}
 
 	// Copy table from user-space area
-	if (copy_from_user(mode_tbl, (void *)mode_setting.reg_setting,sizeof(struct msm_camera_i2c_reg_array)* mode_setting.size)) {
+	if (copy_from_user(mode_tbl, (void *)mode_setting.reg_setting, sizeof(struct msm_camera_i2c_reg_array) * mode_setting.size)) {
 		pr_err("[syscamera][%s::%d][Error] Failed to copy mode table from user-space\n", __FUNCTION__, __LINE__);
 		kfree(mode_tbl);
 		return -EFAULT;
@@ -1682,7 +1726,7 @@ static int msm_companion_set_mode(struct companion_device *companion_dev, struct
 	// Mode setting
 	for (idx = 0; idx < mode_setting.size; idx++) {
 
-		if(mode_tbl[idx].delay) {
+		if (mode_tbl[idx].delay) {
 			usleep_range(mode_tbl[idx].delay*1000, mode_tbl[idx].delay*1000+1000);
 			pr_info("[syscamera][%s::%d] delay : %d ms\n", __FUNCTION__, __LINE__, mode_tbl[idx].delay);
 		}
@@ -1721,7 +1765,7 @@ static int msm_companion_aec_update(struct companion_device *companion_dev, stru
 {
 	int ret = 0, idx;
 	struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
-	struct msm_camera_i2c_reg_array * mode_tbl;
+	struct msm_camera_i2c_reg_array *mode_tbl;
 
 	// Allocate memory for the mode table
 	mode_tbl = (struct msm_camera_i2c_reg_array *)kmalloc(sizeof(struct msm_camera_i2c_reg_array) * mode_setting.size, GFP_KERNEL);
@@ -1731,10 +1775,10 @@ static int msm_companion_aec_update(struct companion_device *companion_dev, stru
 	}
 
 	// Copy table from user-space area
-	if (copy_from_user(mode_tbl, (void *)mode_setting.reg_setting,sizeof(struct msm_camera_i2c_reg_array)* mode_setting.size)) {
+	if (copy_from_user(mode_tbl, (void *)mode_setting.reg_setting, sizeof(struct msm_camera_i2c_reg_array) * mode_setting.size)) {
 		pr_err("[syscamera][%s::%d][Error] Failed to copy aec update table from user-space\n", __FUNCTION__, __LINE__);
 		kfree(mode_tbl);
-	        return -EFAULT;
+		return -EFAULT;
 	}
 
 	// Mode setting
@@ -1777,7 +1821,7 @@ static int msm_companion_awb_update(struct companion_device *companion_dev, stru
 {
 	int ret = 0, idx;
 	struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
-	struct msm_camera_i2c_reg_array * mode_tbl;
+	struct msm_camera_i2c_reg_array *mode_tbl;
 
 	// Allocate memory for the mode table
 	mode_tbl = (struct msm_camera_i2c_reg_array *)kmalloc(sizeof(struct msm_camera_i2c_reg_array) * mode_setting.size, GFP_KERNEL);
@@ -1787,10 +1831,10 @@ static int msm_companion_awb_update(struct companion_device *companion_dev, stru
 	}
 
 	// Copy table from user-space area
-	if (copy_from_user(mode_tbl, (void *)mode_setting.reg_setting,sizeof(struct msm_camera_i2c_reg_array)* mode_setting.size)) {
+	if (copy_from_user(mode_tbl, (void *)mode_setting.reg_setting, sizeof(struct msm_camera_i2c_reg_array) * mode_setting.size)) {
 		pr_err("%s,%d failed to copy awb update table from user-space\n", __FUNCTION__, __LINE__);
 		kfree(mode_tbl);
-      		return -EFAULT;
+		return -EFAULT;
 	}
 
 	// Mode setting
@@ -1812,7 +1856,7 @@ static int msm_companion_awb_update(struct companion_device *companion_dev, stru
 
 	// read data
 	for (idx = 0; idx < mode_setting.size; idx++) {
-                uint16_t readval;
+		uint16_t readval;
 		ret = client->i2c_func_tbl->i2c_read(
 				client, mode_tbl[idx].reg_addr, &readval, MSM_CAMERA_I2C_WORD_DATA);
 		if (ret < 0) {
@@ -1834,7 +1878,7 @@ static int msm_companion_af_update(struct companion_device *companion_dev, struc
 {
 	int ret = 0, idx;
 	struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
-	struct msm_camera_i2c_reg_array * mode_tbl;
+	struct msm_camera_i2c_reg_array *mode_tbl;
 
 	// Allocate memory for the mode table
 	mode_tbl = (struct msm_camera_i2c_reg_array *)kmalloc(sizeof(struct msm_camera_i2c_reg_array) * mode_setting.size, GFP_KERNEL);
@@ -1844,7 +1888,7 @@ static int msm_companion_af_update(struct companion_device *companion_dev, struc
 	}
 
 	// Copy table from user-space area
-	if (copy_from_user(mode_tbl, (void *)mode_setting.reg_setting,sizeof(struct msm_camera_i2c_reg_array)* mode_setting.size)) {
+	if (copy_from_user(mode_tbl, (void *)mode_setting.reg_setting, sizeof(struct msm_camera_i2c_reg_array) * mode_setting.size)) {
 		pr_err("%s,%d failed to copy af update table from user-space\n", __FUNCTION__, __LINE__);
 		kfree(mode_tbl);
 		return -EFAULT;
@@ -1867,7 +1911,7 @@ static int msm_companion_af_update(struct companion_device *companion_dev, struc
 
 	// read data
 	for (idx = 0; idx < mode_setting.size; idx++) {
-                uint16_t readval;
+		uint16_t readval;
 		ret = client->i2c_func_tbl->i2c_read(
 				client, mode_tbl[idx].reg_addr, &readval, MSM_CAMERA_I2C_WORD_DATA);
 		if (ret < 0) {
@@ -1953,7 +1997,7 @@ static void msm_companion_stat2_read(struct work_struct *work)
 	uint8_t *buffer = NULL;
 	uint32_t len = STAT2_DATA_SIZE;
 	int32_t rc = 0;
-	static int s_cnt = 0;
+	int s_cnt = 0;
 
 	CDBG("[syscamera][%s::%d][E]\n", __FUNCTION__, __LINE__);
 
@@ -1969,7 +2013,7 @@ static void msm_companion_stat2_read(struct work_struct *work)
 	}
 
 	// ToDo do word read from SPI
-	if ( !(s_cnt++ % 200) ) {
+	if (!(s_cnt++ % 200)) {
 		rc = client->i2c_func_tbl->i2c_write(
 					client, 0x642c, STAT2_READREG_ADDR_MSB, MSM_CAMERA_I2C_WORD_DATA);
 		rc = client->i2c_func_tbl->i2c_write(
@@ -2054,7 +2098,7 @@ irqreturn_t msm_companion_process_irq(int irq_num, void *data)
 	CDBG("[syscamera][%s::%d] Companion IRQ, cnt = %d\n", __FUNCTION__, __LINE__, atomic_read(&isr_resource->comp_irq_cnt));
 	spin_unlock_irqrestore(&isr_resource->comp_tasklet_lock, flags);
 #ifdef STATS2_WORKQUEUE
-        queue_work(companion_dev->companion_queue, &companion_dev->companion_read_work);
+	queue_work(companion_dev->companion_queue, &companion_dev->companion_read_work);
 #else
 	tasklet_schedule(&isr_resource->comp_tasklet);
 #endif
@@ -2094,6 +2138,8 @@ static int msm_companion_init(struct companion_device *companion_dev, uint32_t s
 	}
 	stats2_len = size;
 
+	wdr_mode = -1;
+
 	init_completion(&companion_dev->wait_complete);
 	spin_lock_init(&companion_dev->isr_resource.comp_tasklet_lock);
 	INIT_LIST_HEAD(&companion_dev->isr_resource.comp_tasklet_q);
@@ -2127,7 +2173,7 @@ static int msm_companion_release(struct companion_device *companion_dev)
 	ret = client->i2c_func_tbl->i2c_write(
 			client, 0x6808, 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 
-	if(ret < 0) {
+	if (ret < 0) {
 		pr_err("[syscamera][%s::%d][Error on Run CRC32 Calculation]\n", __FUNCTION__, __LINE__);
 	}
 	usleep_range(20000, 21000);
@@ -2318,7 +2364,7 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 			cdata.cfg.mode_setting.size = cdata32->cfg.mode_setting.size;
 			cdata.cfg.mode_setting.addr_type = cdata32->cfg.mode_setting.addr_type;
 			cdata.cfg.mode_setting.data_type = cdata32->cfg.mode_setting.data_type;
-			cdata.cfg.mode_setting.delay= cdata32->cfg.mode_setting.delay;
+			cdata.cfg.mode_setting.delay = cdata32->cfg.mode_setting.delay;
 			CDBG("[syscamera][%s::%d] Companion mode setting Array size = %d, Data type = %d\n", __FUNCTION__, __LINE__, cdata.cfg.mode_setting.size, cdata.cfg.mode_setting.data_type);
 			rc = msm_companion_aec_update(companion_dev, cdata.cfg.mode_setting);
 		}
@@ -2328,7 +2374,7 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 			cdata.cfg.mode_setting.size = cdata32->cfg.mode_setting.size;
 			cdata.cfg.mode_setting.addr_type = cdata32->cfg.mode_setting.addr_type;
 			cdata.cfg.mode_setting.data_type = cdata32->cfg.mode_setting.data_type;
-			cdata.cfg.mode_setting.delay= cdata32->cfg.mode_setting.delay;
+			cdata.cfg.mode_setting.delay = cdata32->cfg.mode_setting.delay;
 			CDBG("[syscamera][%s::%d] Companion mode setting Array size = %d, Data type = %d\n", __FUNCTION__, __LINE__, cdata.cfg.mode_setting.size, cdata.cfg.mode_setting.data_type);
 			rc = msm_companion_awb_update(companion_dev, cdata.cfg.mode_setting);
 		}
@@ -2339,7 +2385,7 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 			cdata.cfg.mode_setting.size = cdata32->cfg.mode_setting.size;
 			cdata.cfg.mode_setting.addr_type = cdata32->cfg.mode_setting.addr_type;
 			cdata.cfg.mode_setting.data_type = cdata32->cfg.mode_setting.data_type;
-			cdata.cfg.mode_setting.delay= cdata32->cfg.mode_setting.delay;
+			cdata.cfg.mode_setting.delay = cdata32->cfg.mode_setting.delay;
 			CDBG("[syscamera][%s::%d] Companion mode setting Array size = %d, Data type = %d\n", __FUNCTION__, __LINE__, cdata.cfg.mode_setting.size, cdata.cfg.mode_setting.data_type);
 			rc = msm_companion_af_update(companion_dev, cdata.cfg.mode_setting);
 		}
@@ -2348,7 +2394,7 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 	case COMPANION_CMD_GET_INFO: {
 			uint16_t read_value = 0;
 			struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
-			cdata.cfg.read_id= compat_ptr(cdata32->cfg.read_id);
+			cdata.cfg.read_id = compat_ptr(cdata32->cfg.read_id);
 			rc = client->i2c_func_tbl->i2c_read(client, 0x0000, &read_value, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d][PID::0x%4x] read failed\n", __FUNCTION__, __LINE__, read_value);
@@ -2365,7 +2411,7 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 	case COMPANION_CMD_GET_REV: {
 			uint16_t read_value = 0;
 			struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
-			cdata.cfg.rev= compat_ptr(cdata32->cfg.rev);
+			cdata.cfg.rev = compat_ptr(cdata32->cfg.rev);
 			rc = client->i2c_func_tbl->i2c_read(client, 0x0002, &read_value, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d][PID::0x%4x] read failed\n", __FUNCTION__, __LINE__, read_value);
@@ -2383,7 +2429,7 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 			struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
 			uint16_t local_data = 0;
 			uint16_t local_addr  = cdata32->isDump;
-			cdata.cfg.read_id= compat_ptr(cdata32->cfg.read_id);
+			cdata.cfg.read_id = compat_ptr(cdata32->cfg.read_id);
 
 			rc = client->i2c_func_tbl->i2c_read(client, local_addr, &local_data, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
@@ -2403,14 +2449,11 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 		CDBG("[syscamera][%s::%d] Setting fw binary\n", __FUNCTION__, __LINE__);
 		cdata.cfg.fw_bin.version = compat_ptr(cdata32->cfg.fw_bin.version);
 		cdata.cfg.fw_bin.hwinfo = compat_ptr(cdata32->cfg.fw_bin.hwinfo);
-		cdata.cfg.fw_bin.buffer= compat_ptr(cdata32->cfg.fw_bin.buffer);
+		cdata.cfg.fw_bin.buffer = compat_ptr(cdata32->cfg.fw_bin.buffer);
 		cdata.cfg.fw_bin.size = cdata32->cfg.fw_bin.size;
 		cdata.cfg.fw_bin.sensor_name = compat_ptr(cdata32->cfg.fw_bin.sensor_name);
 
-		pr_err("[%s::%d] version = %s, hwinfo = %s, size = %d, sensor_name=%s\n", __FUNCTION__, __LINE__,
-			cdata.cfg.fw_bin.version, cdata.cfg.fw_bin.hwinfo, cdata.cfg.fw_bin.size, cdata.cfg.fw_bin.sensor_name);
-
-		rc = msm_companion_fw_binary_set(companion_dev, cdata.cfg.fw_bin, cdata.cfg.fw_bin.sensor_name);
+		rc = msm_companion_fw_binary_set(companion_dev, cdata.cfg.fw_bin);
 		if (rc < 0) {
 			pr_err("[syscamera][%s::%d] error on Setting fw binary\n", __FUNCTION__, __LINE__);
 			break;
@@ -2422,7 +2465,7 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 		cdata.cfg.mode_setting.size = cdata32->cfg.mode_setting.size;
 		cdata.cfg.mode_setting.addr_type = cdata32->cfg.mode_setting.addr_type;
 		cdata.cfg.mode_setting.data_type = cdata32->cfg.mode_setting.data_type;
-		cdata.cfg.mode_setting.delay= cdata32->cfg.mode_setting.delay;
+		cdata.cfg.mode_setting.delay = cdata32->cfg.mode_setting.delay;
 		CDBG("[syscamera][%s::%d] Setting calibration table (size = %d)\n", __FUNCTION__, __LINE__, cdata.cfg.mode_setting.size);
 		rc = msm_companion_set_cal_tbl(companion_dev, cdata.cfg.mode_setting);
 		if (rc < 0) {
@@ -2468,45 +2511,65 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 			pr_err("[syscamera][%s::%d] error on loading firmware\n", __FUNCTION__, __LINE__);
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
 			if (rc == -EIO) {
-				if (!msm_is_sec_get_sensor_position(&hw_cam_position)) {
-					if (hw_cam_position != NULL) {
-						if (*hw_cam_position == BACK_CAMERA_B) {
-							if (!msm_is_sec_get_rear_hw_param(&hw_param)) {
-								if (hw_param != NULL) {
-									pr_err("[HWB_DBG][R][CC] Err\n");
-									hw_param->i2c_comp_err_cnt++;
-									hw_param->need_update_to_file = TRUE;
-								}
+				msm_is_sec_get_sensor_position(&hw_cam_position);
+				if (hw_cam_position != NULL) {
+					switch (*hw_cam_position) {
+					case BACK_CAMERA_B:
+						if (!msm_is_sec_get_rear_hw_param(&hw_param)) {
+							if (hw_param != NULL) {
+								pr_err("[HWB_DBG][R][CC] Err\n");
+								hw_param->i2c_comp_err_cnt++;
+								hw_param->need_update_to_file = TRUE;
 							}
 						}
-						else if ((*hw_cam_position == FRONT_CAMERA_B) && !msm_is_sec_get_secure_mode(&hw_cam_secure)) {
-							if (hw_cam_secure != NULL) {
-								if (!(*hw_cam_secure)) {
-									if (!msm_is_sec_get_front_hw_param(&hw_param)) {
-										if (hw_param != NULL) {
-											pr_err("[HWB_DBG][F][CC] Err\n");
-											hw_param->i2c_comp_err_cnt++;
-											hw_param->need_update_to_file = TRUE;
-										}
+						break;
+
+					case FRONT_CAMERA_B:
+						msm_is_sec_get_secure_mode(&hw_cam_secure);
+						if (hw_cam_secure != NULL) {
+							switch (*hw_cam_secure) {
+							case FALSE:
+								if (!msm_is_sec_get_front_hw_param(&hw_param)) {
+									if (hw_param != NULL) {
+										pr_err("[HWB_DBG][F][CC] Err\n");
+										hw_param->i2c_comp_err_cnt++;
+										hw_param->need_update_to_file = TRUE;
 									}
 								}
-								else if ((*hw_cam_secure)) {
-									if (!msm_is_sec_get_iris_hw_param(&hw_param)) {
-										if (hw_param != NULL) {
-											pr_err("[HWB_DBG][I][CC] Err\n");
-											hw_param->i2c_comp_err_cnt++;
-											hw_param->need_update_to_file = TRUE;
-										}
+								break;
+
+							case TRUE:
+								if (!msm_is_sec_get_iris_hw_param(&hw_param)) {
+									if (hw_param != NULL) {
+										pr_err("[HWB_DBG][I][CC] Err\n");
+										hw_param->i2c_comp_err_cnt++;
+										hw_param->need_update_to_file = TRUE;
 									}
 								}
-								else {
-									//Check.
-								}
+								break;
+
+							default:
+								pr_err("[HWB_DBG][F_I][CC] Unsupport\n");
+								break;
 							}
 						}
-						else {
-							//Check.
+						break;
+
+#if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
+					case AUX_CAMERA_B:
+						if (!msm_is_sec_get_rear2_hw_param(&hw_param)) {
+							if (hw_param != NULL) {
+								pr_err("[HWB_DBG][R2][CC] Err\n");
+								hw_param->i2c_comp_err_cnt++;
+								hw_param->need_update_to_file = TRUE;
+							}
 						}
+						break;
+#endif
+
+					default:
+						pr_err("[HWB_DBG][NON][CC] Unsupport\n");
+						break;
 					}
 				}
 			}
@@ -2607,11 +2670,13 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 	case COMPANION_CMD_STREAM_ON:
 		cdata.cfg.stream_on = cdata32->cfg.stream_on;
 		CDBG("[syscamera][%s::%d] Companion stream on[enable::%d]\n", __FUNCTION__, __LINE__, cdata.cfg.stream_on);
-		if (cdata.cfg.stream_on == 1)
+		if (cdata.cfg.stream_on == 1) {
 			atomic_set(&comp_streamon_set, 1);
-		else
+			rc = msm_companion_stream_on(client);
+		} else {
 			atomic_set(&comp_streamon_set, 0);
-		rc = msm_companion_stream_on(client, cdata.cfg.stream_on);
+			rc = msm_companion_stream_off(client);
+		}
 		if (rc < 0) {
 			pr_err("[syscamera][%s::%d] msm_companion_stream_on failed\n", __FUNCTION__, __LINE__);
 			return -EFAULT;
@@ -2638,21 +2703,21 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 		if (wdr_mode == 0) {	// WDR off
 		    CDBG("[syscamera][%s::%d][WDR : %d]\n", __FUNCTION__, __LINE__, wdr_mode);
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(api_otf_WdrMode) , 0x0000, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(api_otf_WdrMode), 0x0000, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
 			}
 
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(api_otf_PowerMode), 0x0000, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(api_otf_PowerMode), 0x0000, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
 			}
 
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(HOST_INTRP_ChangeConfig), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(HOST_INTRP_ChangeConfig), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
@@ -2660,21 +2725,21 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 		} else if (wdr_mode == 1) { // WDR On
 		    CDBG("[syscamera][%s::%d][WDR : %d]\n", __FUNCTION__, __LINE__, wdr_mode);
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(api_otf_WdrMode) , 0x0001, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(api_otf_WdrMode), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
 			}
 
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(api_otf_PowerMode), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(api_otf_PowerMode), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
 			}
 
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(HOST_INTRP_ChangeConfig), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(HOST_INTRP_ChangeConfig), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
@@ -2682,21 +2747,21 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 		} else if (wdr_mode == 2) { // WDR Auto
 		    CDBG("[syscamera][%s::%d][WDR : %d]\n", __FUNCTION__, __LINE__, wdr_mode);
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(api_otf_WdrMode) , 0x0001, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(api_otf_WdrMode), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
 			}
 
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(api_otf_PowerMode), 0x0002, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(api_otf_PowerMode), 0x0002, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
 			}
 
 		    rc = client->i2c_func_tbl->i2c_write(
-		        client, LOWER(HOST_INTRP_ChangeConfig), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
+			client, LOWER(HOST_INTRP_ChangeConfig), 0x0001, MSM_CAMERA_I2C_WORD_DATA);
 			if (rc < 0) {
 				pr_err("[syscamera][%s::%d] i2c write fail.\n", __FUNCTION__, __LINE__);
 				break;
@@ -2715,7 +2780,7 @@ static int32_t msm_companion_cmd32(struct companion_device *companion_dev, void 
 		cdata.cfg.mode_setting.size = cdata32->cfg.mode_setting.size;
 		cdata.cfg.mode_setting.addr_type = cdata32->cfg.mode_setting.addr_type;
 		cdata.cfg.mode_setting.data_type = cdata32->cfg.mode_setting.data_type;
-		cdata.cfg.mode_setting.delay= cdata32->cfg.mode_setting.delay;
+		cdata.cfg.mode_setting.delay = cdata32->cfg.mode_setting.delay;
 		CDBG("[syscamera][%s::%d] Companion mode setting Array size = %d, Data type = %d\n", __FUNCTION__, __LINE__, cdata.cfg.mode_setting.size, cdata.cfg.mode_setting.data_type);
 		rc = msm_companion_set_mode(companion_dev, cdata.cfg.mode_setting);
 		break;
@@ -2806,9 +2871,9 @@ static long msm_companion_subdev_do_ioctl32(
 		companion_data.cfg.setting = compat_ptr(u32->cfg.setting);
 		companion_data.cfg.stream_on = u32->cfg.stream_on;
 		companion_data.cfg.stats2 = compat_ptr(u32->cfg.stats2);
-		companion_data.cfg.dump_buf= compat_ptr(u32->cfg.dump_buf);
-		companion_data.cfg.read_id= compat_ptr(u32->cfg.read_id);
-		companion_data.cfg.rev= compat_ptr(u32->cfg.rev);
+		companion_data.cfg.dump_buf = compat_ptr(u32->cfg.dump_buf);
+		companion_data.cfg.read_id = compat_ptr(u32->cfg.read_id);
+		companion_data.cfg.rev = compat_ptr(u32->cfg.rev);
 
 		companion_data.cfg.read_cal.cal_data = compat_ptr(u32->cfg.read_cal.cal_data);
 		companion_data.cfg.read_cal.size = u32->cfg.read_cal.size;
@@ -2818,14 +2883,14 @@ static long msm_companion_subdev_do_ioctl32(
 		companion_data.cfg.mode_setting.size = u32->cfg.mode_setting.size;
 		companion_data.cfg.mode_setting.addr_type = u32->cfg.mode_setting.addr_type;
 		companion_data.cfg.mode_setting.data_type = u32->cfg.mode_setting.data_type;
-		companion_data.cfg.mode_setting.delay= u32->cfg.mode_setting.delay;
+		companion_data.cfg.mode_setting.delay = u32->cfg.mode_setting.delay;
 
 		companion_data.cfg.crc_check.addr = u32->cfg.crc_check.addr;
 		companion_data.cfg.crc_check.count = u32->cfg.crc_check.count;
 		companion_data.cfg.crc_check.CRC = compat_ptr(u32->cfg.crc_check.CRC);
 
 		companion_data.cfg.fw_bin.version = compat_ptr(u32->cfg.fw_bin.version);
-		companion_data.cfg.fw_bin.buffer= compat_ptr(u32->cfg.fw_bin.buffer);
+		companion_data.cfg.fw_bin.buffer = compat_ptr(u32->cfg.fw_bin.buffer);
 		companion_data.cfg.fw_bin.size = u32->cfg.fw_bin.size;
 
 		companion_data.isDump = u32->isDump;
@@ -2901,7 +2966,7 @@ static int msm_companion_spi_parse_of(struct msm_camera_spi_client *spic)
 	int rc = -EFAULT;
 	uint32_t tmp[5];
 	struct device_node *of = spic->spi_master->dev.of_node;
-        memset(&spic->cmd_tbl, 0x00, sizeof(struct msm_camera_spi_inst_tbl));
+	memset(&spic->cmd_tbl, 0x00, sizeof(struct msm_camera_spi_inst_tbl));
 	msm_companion_spi_parse_cmd(spic, "qcom,spiop-read", read, tmp, 5);
 	msm_companion_spi_parse_cmd(spic, "qcom,spiop-readseq", read_seq, tmp, 5);
 	msm_companion_spi_parse_cmd(spic, "qcom,spiop-queryid", query_id, tmp, 5);
@@ -3024,7 +3089,7 @@ static int msm_companion_spi_setup(struct spi_device *spi)
 
 #ifdef STATS2_WORKQUEUE //aswoogi temp
 	/* Initialize workqueue */
-	companion_dev->companion_queue= alloc_workqueue("companion_queue", WQ_HIGHPRI|WQ_CPU_INTENSIVE, 0);
+	companion_dev->companion_queue = alloc_workqueue("companion_queue", WQ_HIGHPRI|WQ_CPU_INTENSIVE, 0);
 	if (!companion_dev->companion_queue) {
 		pr_err("[syscamera][%s::%d]could not create companion_queue for companion dev id %d\n",
 			__FUNCTION__, __LINE__, companion_dev->companion_device_id);
@@ -3033,7 +3098,7 @@ static int msm_companion_spi_setup(struct spi_device *spi)
 
 	INIT_WORK(&companion_dev->companion_read_work, msm_companion_stat2_read);
 #endif
- 	mutex_init(&companion_dev->comp_mutex);
+	mutex_init(&companion_dev->comp_mutex);
 	/* initialize subdev */
 	v4l2_spi_subdev_init(&companion_dev->msm_sd.sd,
 		companion_dev->companion_i2c_client.spi_client->spi_master,
@@ -3127,6 +3192,7 @@ static int msm_companion_spi_remove(struct spi_device *sdev)
 	kfree(companion_dev);
 	return 0;
 }
+
 static int msm_companion_probe(struct platform_device *pdev)
 {
 	struct companion_device *companion_dev = NULL;

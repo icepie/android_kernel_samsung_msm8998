@@ -52,6 +52,7 @@ err_ret:
 
 #define DRIVER_DESC   "Read whether odin flash succeeded"
 
+
 #if 0
 ssize_t	dmverity_read(struct file *filep, char __user *buf, size_t size, loff_t *offset)
 {
@@ -93,6 +94,7 @@ static int dmverity_open(struct inode *inode, struct file *filep){
 static const struct file_operations dmverity_proc_fops = {
 	.open       = dmverity_open,
 	.read	    = seq_read,
+	
 };
 
 /**

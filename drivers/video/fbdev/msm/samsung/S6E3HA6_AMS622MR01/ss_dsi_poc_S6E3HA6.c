@@ -266,6 +266,10 @@ static int ss_dsi_poc_ctrl(struct samsung_display_driver_data *vdd, u32 cmd)
 			ret = ss_poc_erase(vdd);
 			break;
 		case POC_OP_WRITE:
+			if (vdd->poc_driver.wbuf == NULL) {
+				LCD_ERR("poc_driver.wbuf is NULL\n");
+				return -EINVAL;
+			}
 			ret = ss_poc_write(vdd,
 				vdd->poc_driver.wbuf,
 				POC_IMG_ADDR + vdd->poc_driver.wpos,
@@ -276,6 +280,10 @@ static int ss_dsi_poc_ctrl(struct samsung_display_driver_data *vdd, u32 cmd)
 			}
 			break;
 		case POC_OP_READ:
+			if (vdd->poc_driver.rbuf == NULL) {
+				LCD_ERR("poc_driver.rbuf is NULL\n");
+				return -EINVAL;
+			}
 			ret = ss_poc_read(vdd,
 				vdd->poc_driver.rbuf,
 				POC_IMG_ADDR + vdd->poc_driver.rpos,
@@ -356,6 +364,7 @@ static long ss_dsi_poc_ioctl(struct file *file, unsigned int cmd, unsigned long 
 	return ret;
 }
 
+static atomic_t poc_open_check = ATOMIC_INIT(1); /* OPEN/RELEASE CHECK */
 static int ss_dsi_poc_open(struct inode *inode, struct file *file)
 {
 	struct samsung_display_driver_data *vdd = samsung_get_vdd();
@@ -365,6 +374,12 @@ static int ss_dsi_poc_open(struct inode *inode, struct file *file)
 
 	if (IS_ERR_OR_NULL(vdd)) {
 		LCD_ERR("no vdd\n");
+		return -ENOMEM;
+	}
+
+	if (!atomic_dec_and_test (&poc_open_check)) {
+		atomic_inc(&poc_open_check);
+		LCD_ERR("Already open_ongoing : counter (%d)\n", poc_open_check.counter);
 		return -ENOMEM;
 	}
 
@@ -425,6 +440,9 @@ static int ss_dsi_poc_release(struct inode *inode, struct file *file)
 	vdd->poc_driver.rsize = 0;
 	atomic_set(&vdd->poc_driver.cancel, 0);
 
+	atomic_inc(&poc_open_check);
+	LCD_INFO("poc_open counter (%d)\n", poc_open_check.counter); /* 1 */
+
 	return ret;
 }
 
@@ -441,6 +459,11 @@ static ssize_t ss_dsi_poc_read(struct file *file, char __user *buf, size_t count
 		return -ENODEV;
 	}
 
+	if (IS_ERR_OR_NULL(vdd->poc_driver.rbuf)) {
+		LCD_ERR("poc_driver.rbuf is NULL\n");
+		return -EINVAL;
+	}
+
 	if (unlikely(!buf)) {
 		LCD_ERR("invalid read buffer\n");
 		return -EINVAL;
@@ -452,9 +475,12 @@ static ssize_t ss_dsi_poc_read(struct file *file, char __user *buf, size_t count
 		return -EINVAL;
 	}
 
+	mutex_lock(&vdd->vdd_poc_read_lock);
 	vdd->poc_driver.rpos = *ppos;
 	vdd->poc_driver.rsize = count;
 	ret = ss_dsi_poc_ctrl(vdd, POC_OP_READ);
+	mutex_unlock(&vdd->vdd_poc_read_lock);
+
 	if (ret) {
 		LCD_ERR("fail to read poc (%d)\n", ret);
 		return ret;
@@ -476,6 +502,11 @@ static ssize_t ss_dsi_poc_write(struct file *file, const char __user *buf,
 		return -ENODEV;;
 	}
 
+	if (IS_ERR_OR_NULL(vdd->poc_driver.wbuf)) {
+		LCD_ERR("poc_driver.wbuf is NULL\n");
+		return -EINVAL;
+	}
+
 	if (unlikely(!buf)) {
 		LCD_ERR("invalid read buffer\n");
 		return -EINVAL;
@@ -487,6 +518,7 @@ static ssize_t ss_dsi_poc_write(struct file *file, const char __user *buf,
 		return -EINVAL;
 	}
 
+	mutex_lock(&vdd->vdd_poc_write_lock);
 	vdd->poc_driver.wpos = *ppos;
 	vdd->poc_driver.wsize = count;
 
@@ -497,6 +529,8 @@ static ssize_t ss_dsi_poc_write(struct file *file, const char __user *buf,
 	}
 
 	ret = ss_dsi_poc_ctrl(vdd, POC_OP_WRITE);
+	mutex_unlock(&vdd->vdd_poc_write_lock);
+
 	if (ret) {
 		LCD_ERR("fail to write poc (%d)\n", ret);
 		return ret;
@@ -582,7 +616,7 @@ static int poc_get_efs_image_index_org(char *filename, int *value)
 	int fsize = 0, nread, rc, ret = 0;
 	char binary;
 	int image_index, chksum;
-	u8 buf[128];
+	u8 buf[128] = { 0, };
 
 	if (!filename || !value) {
 		pr_err("%s invalid parameter\n", __func__);
@@ -607,7 +641,7 @@ static int poc_get_efs_image_index_org(char *filename, int *value)
 	if (filp->f_path.dentry && filp->f_path.dentry->d_inode)
 		fsize = filp->f_path.dentry->d_inode->i_size;
 
-	if (fsize == 0 || fsize > ARRAY_SIZE(buf)) {
+	if (fsize == 0 || fsize >= ARRAY_SIZE(buf)) {
 		pr_err("%s invalid file(%s) size %d\n",
 				__func__, filename, fsize);
 		ret = -EPOCEFS_EMPTY;
@@ -616,6 +650,7 @@ static int poc_get_efs_image_index_org(char *filename, int *value)
 
 	memset(buf, 0, sizeof(buf));
 	nread = vfs_read(filp, (char __user *)buf, fsize, &filp->f_pos);
+	buf[nread] = '\0';
 	if (nread != fsize) {
 		pr_err("%s failed to read (ret %d)\n", __func__, nread);
 		ret = -EPOCEFS_READ;
@@ -647,7 +682,7 @@ static int poc_get_efs_image_index(char *filename, int *value)
 	struct file *filp = NULL;
 	int fsize = 0, nread, rc, ret = 0;
 	int image_index, seek;
-	u8 buf[128];
+	u8 buf[128] = { 0, };
 
 	if (!filename || !value) {
 		pr_err("%s invalid parameter\n", __func__);
@@ -672,7 +707,7 @@ static int poc_get_efs_image_index(char *filename, int *value)
 	if (filp->f_path.dentry && filp->f_path.dentry->d_inode)
 		fsize = filp->f_path.dentry->d_inode->i_size;
 
-	if (fsize == 0 || fsize > ARRAY_SIZE(buf)) {
+	if (fsize == 0 || fsize >= ARRAY_SIZE(buf)) {
 		pr_err("%s invalid file(%s) size %d\n",
 				__func__, filename, fsize);
 		ret = -EPOCEFS_EMPTY;
@@ -681,6 +716,7 @@ static int poc_get_efs_image_index(char *filename, int *value)
 
 	memset(buf, 0, sizeof(buf));
 	nread = vfs_read(filp, (char __user *)buf, fsize, &filp->f_pos);
+	buf[nread] = '\0';
 	if (nread != fsize) {
 		pr_err("%s failed to read (ret %d)\n", __func__, nread);
 		ret = -EPOCEFS_READ;

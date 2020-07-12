@@ -154,6 +154,14 @@ struct ufs_card_fix {
  */
 #define UFS_DEVICE_QUIRK_HS_G1_TO_HS_G3_SWITCH (1 << 8)
 
+/*
+ * Some UFS devices raise the urgent bkops exception event,
+ * even when BKOPS status doesn't indicate performance impacted
+ * or critical. Once urgent_bkops_lvl sets no op or non critical,
+ * host enable bkops whenever the host resume regardless of urgent bkops status.
+ */
+#define UFS_DEVICE_QUIRK_URGENT_BKOPS_EE (1 << 10)
+
 struct ufs_hba;
 void ufs_advertise_fixup_device(struct ufs_hba *hba);
 #endif /* UFS_QUIRKS_H_ */

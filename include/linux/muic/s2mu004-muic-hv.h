@@ -274,6 +274,7 @@ extern void s2mu004_hv_muic_init_check_dpdnvden(struct s2mu004_muic_data *muic_d
 extern void s2mu004_hv_muic_init_detect(struct s2mu004_muic_data *muic_data);
 extern void s2mu004_hv_muic_initialize(struct s2mu004_muic_data *muic_data);
 extern void s2mu004_hv_muic_remove(struct s2mu004_muic_data *muic_data);
+extern void s2mu004_hv_muic_set_afc_after_prepare(struct s2mu004_muic_data *muic_data);
 //extern void s2mu004_hv_muic_remove_wo_free_irq(struct s2mu004_muic_data *muic_data);
 #if 0
 extern void s2mu004_muic_set_adcmode_always(struct s2mu004_muic_data *muic_data);

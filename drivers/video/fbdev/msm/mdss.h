@@ -261,7 +261,7 @@ struct mdss_scaler_block {
 	 * LUT values come asynchronously from userspace
 	 * via ioctl.
 	 */
-	struct mutex scaler_lock;	
+	struct mutex scaler_lock;
 };
 
 struct mdss_data_type;

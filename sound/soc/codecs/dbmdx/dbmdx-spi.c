@@ -186,6 +186,9 @@ ssize_t send_spi_cmd_va(struct dbmdx_private *p, u32 command,
 	int ret;
 
 	dev_dbg(spi_p->dev, "%s: Send 0x%02x\n", __func__, command);
+
+	p->wakeup_toggle(p);
+
 	if (response) {
 
 		ret = snprintf(tmp, 3, "%02x", (command >> 16) & 0xff);
@@ -279,6 +282,9 @@ ssize_t send_spi_cmd_va_padded(struct dbmdx_private *p,
 	u32 padded_cmd_r_size = 5;
 
 	dev_dbg(spi_p->dev, "%s: Send 0x%02x\n", __func__, command);
+
+	p->wakeup_toggle(p);
+
 	if (response) {
 
 		ret = snprintf(tmp, 3, "%02x", (command >> 16) & 0xff);
@@ -725,7 +731,7 @@ static void spi_transport_enable(struct dbmdx_private *p, bool enable)
 	if (enable) {
 
 #ifdef CONFIG_PM_WAKELOCKS
-		wake_lock(&spi_p->ps_nosuspend_wl);
+		__pm_stay_awake(&spi_p->ps_nosuspend_wl);
 #endif
 		ret = wait_event_interruptible(dbmdx_wq,
 			spi_p->interface_enabled);
@@ -744,7 +750,7 @@ static void spi_transport_enable(struct dbmdx_private *p, bool enable)
 		msleep(DBMDX_MSLEEP_SPI_WAKEUP);
 	} else {
 #ifdef CONFIG_PM_WAKELOCKS
-		wake_unlock(&spi_p->ps_nosuspend_wl);
+		__pm_relax(&spi_p->ps_nosuspend_wl);
 #endif
 		p->wakeup_release(p);
 	}
@@ -1125,8 +1131,7 @@ int spi_common_probe(struct spi_device *client)
 		goto out_err_mem_free1;
 
 #ifdef CONFIG_PM_WAKELOCKS
-	wake_lock_init(&p->ps_nosuspend_wl, WAKE_LOCK_SUSPEND,
-		"dbmdx_nosuspend_wakelock_spi");
+	wakeup_source_init(&p->ps_nosuspend_wl, "dbmdx_nosuspend_wakelock_spi");
 #endif
 
 	/* fill in chip interface functions */
@@ -1179,7 +1184,7 @@ int spi_common_remove(struct spi_device *client)
 	struct dbmdx_spi_private *p = (struct dbmdx_spi_private *)ci->pdata;
 
 #ifdef CONFIG_PM_WAKELOCKS
-	wake_lock_destroy(&p->ps_nosuspend_wl);
+	wakeup_source_trash(&p->ps_nosuspend_wl);
 #endif
 	kfree(p->pdata->send);
 	kfree(p->pdata->recv);

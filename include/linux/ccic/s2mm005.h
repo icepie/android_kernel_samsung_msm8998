@@ -39,9 +39,15 @@
 #endif
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 #include <linux/usb/class-dual-role.h>
+#elif defined(CONFIG_TYPEC)
+#include <linux/usb/typec.h>
 #endif
 
+#if defined(CONFIG_SEC_GTS4LLTE_PROJECT) || defined(CONFIG_SEC_GTS4LWIFI_PROJECT)
+#define AVAILABLE_VOLTAGE 9000
+#else
 #define AVAILABLE_VOLTAGE 12000
+#endif
 #define UNIT_FOR_VOLTAGE 50
 #define UNIT_FOR_CURRENT 10
 
@@ -773,7 +779,7 @@ typedef enum {
 	State_PE_PRS_SRC_SNK_Transition_to_off		= 52,
 	State_PE_PRS_SNK_SRC_Source_on		= 64,
 } function_status_t;
-#if defined(CONFIG_DUAL_ROLE_USB_INTF)
+
 typedef enum
 {
 	TYPE_C_DETACH = 0,
@@ -783,7 +789,7 @@ typedef enum
 } CCIC_OTP_MODE;
 
 #define DUAL_ROLE_SET_MODE_WAIT_MS 1500
-#endif
+
 typedef enum
 {
 	CLIENT_OFF = 0,
@@ -891,8 +897,17 @@ struct s2mm005_data {
 	int power_role;
 	int try_state_change;
 	struct delayed_work role_swap_work;
+#elif defined(CONFIG_TYPEC)
+	struct typec_port *port;
+	struct typec_partner *partner;
+	struct usb_pd_identity partner_identity;
+	struct typec_capability typec_cap;
+	struct completion role_reverse_completion;
+	int typec_power_role;
+	int typec_data_role;
+	int typec_try_state_change;
+	struct delayed_work typec_role_swap_work;
 #endif
-
 	int s2mm005_fw_product_id;
 	u8 fw_product_id;
 

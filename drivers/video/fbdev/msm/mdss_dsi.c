@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -771,7 +771,7 @@ static int mdss_dsi_get_dt_vreg_data(struct device *dev,
 			of_property_read_bool(supply_node,
 			"qcom,supply-lp-mode-disable-allowed");
 
-		pr_debug("%s: %s min=%d, max=%d, enable=%d, disable=%d, preonsleep=%d, postonsleep=%d, preoffsleep=%d, postoffsleep=%d lp_disable_allowed=%d\n",
+		pr_info("%s: %s min=%d, max=%d, enable=%d, disable=%d, preonsleep=%d, postonsleep=%d, preoffsleep=%d, postoffsleep=%d lp_disable_allowed=%d\n",
 			__func__,
 			mp->vreg_config[i].vreg_name,
 			mp->vreg_config[i].min_voltage,
@@ -1030,7 +1030,8 @@ static ssize_t mdss_dsi_cmd_write(struct file *file, const char __user *p,
 static int mdss_dsi_cmd_flush(struct file *file, fl_owner_t id)
 {
 	struct buf_data *pcmds = file->private_data;
-	int blen, len, i;
+	unsigned int len;
+	int blen, i;
 	char *buf, *bufp, *bp;
 	struct dsi_ctrl_hdr *dchdr;
 
@@ -1073,7 +1074,7 @@ static int mdss_dsi_cmd_flush(struct file *file, fl_owner_t id)
 	while (len >= sizeof(*dchdr)) {
 		dchdr = (struct dsi_ctrl_hdr *)bp;
 		dchdr->dlen = ntohs(dchdr->dlen);
-		if (dchdr->dlen > len || dchdr->dlen < 0) {
+		if (dchdr->dlen > (len - sizeof(*dchdr)) || dchdr->dlen < 0) {
 			pr_err("%s: dtsi cmd=%x error, len=%d\n",
 				__func__, dchdr->dtype, dchdr->dlen);
 			kfree(buf);
@@ -1604,7 +1605,8 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	int cur_power_state;
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 	struct samsung_display_driver_data *vdd = NULL;
-	u32 reg_backup;
+	u32 reg_backup, reg_backup_master;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata_master = NULL;
 #endif
 
 	if (pdata == NULL) {
@@ -1718,7 +1720,18 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	if (mipi->lp11_init) {
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 		vdd = check_valid_ctrl(ctrl_pdata);
-		if (!IS_ERR_OR_NULL(vdd) && vdd->dtsi_data[ctrl_pdata->ndx].samsung_lp11_init) {
+		if (!IS_ERR_OR_NULL(vdd) &&
+				vdd->dtsi_data[ctrl_pdata->ndx].samsung_lp11_init &&
+				gpio_is_valid(ctrl_pdata->rst_gpio)) {
+			/* LP11 and Store register for ctrl master */
+			if ((ctrl_pdata->ndx == 1) &&
+					(mdss_dsi_is_ctrl_clk_slave(ctrl_pdata))) {
+				ctrl_pdata_master = mdss_dsi_get_ctrl_clk_master();
+				reg_backup_master = MIPI_INP((ctrl_pdata_master->ctrl_base) + 0xac);
+				MIPI_OUTP((ctrl_pdata_master->ctrl_base) + 0xac, 0x1F << 16);
+				wmb();
+			}
+
 			/* LP11 */
 			reg_backup = MIPI_INP((ctrl_pdata->ctrl_base) + 0xac);
 			MIPI_OUTP((ctrl_pdata->ctrl_base) + 0xac, 0x1F << 16);
@@ -1732,19 +1745,43 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 			pr_debug("reset enable: pinctrl not enabled\n");
 		mdss_dsi_panel_reset(pdata, 1);
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		/* Enable force_clk_lane_hs for ANA ddi */
+		if (vdd->dtsi_data[ctrl_pdata->ndx].samsung_tcon_clk_on_support &&
+				pdata->panel_info.mipi.force_clk_lane_hs) {
+			reg_backup |= BIT(28);
+			reg_backup_master |= BIT(28);
+		}
+
 		/* LP11 Restore */
-		if (!IS_ERR_OR_NULL(vdd) && vdd->dtsi_data[ctrl_pdata->ndx].samsung_lp11_init)
+		if (!IS_ERR_OR_NULL(vdd) &&
+				vdd->dtsi_data[ctrl_pdata->ndx].samsung_lp11_init &&
+				gpio_is_valid(ctrl_pdata->rst_gpio)) {
 			MIPI_OUTP((ctrl_pdata->ctrl_base) + 0xac,
 					reg_backup);
+
+			/* Restore register for ctrl master */
+			if ((ctrl_pdata->ndx == 1) &&
+					(mdss_dsi_is_ctrl_clk_slave(ctrl_pdata))) {
+				MIPI_OUTP((ctrl_pdata_master->ctrl_base) + 0xac,
+						reg_backup_master);
+			}
+		}
 #endif
 	}
 
 	if (mipi->init_delay)
 		usleep_range(mipi->init_delay, mipi->init_delay);
 
+#if !defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	/*
+	   To prevent dis clk off after panel reset.
+	   MDSS_DSI_CLK_OFF executed at mdss_dsi_unblank.
+	 */
+
 	if (pdata->panel_info.type == MIPI_CMD_PANEL)
 		mdss_dsi_clk_ctrl(ctrl_pdata, ctrl_pdata->dsi_clk_handle,
 				  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_OFF);
+#endif
 end:
 	pr_info("%s-:\n", __func__);
 	return ret;
@@ -1868,6 +1905,9 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 	struct mipi_panel_info *mipi;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 	struct mdss_dsi_ctrl_pdata *sctrl = NULL;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = NULL;
+#endif
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -1933,6 +1973,19 @@ error:
 
 	mdss_dsi_pm_qos_update_request(DSI_ENABLE_PC_LATENCY);
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	vdd = check_valid_ctrl(ctrl_pdata);
+	/*
+	   To prevent dis clk off after panel reset.
+	   MDSS_DSI_CLK_OFF executed at mdss_dsi_unblank.
+	 */
+
+	if (pdata->panel_info.type == MIPI_CMD_PANEL &&
+			!vdd->dtsi_data[ctrl_pdata->ndx].samsung_tcon_clk_on_support)
+		mdss_dsi_clk_ctrl(ctrl_pdata, ctrl_pdata->dsi_clk_handle,
+				MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_OFF);
+#endif
+
 	pr_info("%s-:\n", __func__);
 
 	return ret;
@@ -1943,6 +1996,10 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata, int power_state)
 	int ret = 0;
 	struct mipi_panel_info *mipi;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = NULL;
+	static bool samsung_first_blank = false;
+#endif
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -1956,8 +2013,26 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata, int power_state)
 	pr_info("%s+: ctrl=%pK ndx=%d power_state=%d\n",
 		__func__, ctrl_pdata, ctrl_pdata->ndx, power_state);
 
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	vdd = check_valid_ctrl(ctrl_pdata);
+
+	if (IS_ERR_OR_NULL(vdd)) {
+		pr_err("%s: Invalid data ctrl : 0x%zx\n", __func__, (size_t)vdd);
+		return -EINVAL;
+	}
+
+	if (vdd->samsung_first_blank)
+		samsung_first_blank = vdd->samsung_first_blank;
+
+	if (!vdd->dtsi_data[ctrl_pdata->ndx].samsung_tcon_clk_on_support) {
+		mdss_dsi_clk_ctrl(ctrl_pdata, ctrl_pdata->dsi_clk_handle,
+				MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_ON);
+	}
+#else
 	mdss_dsi_clk_ctrl(ctrl_pdata, ctrl_pdata->dsi_clk_handle,
 			  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_ON);
+#endif
 
 	if (mdss_panel_is_power_on_lp(power_state)) {
 		pr_info("%s: low power state requested\n", __func__);
@@ -2019,6 +2094,29 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata, int power_state)
 	}
 
 error:
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	/*
+	 * The clock was enabled twice from mdss_dsi_cont_splash_config()
+	 * so the clock need to be disabled at first blank
+	 */
+	if (unlikely(samsung_first_blank) &&
+		vdd->dtsi_data[ctrl_pdata->ndx].samsung_tcon_clk_on_support) {
+		void *clk_handle;
+
+		if (ctrl_pdata->panel_data.panel_info.type == MIPI_CMD_PANEL)
+			clk_handle = ctrl_pdata->mdp_clk_handle;
+		else
+			clk_handle = ctrl_pdata->dsi_clk_handle;
+
+		mdss_dsi_clk_ctrl(ctrl_pdata, clk_handle,
+				  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_OFF);
+
+		if (mdss_dsi_is_ctrl_clk_slave(ctrl_pdata))
+			samsung_first_blank = false;
+
+	}
+#endif
+
 	mdss_dsi_clk_ctrl(ctrl_pdata, ctrl_pdata->dsi_clk_handle,
 			  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_OFF);
 	pr_info("%s-:End\n", __func__);
@@ -2511,6 +2609,66 @@ error_pixel:
 error_byte:
 	return rc;
 }
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+static int __mdss_dsi_calc_clks(struct mdss_panel_data *pdata,
+		u64 new_clk_rate)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+	struct mdss_panel_info *pinfo;
+	int rc = 0;
+
+	if (pdata == NULL) {
+		pr_err("%s Invalid pdata\n", __func__);
+		return -EINVAL;
+	}
+
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+			panel_data);
+	if (!ctrl_pdata) {
+		pr_err("%s Invalid ctrl_pdata\n", __func__);
+		return -EINVAL;
+	}
+
+	pinfo = &pdata->panel_info;
+
+	pinfo->clk_rate = new_clk_rate;
+	mdss_dsi_clk_div_config (&ctrl_pdata->panel_data.panel_info, pinfo->mipi.frame_rate);
+
+	ctrl_pdata->pclk_rate = pinfo->mipi.dsi_pclk_rate;
+	do_div(new_clk_rate, 8U);
+	ctrl_pdata->byte_clk_rate = (u32) new_clk_rate;
+
+	rc = mdss_dsi_clk_set_link_rate(ctrl_pdata->dsi_clk_handle,
+			MDSS_DSI_LINK_BYTE_CLK, ctrl_pdata->byte_clk_rate,
+			MDSS_DSI_CLK_UPDATE_CLK_RATE_AT_ON);
+	if (rc) {
+		pr_err("%s: dsi_byte_clk - clk_set_rate failed\n",
+				__func__);
+		return rc;
+	}
+
+	rc = mdss_dsi_clk_set_link_rate(ctrl_pdata->dsi_clk_handle,
+			MDSS_DSI_LINK_PIX_CLK, ctrl_pdata->pclk_rate,
+			MDSS_DSI_CLK_UPDATE_CLK_RATE_AT_ON);
+	if (rc) {
+		pr_err("%s: dsi_pixel_clk - clk_set_rate failed\n",
+				__func__);
+		return rc;
+	}
+
+	return rc;
+}
+
+int mdss_dsi_clk_config(struct mdss_panel_data *pdata, u64 new_clk_rate)
+{
+	int rc;
+
+	rc = __mdss_dsi_calc_clks(pdata, new_clk_rate);
+
+	return rc;
+}
+#endif
 
 static int mdss_dsi_check_params(struct mdss_dsi_ctrl_pdata *ctrl, void *arg)
 {
@@ -3078,10 +3236,9 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		pr_err("[MDSS_EVENT_FB_REGISTERED] \n");
 		mdss_dsi_debugfs_init(ctrl_pdata);
 
-		#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 		mdss_samsung_dsi_panel_registered(pdata);
-		#endif
-
+#endif
 		fbi = (struct fb_info *)arg;
 		if (!fbi || !fbi->dev)
 			break;
@@ -3441,6 +3598,10 @@ static int mdss_dsi_cont_splash_config(struct mdss_panel_info *pinfo,
 	void *clk_handle;
 	int rc = 0;
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = NULL;
+#endif
+
 	if (pinfo->cont_splash_enabled) {
 		rc = mdss_dsi_panel_power_ctrl(&(ctrl_pdata->panel_data),
 			MDSS_PANEL_POWER_ON);
@@ -3448,6 +3609,18 @@ static int mdss_dsi_cont_splash_config(struct mdss_panel_info *pinfo,
 			pr_err("%s: Panel power on failed\n", __func__);
 			return rc;
 		}
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		/* Enable display regulators to prevent to disable regulators in
+		 * regulator_init_complete().
+		 */
+		vdd = check_valid_ctrl(ctrl_pdata);
+
+		if (IS_ERR_OR_NULL(vdd)) {
+			pr_err("%s: Invalid data ctrl : 0x%zx\n", __func__, (size_t)vdd);
+			return -EINVAL;
+		}
+#endif
 		if (ctrl_pdata->bklt_ctrl == BL_PWM)
 			mdss_dsi_panel_pwm_enable(ctrl_pdata);
 #if !defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
@@ -3470,6 +3643,16 @@ static int mdss_dsi_cont_splash_config(struct mdss_panel_info *pinfo,
 
 		mdss_dsi_clk_ctrl(ctrl_pdata, clk_handle,
 				  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_ON);
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		/*
+		 * The clock need to be enabled until the mdss_dsi_blank()
+		 * the mdss_dsi_blank() will disable the clock
+		 */
+
+		if (vdd->dtsi_data[ctrl_pdata->ndx].samsung_tcon_clk_on_support)
+			mdss_dsi_clk_ctrl(ctrl_pdata, clk_handle,
+					  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_ON);
+#endif
 		mdss_dsi_read_hw_revision(ctrl_pdata);
 		mdss_dsi_read_phy_revision(ctrl_pdata);
 		ctrl_pdata->is_phyreg_enabled = 1;
@@ -4660,6 +4843,46 @@ int dsi_panel_device_register(struct platform_device *ctrl_pdev,
 						__func__, rc);
 		return rc;
 	}
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+
+	if (of_property_read_bool(pan_node, "samsung,support_fake_regulator")) {
+		rc = mdss_dsi_get_dt_vreg_data(&ctrl_pdev->dev, pan_node,
+			&ctrl_pdata->panel_power_data_lp11, DSI_PANEL_PM_LP11);
+		if (rc) {
+			DEV_ERR("%s: '%s' get_dt_vreg_data failed.rc=%d\n",
+				__func__, __mdss_dsi_pm_name(DSI_PANEL_PM), rc);
+			return rc;
+		}
+		if ( ctrl_pdata->panel_power_data_lp11.num_vreg ) {
+			rc = msm_dss_config_vreg(&ctrl_pdev->dev,
+				ctrl_pdata->panel_power_data_lp11.vreg_config,
+				ctrl_pdata->panel_power_data_lp11.num_vreg, 1);
+			if (rc) {
+				pr_err("%s: failed to init regulator_lp11, rc=%d\n",
+								__func__, rc);
+				return rc;
+			}
+		}
+		rc = mdss_dsi_get_dt_vreg_data(&ctrl_pdev->dev, pan_node,
+			&ctrl_pdata->panel_power_data_lp11_off, DSI_PANEL_PM_LP11_OFF);
+		if (rc) {
+			DEV_ERR("%s: '%s' get_dt_vreg_data failed.rc=%d\n",
+				__func__, __mdss_dsi_pm_name(DSI_PANEL_PM_LP11_OFF), rc);
+			return rc;
+		}
+		if(ctrl_pdata->panel_power_data_lp11_off.num_vreg) {
+			rc = msm_dss_config_vreg(&ctrl_pdev->dev,
+				ctrl_pdata->panel_power_data_lp11_off.vreg_config,
+				ctrl_pdata->panel_power_data_lp11_off.num_vreg, 1);
+			if (rc) {
+				pr_err("%s: failed to init regulator_lp11_off, rc=%d\n",
+								__func__, rc);
+				return rc;
+			}
+		}
+	}
+#endif
 
 	rc = mdss_dsi_parse_ctrl_params(ctrl_pdev, pan_node, ctrl_pdata);
 	if (rc) {

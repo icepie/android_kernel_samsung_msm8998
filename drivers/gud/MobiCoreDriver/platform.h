@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015 TRUSTONIC LIMITED
+ * Copyright (c) 2013-2018 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -86,12 +86,19 @@ static inline int smc_fastcall(void *fc_generic, size_t size)
 #endif
 
 /*
+ * Do not start the TEE at driver init
+ */
+#define MC_DELAYED_TEE_START
+
+/*
  * Perform crypto clock enable/disable
  * of clocks
  *     "bus_clk"
  *     "core_clk"
  *     "iface_clk"
  */
+
+
 #define MC_CRYPTO_CLOCK_MANAGEMENT
 #define MC_CRYPTO_CLOCK_CORESRC_PROPNAME "qcom,ce-opp-freq"
 #define MC_CLOCK_CORESRC_DEFAULTRATE 100000000

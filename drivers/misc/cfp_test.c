@@ -50,9 +50,8 @@ void print_record_nokaslr(void){
 }
 
 void print_record_kaslr(void){
-	extern unsigned long *__boot_kernel_offset; 
-	unsigned long *kernel_addr = (unsigned long *) &__boot_kernel_offset;
-	unsigned long offset = kernel_addr[1]- kernel_addr[2]; 
+	unsigned long *kernel_addr = (unsigned long *) &( __virt_to_phys(_text));
+	unsigned long offset = (unsigned long)(kimage_vaddr - KIMAGE_VADDR);
 	unsigned int MAX = 9*1024, i = 0;
 
 	for (i=0; i<MAX; i++){
@@ -82,6 +81,7 @@ static void jopp_test_bad_func_ptr(void){
 #endif
 
 #ifdef CONFIG_RKP_CFP_ROPP
+#ifdef CONFIG_RKP_CFP_ROPP_SYSREGKEY
 static void ropp_print_all_rrk(void){
 	struct task_struct * tsk;
 	struct thread_info * thread;
@@ -111,6 +111,7 @@ static void ropp_writebvr(void){
 	ropp_readbvr();
 }
 
+#endif
 #endif
 
 static int cfp_is_prefix(const char * prefix, const char * string) 

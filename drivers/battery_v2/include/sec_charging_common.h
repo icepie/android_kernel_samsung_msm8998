@@ -36,6 +36,9 @@
 /* definitions */
 #define SEC_BATTERY_CABLE_HV_WIRELESS_ETX	100
 
+#define MFC_LDO_ON		1
+#define MFC_LDO_OFF		0
+
 enum power_supply_ext_property {
 	POWER_SUPPLY_EXT_PROP_CHECK_SLAVE_I2C = POWER_SUPPLY_PROP_MAX,
 	POWER_SUPPLY_EXT_PROP_MULTI_CHARGER_MODE,
@@ -43,6 +46,7 @@ enum power_supply_ext_property {
 	POWER_SUPPLY_EXT_PROP_WIRELESS_TX_CMD,
 	POWER_SUPPLY_EXT_PROP_WIRELESS_TX_VAL,
 	POWER_SUPPLY_EXT_PROP_WIRELESS_TX_ID,
+	POWER_SUPPLY_EXT_PROP_WIRELESS_TX_CHG_ERR,
 	POWER_SUPPLY_EXT_PROP_AICL_CURRENT,
 	POWER_SUPPLY_EXT_PROP_CHECK_MULTI_CHARGE,
 	POWER_SUPPLY_EXT_PROP_CHIP_ID,
@@ -58,7 +62,12 @@ enum power_supply_ext_property {
 	POWER_SUPPLY_EXT_PROP_ANDIG_IVR_SWITCH,
 	POWER_SUPPLY_EXT_PROP_FUELGAUGE_FACTORY,
 	POWER_SUPPLY_EXT_PROP_CURRENT_MEASURE,
-	POWER_SUPPLY_EXT_PROP_UPDATE_BATTERY_DATA
+	POWER_SUPPLY_EXT_PROP_UPDATE_BATTERY_DATA,
+	POWER_SUPPLY_EXT_PROP_WIRE_CHARGING_CURRENT,
+	POWER_SUPPLY_EXT_PROP_SUB_CURRENT_NOW,
+	POWER_SUPPLY_EXT_PROP_SUB_CURRENT_MAX,
+	POWER_SUPPLY_EXT_PROP_WC_CONTROL,
+	POWER_SUPPLY_EXT_PROP_CALL_EVENT,
 };
 
 enum sec_battery_usb_conf {
@@ -93,7 +102,7 @@ enum sec_battery_cable {
 	SEC_BATTERY_CABLE_HV_WIRELESS,        	/* 11 */
 	SEC_BATTERY_CABLE_PMA_WIRELESS,       	/* 12 */
 	SEC_BATTERY_CABLE_WIRELESS_PACK,      	/* 13 */
-	SEC_BATTERY_CABLE_WIRELESS_PACK_TA,   	/* 14 */
+	SEC_BATTERY_CABLE_WIRELESS_HV_PACK, 	/* 14 */
 	SEC_BATTERY_CABLE_WIRELESS_STAND,     	/* 15 */
 	SEC_BATTERY_CABLE_WIRELESS_HV_STAND,  	/* 16 */
 	SEC_BATTERY_CABLE_QC20,               	/* 17 */
@@ -113,7 +122,9 @@ enum sec_battery_cable {
 	SEC_BATTERY_CABLE_SMART_OTG,            /* 31 */
 	SEC_BATTERY_CABLE_SMART_NOTG,           /* 32 */
 	SEC_BATTERY_CABLE_POGO,                 /* 33 */
-	SEC_BATTERY_CABLE_MAX,                	/* 34 */
+	SEC_BATTERY_CABLE_POGO_WCIN,            /* 34 */
+	SEC_BATTERY_CABLE_WIRELESS_TX,			/* 35 */
+	SEC_BATTERY_CABLE_MAX,					/* 36 */
 };
 
 enum sec_battery_voltage_mode {
@@ -150,6 +161,10 @@ enum sec_battery_capacity_mode {
 	/* vfsoc */
 	SEC_BATTERY_CAPACITY_VFSOC,
 };
+
+/* ext_event */
+#define BATT_EXT_EVENT_NONE			0x00000000
+#define BATT_EXT_EVENT_CALL			0x00000004
 
 enum sec_wireless_info_mode {
 	SEC_WIRELESS_OTP_FIRM_RESULT = 0,
@@ -208,19 +223,12 @@ enum sec_wireless_control_mode {
 	WIRELESS_CLAMP_ENABLE,
 };
 
-enum sec_siop_event_mode {
-	SIOP_EVENT_IDLE = 0,
-	SIOP_EVENT_WPC_CALL_START,		/* 5V wireless charging + Call */
-	SIOP_EVENT_WPC_CALL_END,		/* 5V wireless charging + Call */
-	SIOP_EVENT_MAX,					/* end */
-};
-
 enum sec_wireless_pad_mode {
 	SEC_WIRELESS_PAD_NONE = 0,
 	SEC_WIRELESS_PAD_WPC,
 	SEC_WIRELESS_PAD_WPC_HV,
 	SEC_WIRELESS_PAD_WPC_PACK,
-	SEC_WIRELESS_PAD_WPC_PACK_TA,
+	SEC_WIRELESS_PAD_WPC_PACK_HV,
 	SEC_WIRELESS_PAD_WPC_STAND,
 	SEC_WIRELESS_PAD_WPC_STAND_HV,
 	SEC_WIRELESS_PAD_PMA,
@@ -228,6 +236,7 @@ enum sec_wireless_pad_mode {
 	SEC_WIRELESS_PAD_VEHICLE_HV,
 	SEC_WIRELESS_PAD_PREPARE_HV,
 	SEC_WIRELESS_PAD_A4WP,
+	SEC_WIRELESS_PAD_TX,
 };
 
 enum sec_wireless_pad_id {
@@ -255,6 +264,8 @@ enum sec_battery_temp_control_source {
 	TEMP_CONTROL_SOURCE_CHG_THM,
 	TEMP_CONTROL_SOURCE_WPC_THM,
 	TEMP_CONTROL_SOURCE_USB_THM,
+	TEMP_CONTROL_SOURCE_BLKT_THM,
+	TEMP_CONTROL_SOURCE_SLAVE_CHG_THM
 };
 
 /* ADC type */
@@ -282,6 +293,7 @@ enum sec_battery_adc_channel {
 	SEC_BAT_ADC_CHANNEL_WPC_TEMP,
 	SEC_BAT_ADC_CHANNEL_SLAVE_CHG_TEMP,
 	SEC_BAT_ADC_CHANNEL_USB_TEMP,
+	SEC_BAT_ADC_CHANNEL_BLKT_TEMP,
 	SEC_BAT_ADC_CHANNEL_NUM,
 };
 
@@ -720,23 +732,27 @@ struct sec_battery_platform_data {
 	 */
 	sec_bat_adc_table_data_t *temp_adc_table;
 	sec_bat_adc_table_data_t *temp_amb_adc_table;
-	sec_bat_adc_table_data_t *usb_temp_adc_table;	
+	sec_bat_adc_table_data_t *usb_temp_adc_table;
 	sec_bat_adc_table_data_t *chg_temp_adc_table;
 	sec_bat_adc_table_data_t *wpc_temp_adc_table;
 	sec_bat_adc_table_data_t *slave_chg_temp_adc_table;
+	sec_bat_adc_table_data_t *blkt_temp_adc_table;
 	sec_bat_adc_table_data_t *inbat_adc_table;
 
 	unsigned int temp_adc_table_size;
 	unsigned int temp_amb_adc_table_size;
-	unsigned int usb_temp_adc_table_size;	
+	unsigned int usb_temp_adc_table_size;
 	unsigned int chg_temp_adc_table_size;
 	unsigned int wpc_temp_adc_table_size;
 	unsigned int slave_chg_temp_adc_table_size;
+	unsigned int blkt_temp_adc_table_size;
 	unsigned int inbat_adc_table_size;
+
+	unsigned int use_vbus_control;
 
 	sec_battery_temp_check_t temp_check_type;
 	unsigned int temp_check_count;
-	unsigned int usb_thermal_source; /* To confirm the usb temperature */		
+	unsigned int usb_thermal_source; /* To confirm the usb temperature */
 	unsigned int chg_temp_check; /* Control the charging current depending on the chg_thm */
 	unsigned int chg_thermal_source; /* To confirm the charger temperature */
 	unsigned int wpc_temp_check;
@@ -745,6 +761,8 @@ struct sec_battery_platform_data {
 	unsigned int coil_thermal_source; /* To confirm the coil temperature */
 	unsigned int slave_chg_temp_check;
 	unsigned int slave_thermal_source; /* To confirm the slave charger temperature */
+	unsigned int blkt_temp_check;
+	unsigned int blkt_thermal_source; /* To confirm the blanket temperature */
 	unsigned int inbat_voltage;
 
 	/*
@@ -774,6 +792,7 @@ struct sec_battery_platform_data {
 	unsigned int chg_charging_limit_current;
 	unsigned int chg_input_limit_current;
 	unsigned int wpc_temp_control_source;
+	unsigned int wpc_temp_lcd_on_control_source;
 	int wpc_high_temp;
 	int wpc_high_temp_recovery;
 	unsigned int wpc_charging_limit_current;
@@ -783,6 +802,7 @@ struct sec_battery_platform_data {
 	unsigned int sleep_mode_limit_current;
 	unsigned int wc_full_input_limit_current;
 	unsigned int wc_cv_current;
+	unsigned int wc_cv_tx_current;
 	unsigned int wc_cv_pack_current;
 	unsigned int max_charging_current;
 	int mix_high_temp;
@@ -850,6 +870,7 @@ struct sec_battery_platform_data {
 	/* wireless charger */
 	char *wireless_charger_name;
 	int wireless_cc_cv;
+	int set_cv_vout_in_low_capacity;
 	int wpc_det;
 	int wpc_en;
 
@@ -866,10 +887,6 @@ struct sec_battery_platform_data {
 	int age_data_length;
 	sec_age_data_t* age_data;
 #endif
-	unsigned int siop_event_check_type;
-	unsigned int siop_call_cc_current;
-	unsigned int siop_call_cv_current;
-
 	int siop_input_limit_current;
 	int siop_charging_limit_current;
 	int siop_hv_input_limit_current;
@@ -881,6 +898,11 @@ struct sec_battery_platform_data {
 	int siop_wireless_charging_limit_current;
 	int siop_hv_wireless_input_limit_current;
 	int siop_hv_wireless_charging_limit_current;
+#if defined(CONFIG_MULTI_PORT_CHARGING)
+	int siop_multi_pogo_input_current;
+	int siop_multi_pogo_charging_current;
+	int siop_multi_pogo_sub_charging_current;
+#endif
 	int wc_hero_stand_cc_cv;
 	int wc_hero_stand_cv_current;
 	int wc_hero_stand_hv_cv_current;
@@ -903,11 +925,6 @@ struct sec_battery_platform_data {
 	unsigned int cisd_cap_limit;
 	unsigned int max_voltage_thr;
 	unsigned int cisd_alg_index;
-#if defined(CONFIG_QH_ALGORITHM)
-	int cisd_qh_current_high_thr;
-	int cisd_qh_current_low_thr;
-	int cisd_qh_vfsoc_thr;
-#endif
 #endif
 
 	/* ADC setting */
@@ -1058,6 +1075,7 @@ static inline struct power_supply *get_power_supply_by_name(char *name)
 
 #define is_hv_wireless_type(cable_type) ( \
 	cable_type == SEC_BATTERY_CABLE_HV_WIRELESS || \
+	cable_type == SEC_BATTERY_CABLE_WIRELESS_HV_PACK || \
 	cable_type == SEC_BATTERY_CABLE_HV_WIRELESS_ETX || \
 	cable_type == SEC_BATTERY_CABLE_WIRELESS_HV_STAND || \
 	cable_type == SEC_BATTERY_CABLE_WIRELESS_HV_VEHICLE)
@@ -1066,32 +1084,31 @@ static inline struct power_supply *get_power_supply_by_name(char *name)
 	cable_type == SEC_BATTERY_CABLE_WIRELESS || \
 	cable_type == SEC_BATTERY_CABLE_PMA_WIRELESS || \
 	cable_type == SEC_BATTERY_CABLE_WIRELESS_PACK || \
-	cable_type == SEC_BATTERY_CABLE_WIRELESS_PACK_TA || \
 	cable_type == SEC_BATTERY_CABLE_WIRELESS_STAND || \
 	cable_type == SEC_BATTERY_CABLE_WIRELESS_VEHICLE || \
-	cable_type == SEC_BATTERY_CABLE_PREPARE_WIRELESS_HV)
+	cable_type == SEC_BATTERY_CABLE_PREPARE_WIRELESS_HV || \
+	cable_type == SEC_BATTERY_CABLE_WIRELESS_TX)
 
 #define is_wireless_type(cable_type) \
 	(is_hv_wireless_type(cable_type) || is_nv_wireless_type(cable_type))
 
 #define is_wcin_type(cable_type) \
-	(is_wireless_type(cable_type) || is_pogo_type(cable_type))
-
-#define is_pogo_type(cable_type) ( \
-	cable_type == SEC_BATTERY_CABLE_POGO)
+	(is_wireless_type(cable_type) || \
+	cable_type == SEC_BATTERY_CABLE_POGO_WCIN)
 
 #define is_not_wireless_type(cable_type) ( \
 	cable_type != SEC_BATTERY_CABLE_WIRELESS && \
 	cable_type != SEC_BATTERY_CABLE_PMA_WIRELESS && \
 	cable_type != SEC_BATTERY_CABLE_WIRELESS_PACK && \
-	cable_type != SEC_BATTERY_CABLE_WIRELESS_PACK_TA && \
+	cable_type != SEC_BATTERY_CABLE_WIRELESS_HV_PACK && \
 	cable_type != SEC_BATTERY_CABLE_WIRELESS_STAND && \
 	cable_type != SEC_BATTERY_CABLE_HV_WIRELESS && \
 	cable_type != SEC_BATTERY_CABLE_HV_WIRELESS_ETX && \
 	cable_type != SEC_BATTERY_CABLE_PREPARE_WIRELESS_HV && \
 	cable_type != SEC_BATTERY_CABLE_WIRELESS_HV_STAND && \
 	cable_type != SEC_BATTERY_CABLE_WIRELESS_VEHICLE && \
-	cable_type != SEC_BATTERY_CABLE_WIRELESS_HV_VEHICLE)
+	cable_type != SEC_BATTERY_CABLE_WIRELESS_HV_VEHICLE && \
+	cable_type != SEC_BATTERY_CABLE_WIRELESS_TX)
 
 #define is_wired_type(cable_type) \
 	(is_not_wireless_type(cable_type) && (cable_type != SEC_BATTERY_CABLE_NONE))
@@ -1118,5 +1135,10 @@ static inline struct power_supply *get_power_supply_by_name(char *name)
 
 #define is_hv_wire_type(cable_type) ( \
 	is_hv_afc_wire_type(cable_type) || is_hv_qc_wire_type(cable_type))
+
+#define is_nocharge_type(cable_type) ( \
+	cable_type == SEC_BATTERY_CABLE_NONE || \
+	cable_type == SEC_BATTERY_CABLE_OTG || \
+	cable_type == SEC_BATTERY_CABLE_POWER_SHARING)
 
 #endif /* __SEC_CHARGING_COMMON_H */

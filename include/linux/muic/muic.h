@@ -99,7 +99,11 @@ typedef enum {
 	ADC_INCOMPATIBLE_VZW	= 0x0f, /* 0x01111 34K ohm */
 	ADC_SMARTDOCK		= 0x10, /* 0x10000 40.2K ohm */
 	ADC_RDU_TA		= 0x10, /* 0x10000 40.2K ohm */
+#ifdef CONFIG_MUIC_KEYBOARD
+	ADC_KEYBOARD		= 0x11, /* 0x10001 49.9K ohm */
+#else
 	ADC_HMT			= 0x11, /* 0x10001 49.9K ohm */
+#endif
 	ADC_AUDIODOCK		= 0x12, /* 0x10010 64.9K ohm */
 	ADC_USB_LANHUB		= 0x13, /* 0x10011 80.07K ohm */
 	ADC_CHARGING_CABLE	= 0x14,	/* 0x10100 102K ohm */
@@ -223,6 +227,7 @@ typedef enum {
 #endif
 	ATTACHED_DEV_POWERPACK_MUIC,
 	ATTACHED_DEV_UNDEFINED_RANGE_MUIC,
+	ATTACHED_DEV_HICCUP_MUIC,
 	ATTACHED_DEV_WATER_MUIC,
 	ATTACHED_DEV_CHK_WATER_REQ,
 	ATTACHED_DEV_CHK_WATER_DRY_REQ,
@@ -233,6 +238,9 @@ typedef enum {
 	ATTACHED_DEV_VOLUP_MUIC,
 	ATTACHED_DEV_CHECK_OCP,
 	ATTACHED_DEV_RDU_TA_MUIC,
+#if defined(CONFIG_MUIC_KEYBOARD)
+	ATTACHED_DEV_MUIC_KEYBOARD,
+#endif
 
 	ATTACHED_DEV_UNKNOWN_MUIC,
 	ATTACHED_DEV_NUM,
@@ -260,12 +268,18 @@ struct muic_platform_data {
 
 	int switch_sel;
 
+	int dcd_count;
 	/* muic current USB/UART path */
 	int usb_path;
 	int uart_path;
 
 	int gpio_uart_sel;
 	int gpio_usb_sel;
+
+#if IS_ENABLED(CONFIG_MUIC_S2MU004_SUPPORT_BC1P2_CERTI)
+	/* weak battery */
+	u8 vbus_ldo;
+#endif
 
 	bool rustproof_on;
 	bool afc_disable;
@@ -445,6 +459,12 @@ struct muic_platform_data {
 		muic_pdic_notifier_attach_attached_dev(dev)
 #define MUIC_SEND_NOTI_TO_CCIC_DETACH(dev) \
 		muic_pdic_notifier_detach_attached_dev(dev)
+#if defined(CONFIG_MUIC_KEYBOARD)
+#define MUIC_SEND_KEYBOARD_NOTI_ATTACH()	\
+		keyboard_notifier_attach()
+#define MUIC_SEND_KEYBOARD_NOTI_DETACH() \
+		keyboard_notifier_detach()
+#endif
 #endif
 
 int muic_core_handle_attach(struct muic_platform_data *muic_pdata,

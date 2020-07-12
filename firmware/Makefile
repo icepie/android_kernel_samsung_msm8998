@@ -130,6 +130,11 @@ fw-shipped-$(CONFIG_EPEN_WACOM_W9019) += epen/w9019_gts3l.fw
 fw-shipped-$(CONFIG_EPEN_WACOM_W9019) += epen/w9019_gts4l.fw
 endif
 
+ifdef CONFIG_SEC_GTS4LWIFI_PROJECT
+fw-shipped-$(CONFIG_EPEN_WACOM_W9019) += epen/w9019_gts3l.fw
+fw-shipped-$(CONFIG_EPEN_WACOM_W9019) += epen/w9019_gts4l.fw
+endif
+
 fw-shipped-$(CONFIG_WIRELESS_FIRMWARE_UPDATE) += mfc/mfc_fw_flash.bin
 
 ifdef CONFIG_FIRMWARE_IN_KERNEL
@@ -165,6 +170,11 @@ fw-shipped-$(CONFIG_VIDEO_CPIA2) += cpia2/stv0672_vp4.bin
 fw-shipped-$(CONFIG_YAM) += yam/1200.bin yam/9600.bin
 #FPGA
 fw-shipped-$(CONFIG_SPI_TO_I2C_FPGA) += fpga/spi_to_i2c_bitmap.fw
+fw-shipped-$(CONFIG_POGO_FPGA) += fpga/pogo_fpga.fw
+fw-shipped-$(CONFIG_SEC_ICE40XX_IRIS) += fpga/iris_fpga.fw
+
+fw-shipped-$(CONFIG_FIVE_TEE_DRIVER) += five.b00 five.b01 five.b02 five.b03 \
+				  five.b04 five.b05 five.b06 five.b07 five.mdt
 
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 

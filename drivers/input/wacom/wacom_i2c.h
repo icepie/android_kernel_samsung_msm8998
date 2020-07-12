@@ -35,6 +35,7 @@ struct wacom_g5_platform_data {
 	bool use_virtual_softkey;
 	bool use_garage;
 	bool support_dex;
+	bool support_aot;
 	u32 dex_rate;
 	bool table_swap;
 };

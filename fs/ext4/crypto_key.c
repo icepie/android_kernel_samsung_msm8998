@@ -144,11 +144,9 @@ int _ext4_get_encryption_info(struct inode *inode)
 	int mode;
 	int res;
 
-	if (!ext4_read_workqueue) {
-		res = ext4_init_crypto();
-		if (res)
-			return res;
-	}
+	res = ext4_init_crypto();
+	if (res)
+		return res;
 
 retry:
 	crypt_info = ACCESS_ONCE(ei->i_crypt_info);
@@ -202,6 +200,12 @@ retry:
 	case EXT4_ENCRYPTION_MODE_PRIVATE:
 		cipher_str = "bugon";
 		break;
+	case EXT4_ENCRYPTION_MODE_SPECK128_256_XTS:
+		cipher_str = "xts(speck128)";
+		break;
+	case EXT4_ENCRYPTION_MODE_SPECK128_256_CTS:
+		cipher_str = "cts(cbc(speck128))";
+		break;
 	default:
 		printk_once(KERN_WARNING
 			    "ext4: unsupported key mode %d (ino %u)\n",
@@ -240,6 +244,12 @@ retry:
 	}
 	down_read(&keyring_key->sem);
 	ukp = user_key_payload(keyring_key);
+	if (!ukp) {
+		/* key was revoked before we acquired its semaphore */
+		res = -EKEYREVOKED;
+		up_read(&keyring_key->sem);
+		goto out;
+	}
 	if (ukp->datalen != sizeof(struct ext4_encryption_key)) {
 		res = -EINVAL;
 		up_read(&keyring_key->sem);

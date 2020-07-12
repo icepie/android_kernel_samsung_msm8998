@@ -1,8 +1,5 @@
 /*
- * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
- *
- * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
- *
+ * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -17,12 +14,6 @@
  * PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
  * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
- */
-
-/*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
  */
 
 /**=========================================================================
@@ -60,6 +51,7 @@ rrm_get_min_of_max_tx_power(tpAniSirGlobal pMac,
 {
 	uint8_t maxTxPower = 0;
 	uint8_t txPower = QDF_MIN(regMax, (apTxPower));
+
 	if ((txPower >= RRM_MIN_TX_PWR_CAP) && (txPower <= RRM_MAX_TX_PWR_CAP))
 		maxTxPower = txPower;
 	else if (txPower < RRM_MIN_TX_PWR_CAP)
@@ -268,7 +260,7 @@ rrm_process_link_measurement_request(tpAniSirGlobal pMac,
 	}
 	pHdr = WMA_GET_RX_MAC_HEADER(pRxPacketInfo);
 
-	LinkReport.txPower = lim_get_max_tx_power(pSessionEntry->maxTxPower,
+	LinkReport.txPower = lim_get_max_tx_power(pSessionEntry->def_max_tx_pwr,
 						pLinkReq->MaxTxPower.maxTxPower,
 						  pMac->roam.configParam.
 						  nTxPowerCap);
@@ -568,6 +560,19 @@ rrm_process_beacon_report_req(tpAniSirGlobal pMac,
 		present ? pBeaconReq->measurement_request.Beacon.BcnReportingDetail.
 		reportingDetail : BEACON_REPORTING_DETAIL_ALL_FF_IE;
 
+	if (pBeaconReq->measurement_request.Beacon.
+	    last_beacon_report_indication.present) {
+		pCurrentReq->request.Beacon.last_beacon_report_indication =
+			pBeaconReq->measurement_request.Beacon.
+			last_beacon_report_indication.last_fragment;
+		pe_debug("Last Beacon Report in request = %d",
+			pCurrentReq->request.Beacon.
+			last_beacon_report_indication);
+	} else {
+		pCurrentReq->request.Beacon.last_beacon_report_indication = 0;
+		pe_debug("Last Beacon report not present in request");
+	}
+
 	if (pBeaconReq->measurement_request.Beacon.RequestedInfo.present) {
 		pCurrentReq->request.Beacon.reqIes.pElementIds =
 			qdf_mem_malloc(sizeof(uint8_t) *
@@ -638,6 +643,7 @@ rrm_process_beacon_report_req(tpAniSirGlobal pMac,
 		uint8_t *ch_lst = pSmeBcnReportReq->channelList.channelNumber;
 		uint8_t len;
 		uint16_t ch_ctr = 0;
+
 		for (num_APChanReport = 0;
 		     num_APChanReport <
 		     pBeaconReq->measurement_request.Beacon.num_APChannelReport;
@@ -692,7 +698,7 @@ rrm_fill_beacon_ies(tpAniSirGlobal pMac,
 		    uint8_t *eids, uint8_t numEids, tpSirBssDescription pBssDesc)
 {
 	uint8_t len, *pBcnIes, count = 0, i;
-	uint8_t BcnNumIes;
+	uint16_t BcnNumIes;
 
 	if ((pIes == NULL) || (pNumIes == NULL) || (pBssDesc == NULL)) {
 		pe_err("Invalid parameters");
@@ -702,7 +708,7 @@ rrm_fill_beacon_ies(tpAniSirGlobal pMac,
 	numEids = (eids == NULL) ? 0 : numEids;
 
 	pBcnIes = (uint8_t *) &pBssDesc->ieFields[0];
-	BcnNumIes = (uint8_t) GET_IE_LEN_IN_BSS(pBssDesc->length);
+	BcnNumIes = GET_IE_LEN_IN_BSS(pBssDesc->length);
 
 	*pNumIes = 0;
 
@@ -765,8 +771,10 @@ rrm_process_beacon_report_xmit(tpAniSirGlobal mac_ctx,
 	tpSirBssDescription bss_desc;
 	tpRRMReq curr_req = mac_ctx->rrm.rrmPEContext.pCurrentReq;
 	tpPESession session_entry;
+	struct rrm_beacon_report_last_beacon_params last_beacon_report_params;
 	uint8_t session_id, counter;
 	uint8_t bss_desc_count = 0;
+	uint8_t report_index = 0;
 
 	pe_debug("Received beacon report xmit indication");
 
@@ -880,12 +888,42 @@ rrm_process_beacon_report_xmit(tpAniSirGlobal mac_ctx,
 				break;
 			}
 		}
-		pe_debug("Sending Action frame with %d bss info",
-			bss_desc_count);
-		lim_send_radio_measure_report_action_frame(mac_ctx,
-			curr_req->dialog_token, bss_desc_count, report,
-			beacon_xmit_ind->bssId, session_entry);
 
+		qdf_mem_zero(&last_beacon_report_params,
+			sizeof(last_beacon_report_params));
+		/*
+		 * Each frame can hold RADIO_REPORTS_MAX_IN_A_FRAME reports.
+		 * Multiple frames may be sent if bss_desc_count is larger.
+		 * Count the total number of frames to be sent first
+		 */
+
+		last_beacon_report_params.last_beacon_ind =
+			curr_req->request.Beacon.last_beacon_report_indication;
+		last_beacon_report_params.num_frags =
+			(bss_desc_count / RADIO_REPORTS_MAX_IN_A_FRAME);
+		if (bss_desc_count % RADIO_REPORTS_MAX_IN_A_FRAME)
+			last_beacon_report_params.num_frags++;
+
+		pe_debug("last_beacon_report_ind required %d num_frags %d bss_count %d",
+			last_beacon_report_params.last_beacon_ind,
+			last_beacon_report_params.num_frags,
+			bss_desc_count);
+
+		while (report_index < bss_desc_count) {
+			int m_count;
+
+			m_count = QDF_MIN((bss_desc_count - report_index),
+					RADIO_REPORTS_MAX_IN_A_FRAME);
+			pe_debug("Sending Action frame with %d bss info frag_id %d",
+				m_count, last_beacon_report_params.frag_id);
+			lim_send_radio_measure_report_action_frame(mac_ctx,
+				curr_req->dialog_token, m_count,
+				&last_beacon_report_params,
+				&report[report_index],
+				beacon_xmit_ind->bssId, session_entry);
+			report_index += m_count;
+			last_beacon_report_params.frag_id++;
+		}
 		curr_req->sendEmptyBcnRpt = false;
 	}
 
@@ -936,8 +974,11 @@ static void rrm_process_beacon_request_failure(tpAniSirGlobal pMac,
 		return;
 	}
 
-	lim_send_radio_measure_report_action_frame(pMac, pCurrentReq->dialog_token, 1,
-						   pReport, peer, pSessionEntry);
+	lim_send_radio_measure_report_action_frame(pMac,
+						   pCurrentReq->dialog_token,
+						   1, NULL,
+						   pReport, peer,
+						   pSessionEntry);
 
 	qdf_mem_free(pReport);
 	return;
@@ -949,7 +990,7 @@ static void rrm_process_beacon_request_failure(tpAniSirGlobal pMac,
  * @peer: Macaddress of the peer requesting the radio measurement
  * @session_entry: session entry
  * @curr_req: Pointer to RRM request
- * @report: Pointer to radio measurement report
+ * @radiomes_report: Pointer to radio measurement report
  * @rrm_req: Array of Measurement request IEs
  * @num_report: No.of reports
  * @index: Index for Measurement request
@@ -962,27 +1003,29 @@ static void rrm_process_beacon_request_failure(tpAniSirGlobal pMac,
 static
 tSirRetStatus rrm_process_beacon_req(tpAniSirGlobal mac_ctx, tSirMacAddr peer,
 			     tpPESession session_entry, tpRRMReq curr_req,
-			     tpSirMacRadioMeasureReport report,
+			     tpSirMacRadioMeasureReport *radiomes_report,
 			     tDot11fRadioMeasurementRequest *rrm_req,
 			     uint8_t *num_report, int index)
 {
 	tRrmRetStatus rrm_status = eRRM_SUCCESS;
+	tpSirMacRadioMeasureReport report;
 
 	if (curr_req) {
-		if (report == NULL) {
+		if (*radiomes_report == NULL) {
 			/*
 			 * Allocate memory to send reports for
 			 * any subsequent requests.
 			 */
-			report = qdf_mem_malloc(sizeof(*report) *
+			*radiomes_report = qdf_mem_malloc(sizeof(*report) *
 				(rrm_req->num_MeasurementRequest - index));
-			if (NULL == report) {
+			if (NULL == *radiomes_report) {
 				pe_err("Unable to allocate memory during RRM Req processing");
 				return eSIR_MEM_ALLOC_FAILED;
 			}
 			pe_debug("rrm beacon type refused of %d report in beacon table",
 				*num_report);
 		}
+		report = *radiomes_report;
 		report[*num_report].refused = 1;
 		report[*num_report].type = SIR_MAC_RRM_BEACON_TYPE;
 		report[*num_report].token =
@@ -993,7 +1036,7 @@ tSirRetStatus rrm_process_beacon_req(tpAniSirGlobal mac_ctx, tSirMacAddr peer,
 		curr_req = qdf_mem_malloc(sizeof(*curr_req));
 		if (NULL == curr_req) {
 			pe_err("Unable to allocate memory during RRM Req processing");
-				qdf_mem_free(report);
+				qdf_mem_free(*radiomes_report);
 			return eSIR_MEM_ALLOC_FAILED;
 		}
 		pe_debug("Processing Beacon Report request");
@@ -1088,8 +1131,8 @@ rrm_process_radio_measurement_request(tpAniSirGlobal mac_ctx,
 		report->incapable = 1;
 		num_report = 1;
 		lim_send_radio_measure_report_action_frame(mac_ctx,
-			rrm_req->DialogToken.token, num_report, report, peer,
-			session_entry);
+			rrm_req->DialogToken.token, num_report, NULL,
+			report, peer, session_entry);
 		qdf_mem_free(report);
 		return eSIR_FAILURE;
 	}
@@ -1117,7 +1160,7 @@ rrm_process_radio_measurement_request(tpAniSirGlobal mac_ctx,
 		case SIR_MAC_RRM_BEACON_TYPE:
 			/* Process beacon request. */
 			status = rrm_process_beacon_req(mac_ctx, peer,
-				 session_entry, curr_req, report, rrm_req,
+				 session_entry, curr_req, &report, rrm_req,
 				 &num_report, i);
 			if (eSIR_SUCCESS != status)
 				return status;
@@ -1141,8 +1184,8 @@ rrm_process_radio_measurement_request(tpAniSirGlobal mac_ctx,
 end:
 	if (report) {
 		lim_send_radio_measure_report_action_frame(mac_ctx,
-			rrm_req->DialogToken.token, num_report, report,
-			peer, session_entry);
+			rrm_req->DialogToken.token, num_report, NULL,
+			report, peer, session_entry);
 		qdf_mem_free(report);
 	}
 	return status;
@@ -1237,6 +1280,7 @@ tSirRetStatus rrm_initialize(tpAniSirGlobal pMac)
 	pMac->rrm.rrmPEContext.DialogToken = 0;
 
 	pMac->rrm.rrmPEContext.rrmEnable = 0;
+	pMac->rrm.rrmPEContext.prev_rrm_report_seq_num = 0xFFFF;
 
 	qdf_mem_set(pRRMCaps, sizeof(tRRMCaps), 0);
 	pRRMCaps->LinkMeasurement = 1;

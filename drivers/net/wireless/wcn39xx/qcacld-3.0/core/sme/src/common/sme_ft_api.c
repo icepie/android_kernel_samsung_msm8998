@@ -1,9 +1,6 @@
 /*
  * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
  *
- * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
- *
- *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all
@@ -19,11 +16,6 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
-/*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
- */
 #include <sir_common.h>
 #include <ani_global.h>
 #include <csr_inside_api.h>
@@ -194,6 +186,9 @@ void sme_set_ft_ies(tHalHandle hal_ptr, uint32_t session_id,
 		 * reassoc req. This is the new FT Roaming in place At
 		 * this juncture we'r ready to start sending Reassoc req
 		 */
+
+		ft_ies_length = QDF_MIN(ft_ies_length, MAX_FTIE_SIZE);
+
 		sme_debug("New Reassoc Req: %pK in state %d",
 			ft_ies, session->ftSmeContext.FTState);
 		if ((session->ftSmeContext.reassoc_ft_ies) &&

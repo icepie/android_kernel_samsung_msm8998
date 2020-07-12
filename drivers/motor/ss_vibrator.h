@@ -172,6 +172,7 @@ extern void sm5720_vibtonz_en(bool en);
 #endif
 #if defined(CONFIG_MOTOR_S2MU004)
 extern void s2mu004_vibtonz_en(bool en);
+extern void s2mu004_set_intensity(int intensity);
 #endif
 
 #endif  /* _VIBRATOR_H */

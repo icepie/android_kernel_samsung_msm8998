@@ -58,6 +58,7 @@ struct sec_param_data {
 	unsigned int api_gpio_test;
 	char api_gpio_test_result[256];
 	char reboot_recovery_cause[256];
+	unsigned int user_partition_flashed;
 };
 
 struct sec_param_data_s {

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -2519,6 +2519,13 @@ static void msm_pcie_sel_debug_testcase(struct msm_pcie_dev_t *dev,
 			break;
 		}
 
+		if (((base_sel - 1) >= MSM_PCIE_MAX_RES) ||
+					(!dev->res[base_sel - 1].resource)) {
+			PCIE_DBG_FS(dev, "PCIe: RC%d Resource does not exist\n",
+								dev->rc_idx);
+			break;
+		}
+
 		PCIE_DBG_FS(dev,
 			"base: %s: 0x%p\nwr_offset: 0x%x\nwr_mask: 0x%x\nwr_value: 0x%x\n",
 			dev->res[base_sel - 1].name,
@@ -2538,6 +2545,13 @@ static void msm_pcie_sel_debug_testcase(struct msm_pcie_dev_t *dev,
 
 		break;
 	case 13: /* dump all registers of base_sel */
+		if (((base_sel - 1) >= MSM_PCIE_MAX_RES) ||
+					(!dev->res[base_sel - 1].resource)) {
+			PCIE_DBG_FS(dev, "PCIe: RC%d Resource does not exist\n",
+								dev->rc_idx);
+			break;
+		}
+
 		if (!base_sel) {
 			PCIE_DBG_FS(dev, "Invalid base_sel: 0x%x\n", base_sel);
 			break;
@@ -7040,11 +7054,16 @@ out:
 	if (rc_idx < 0 || rc_idx >= MAX_RC_NUM)
 		pr_err("PCIe: Invalid RC index %d. Driver probe failed\n",
 		rc_idx);
-	else
+	else{
 		PCIE_ERR(&msm_pcie_dev[rc_idx],
 			"PCIe: Driver probe failed for RC%d:%d\n",
 			rc_idx, ret);
+		
+		if (msm_pcie_dev[rc_idx].bus_client)
+			msm_bus_scale_unregister_client(msm_pcie_dev[rc_idx].bus_client);
 
+		msm_pcie_dev[rc_idx].bus_client = 0;
+	}
 	mutex_unlock(&pcie_drv.drv_lock);
 
 	return ret;
@@ -7498,7 +7517,7 @@ static int msm_pcie_pm_suspend(struct pci_dev *dev,
 	return ret;
 }
 
-static void msm_pcie_fixup_suspend(struct pci_dev *dev)
+static void msm_pcie_fixup_suspend_late(struct pci_dev *dev)
 {
 	int ret;
 	struct msm_pcie_dev_t *pcie_dev = PCIE_BUS_PRIV_DATA(dev->bus);
@@ -7530,8 +7549,8 @@ static void msm_pcie_fixup_suspend(struct pci_dev *dev)
 
 	mutex_unlock(&pcie_dev->recovery_lock);
 }
-DECLARE_PCI_FIXUP_SUSPEND(PCIE_VENDOR_ID_RCP, PCIE_DEVICE_ID_RCP,
-			  msm_pcie_fixup_suspend);
+DECLARE_PCI_FIXUP_SUSPEND_LATE(PCIE_VENDOR_ID_RCP, PCIE_DEVICE_ID_RCP,
+			  msm_pcie_fixup_suspend_late);
 
 /* Resume the PCIe link */
 static int msm_pcie_pm_resume(struct pci_dev *dev,
@@ -7565,33 +7584,40 @@ static int msm_pcie_pm_resume(struct pci_dev *dev,
 			 dev->bus->number, dev->bus->primary);
 
 		if (!(options & MSM_PCIE_CONFIG_NO_CFG_RESTORE)) {
-			PCIE_DBG(pcie_dev,
-				"RC%d: entry of PCI framework restore state\n",
-				pcie_dev->rc_idx);
+			if (pcie_dev->saved_state) {
+				PCIE_DBG(pcie_dev,
+					 "RC%d: entry of PCI framework restore state\n",
+					 pcie_dev->rc_idx);
 
-			pci_load_and_free_saved_state(dev,
-					&pcie_dev->saved_state);
-			pci_restore_state(dev);
+				pci_load_and_free_saved_state(dev,
+						      &pcie_dev->saved_state);
+				pci_restore_state(dev);
 
-			/*
-			 * restore the configuratoins for l1/l1ss
-			 * which are set during PCIe suspend period
-			 */
-			mutex_lock(&pcie_dev->l1ss_ctrl_lock);
+				/*
+				 * restore the configuratoins for l1/l1ss
+				 * which are set during PCIe suspend period
+				 */
+				mutex_lock(&pcie_dev->l1ss_ctrl_lock);
 
-			if (pcie_dev->pending_l1ss_ctrl &&
-					pcie_dev->l1ss_disable_flag)
-				__sec_pcie_l1ss_ctrl(false);
-			else if (pcie_dev->pending_l1ss_ctrl &&
-					!pcie_dev->l1ss_disable_flag)
-				__sec_pcie_l1ss_ctrl(true);
-			pcie_dev->pending_l1ss_ctrl = false;
+				if (pcie_dev->pending_l1ss_ctrl &&
+						pcie_dev->l1ss_disable_flag)
+					__sec_pcie_l1ss_ctrl(false);
+				else if (pcie_dev->pending_l1ss_ctrl &&
+						!pcie_dev->l1ss_disable_flag)
+					__sec_pcie_l1ss_ctrl(true);
+				pcie_dev->pending_l1ss_ctrl = false;
 
-			mutex_unlock(&pcie_dev->l1ss_ctrl_lock);
+				mutex_unlock(&pcie_dev->l1ss_ctrl_lock);
 
-			PCIE_DBG(pcie_dev,
-				"RC%d: exit of PCI framework restore state\n",
-				pcie_dev->rc_idx);
+				PCIE_DBG(pcie_dev,
+					"RC%d: exit of PCI framework restore state\n",
+					pcie_dev->rc_idx);
+			} else {
+				PCIE_DBG(pcie_dev,
+					 "RC%d: restore rc config space using shadow recovery\n",
+					 pcie_dev->rc_idx);
+				msm_pcie_cfg_recover(pcie_dev, true);
+			}
 		}
 	}
 

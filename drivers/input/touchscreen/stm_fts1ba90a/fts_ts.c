@@ -474,7 +474,7 @@ int fts_write_reg(struct fts_ts_info *info,
 	int ret;
 	int retry = FTS_TS_I2C_RETRY_CNT;
 
-	if (info->touch_stopped) {
+	if (info->fts_power_state == FTS_POWER_STATE_POWERDOWN) {
 		input_err(true, &info->client->dev, "%s: Sensor stopped\n", __func__);
 		goto exit;
 	}
@@ -537,7 +537,7 @@ int fts_read_reg(struct fts_ts_info *info, u8 *reg, int cnum,
 	int ret;
 	int retry = FTS_TS_I2C_RETRY_CNT;
 
-	if (info->touch_stopped) {
+	if (info->fts_power_state == FTS_POWER_STATE_POWERDOWN) {
 		input_err(true, &info->client->dev, "%s: Sensor stopped\n", __func__);
 		goto exit;
 	}
@@ -598,22 +598,22 @@ exit:
 	return 0;
 }
 
-#ifdef FTS_SUPPORT_STRINGLIB
+#ifdef FTS_SUPPORT_SPONGELIB
 #ifdef CONFIG_SEC_FACTORY
-static void fts_disable_string(struct fts_ts_info *info)
+static void fts_disable_sponge(struct fts_ts_info *info)
 {
 	u8 regAdd[3] = {0xC1, 0x05, 0x00};
 	int ret = 0;
 
 	ret = fts_write_reg(info, &regAdd[0], 3);
-	input_info(true, &info->client->dev, "%s: String Library Disabled, ret = %d\n", __func__, ret);
+	input_info(true, &info->client->dev, "%s: Sponge Library Disabled, ret = %d\n", __func__, ret);
 }
 #endif
 
-static int fts_read_from_string(struct fts_ts_info *info,
-		u16 *reg, u8 *data, int length)
+static int fts_read_from_sponge(struct fts_ts_info *info,
+		u16 offset, u8 *data, int length)
 {
-	u8 string_reg[3];
+	u8 sponge_reg[3];
 	u8 *buf;
 	int rtn;
 
@@ -632,34 +632,37 @@ static int fts_read_from_string(struct fts_ts_info *info,
 	}
 #endif
 
-	string_reg[0] = 0xAA;
-	string_reg[1] = (*reg >> 8) & 0xFF;
-	string_reg[2] = *reg & 0xFF;
+	offset += FTS_CMD_SPONGE_ACCESS;
+	sponge_reg[0] = 0xAA;
+	sponge_reg[1] = (offset >> 8) & 0xFF;
+	sponge_reg[2] = offset & 0xFF;
 
 	buf = kzalloc(length, GFP_KERNEL);
 	if (buf == NULL)
 		return -ENOMEM;
 
-	rtn = fts_read_reg(info, string_reg, 3, buf, length);
+	rtn = fts_read_reg(info, sponge_reg, 3, buf, length);
 	if (rtn >= 0)
 		memcpy(data, &buf[0], length);
+	else
+		input_err(true, &info->client->dev, "%s: failed\n", __func__);
 
 	kfree(buf);
 	return rtn;
 }
 
 /*
- * int fts_write_to_string(struct fts_ts_info *, u16 *, u8 *, int)
- * send command or write specific value to the string area.
- * string area means guest image or display lab firmware.. etc..
+ * int fts_write_to_sponge(struct fts_ts_info *, u16 *, u8 *, int)
+ * send command or write specific value to the sponge area.
+ * sponge area means guest image or display lab firmware.. etc..
  */
-static int fts_write_to_string(struct fts_ts_info *info,
-		u16 *reg, u8 *data, int length)
+static int fts_write_to_sponge(struct fts_ts_info *info,
+		u16 offset, u8 *data, int length)
 {
 	u8 regAdd[3 + length];
 	int ret = 0;
 
-	if (info->touch_stopped) {
+	if (info->fts_power_state == FTS_POWER_STATE_POWERDOWN) {
 		input_err(true, &info->client->dev, "%s: Sensor stopped\n", __func__);
 		return 0;
 	}
@@ -679,36 +682,33 @@ static int fts_write_to_string(struct fts_ts_info *info,
 	}
 #endif
 
-	mutex_lock(&info->i2c_mutex);
-
+	offset += FTS_CMD_SPONGE_ACCESS;
 	regAdd[0] = FTS_CMD_SPONGE_READ_WRITE_CMD;
-	regAdd[1] = (*reg >> 8) & 0xFF;
-	regAdd[2] = *reg & 0xFF;
+	regAdd[1] = (offset >> 8) & 0xFF;
+	regAdd[2] = offset & 0xFF;
 
 	memcpy(&regAdd[3], &data[0], length);
 
 	ret = fts_write_reg(info, &regAdd[0], 3 + length);
 	if (ret <= 0) {
 		input_err(true, &info->client->dev,
-				"%s: string command is failed. ret: %d\n", __func__, ret);
+				"%s: sponge command is failed. ret: %d\n", __func__, ret);
 	}
 
 	// Notify Command
-	regAdd[0] = FTS_CMD_SPINGE_NOTIFY_CMD;
-	regAdd[1] = (*reg >> 8) & 0xFF;
-	regAdd[2] = *reg & 0xFF;
+	regAdd[0] = FTS_CMD_SPONGE_NOTIFY_CMD;
+	regAdd[1] = (offset >> 8) & 0xFF;
+	regAdd[2] = offset & 0xFF;
 
 	ret = fts_write_reg(info, &regAdd[0], 3);
 	if (ret <= 0) {
 		input_err(true, &info->client->dev,
-				"%s: string notify is failed.\n", __func__);
+				"%s: sponge notify is failed.\n", __func__);
 		return -1;
 	}
 
 	input_info(true, &info->client->dev,
-			"%s: string notify is OK[0x%02X].\n", __func__, *data);
-
-	mutex_unlock(&info->i2c_mutex);
+			"%s: sponge notify is OK[0x%02X].\n", __func__, *data);
 
 	return ret;
 }
@@ -720,7 +720,6 @@ int fts_check_custom_library(struct fts_ts_info *info)
 	u8 regAdd[3] = { 0xA4, 0x06, 0x91 };
 	u8 data[sizeof(struct fts_sponge_information)] = { 0 };
 	int ret = -1;
-	u16 addr = 0x0000;
 
 	fts_interrupt_set(info, INT_DISABLE);
 
@@ -760,11 +759,9 @@ int fts_check_custom_library(struct fts_ts_info *info)
 	else
 		info->use_sponge = false;
 
-	if (info->use_sponge) {
-		ret = fts_write_to_string(info, &addr, &info->lowpower_flag, sizeof(info->lowpower_flag));
-		if (ret < 0)
-			input_err(true, &info->client->dev, "%s: failed. ret: %d\n", __func__, ret);
-	}
+	if (info->use_sponge)
+		fts_write_to_sponge(info, FTS_CMD_SPONGE_OFFSET_MODE,
+				&info->lowpower_flag, sizeof(info->lowpower_flag));
 
 out:
 	input_err(true, &info->client->dev, "%s: use %s\n",
@@ -803,9 +800,9 @@ void fts_command(struct fts_ts_info *info, u8 cmd, bool checkEcho)
 	fts_interrupt_set(info, INT_ENABLE);
 }
 
-int fts_set_scanmode(struct fts_ts_info *info)
+int fts_set_scanmode(struct fts_ts_info *info, u8 scan_mode)
 {
-	u8 regAdd[3] = { 0xA0, 0x00, info->scan_mode };
+	u8 regAdd[3] = { 0xA0, 0x00, scan_mode };
 	int rc;
 
 	fts_interrupt_set(info, INT_DISABLE);
@@ -819,6 +816,7 @@ int fts_set_scanmode(struct fts_ts_info *info)
 	}
 
 	fts_interrupt_set(info, INT_ENABLE);
+	input_info(true, &info->client->dev, "%s: 0x%02X\n", __func__, scan_mode);
 
 	return 0;
 }
@@ -841,13 +839,12 @@ int fts_set_opmode(struct fts_ts_info *info, u8 mode)
 		return -1;
 	}
 
-	if (info->lowpower_flag & FTS_MODE_AOD) {
+	if (info->lowpower_flag & FTS_MODE_DOUBLETAP_WAKEUP) {
 		regAdd[0] = FTS_CMD_WRITE_WAKEUP_GESTURE;
 		regAdd[1] = 0x02;
 		ret = fts_write_reg(info, &regAdd[0], 2);
 		if (ret <= 0)
 			input_err(true, &info->client->dev, "%s: Failed to send command: %d", __func__, data[0]);
-		
 	}
 
 	fts_interrupt_set(info, INT_ENABLE);
@@ -916,7 +913,7 @@ static void fts_set_cover_type(struct fts_ts_info *info, bool enable)
 	else
 		info->scan_mode = info->scan_mode | FTS_SCAN_MODE_FORCE_TOUCH_SCAN;
 
-	fts_set_scanmode(info);
+	fts_set_scanmode(info, info->scan_mode);
 #endif
 }
 
@@ -979,14 +976,14 @@ void fts_interrupt_set(struct fts_ts_info *info, int enable)
 			//loop N times according on the pending number of disable_irq to truly re-enable the int
 			enable_irq(info->irq);
 			disable_irq_count--;
-			input_info(true, &info->client->dev, "%s: Enable\n", __func__);
+			input_dbg(false, &info->client->dev, "%s: Enable\n", __func__);
 		}
 		disable_irq_count = 0;
 	} else {
 		if (disable_irq_count == 0) {
 			disable_irq(info->irq);
 			disable_irq_count++;
-			input_info(true, &info->client->dev, "%s: Disable\n", __func__);
+			input_dbg(false, &info->client->dev, "%s: Disable\n", __func__);
 		}
 	}
 	mutex_unlock(&info->irq_mutex);
@@ -1061,13 +1058,18 @@ static int fts_wait_for_ready(struct fts_ts_info *info)
 
 		if (data[0] == FTS_EVENT_ERROR_REPORT) {
 			// check if config / cx / panel configuration area is corrupted
-			if (((data[1] >= 0x20) && (data[1] <= 0x23)) || ((data[1] >= 0xA0) && (data[1] <= 0xA8))) {
+			if (((data[1] >= 0x20) && (data[1] <= 0x21)) || ((data[1] >= 0xA0) && (data[1] <= 0xA8))) {
 				rc = -FTS_ERROR_EVENT_ID;
 				info->checksum_result = 1;
 				input_err(true, &info->client->dev, "%s: flash corruption:%02X,%02X,%02X\n",
 						__func__, data[0], data[1]);
 				break;
 			}
+
+			input_err(true, &info->client->dev,
+					"%s: Err detected %02X, %02X, %02X, %02X, %02X, %02X, %02X, %02X\n",
+					__func__, data[0], data[1], data[2], data[3],
+					data[4], data[5], data[6], data[7]);
 
 			if (err_cnt++ > 32) {
 				rc = -FTS_ERROR_EVENT_ID;
@@ -1192,6 +1194,154 @@ void fts_release_all_key(struct fts_ts_info *info)
  */
 #include "fts_sec.c"
 
+struct fts_ts_info *g_info;
+
+static ssize_t fts_tsp_cmoffset_read(struct file *file, char __user *buf,
+					size_t len, loff_t *offset, int position)
+{
+	struct fts_ts_info *info;
+	static ssize_t retlen = 0;
+	char *cmoffset_proc;
+	ssize_t count;
+	loff_t pos = *offset;
+
+	if (!g_info) {
+		pr_err("%s %s: dev is null\n", SECLOG, __func__);
+		return 0;
+	}
+	info = g_info;
+
+	switch (position) {
+	case OFFSET_FW_SDC:
+		cmoffset_proc = info->cmoffset_sdc_proc;
+		break;
+	case OFFSET_FW_SUB:
+		cmoffset_proc = info->cmoffset_sub_proc;
+		break;
+	case OFFSET_FW_MAIN:
+		cmoffset_proc = info->cmoffset_main_proc;
+		break;
+	default:
+		return 0;
+	}
+
+	if (!cmoffset_proc)
+		return 0;
+
+	if (pos == 0)
+		retlen = fts_get_cmoffset_dump(info, cmoffset_proc, position);
+
+	if (pos >= retlen)
+		return 0;
+
+	count = min(len, (size_t)(retlen - pos));
+
+	if (copy_to_user(buf, cmoffset_proc + pos, count))
+		return -EFAULT;
+
+	*offset += count;
+	return count;
+}
+
+static ssize_t fts_tsp_cmoffset_sdc_read(struct file *file, char __user *buf,
+					size_t len, loff_t *offset)
+{
+	pr_info("%s called offset:%d\n", __func__, (int)*offset);
+	return fts_tsp_cmoffset_read(file, buf, len, offset, OFFSET_FW_SDC);
+}
+
+static ssize_t fts_tsp_cmoffset_sub_read(struct file *file, char __user *buf,
+					size_t len, loff_t *offset)
+{
+	pr_info("%s called offset:%d\n", __func__, (int)*offset);
+	return fts_tsp_cmoffset_read(file, buf, len, offset, OFFSET_FW_SUB);
+}
+
+static ssize_t fts_tsp_cmoffset_main_read(struct file *file, char __user *buf,
+					size_t len, loff_t *offset)
+{
+	pr_info("%s called offset:%d\n", __func__, (int)*offset);
+	return fts_tsp_cmoffset_read(file, buf, len, offset, OFFSET_FW_MAIN);
+}
+
+static const struct file_operations tsp_cmoffset_sdc_file_ops = {
+	.owner = THIS_MODULE,
+	.read = fts_tsp_cmoffset_sdc_read,
+	.llseek = generic_file_llseek,
+};
+static const struct file_operations tsp_cmoffset_sub_file_ops = {
+	.owner = THIS_MODULE,
+	.read = fts_tsp_cmoffset_sub_read,
+	.llseek = generic_file_llseek,
+};
+static const struct file_operations tsp_cmoffset_main_file_ops = {
+	.owner = THIS_MODULE,
+	.read = fts_tsp_cmoffset_main_read,
+	.llseek = generic_file_llseek,
+};
+
+static void fts_init_proc(struct fts_ts_info *info)
+{
+	struct proc_dir_entry *entry_sdc, *entry_sub, *entry_main;
+
+	info->proc_size = (info->SenseChannelLength * 4 + 1) * info->ForceChannelLength + 1;
+
+	info->cmoffset_sdc_proc = kzalloc(info->proc_size, GFP_KERNEL);
+	if (!info->cmoffset_sdc_proc) {
+		input_err(true, &info->client->dev, "%s: failed to alloc cmoffset_sdc_proc\n", __func__);
+		return;
+	}
+
+	info->cmoffset_sub_proc = kzalloc(info->proc_size, GFP_KERNEL);
+	if (!info->cmoffset_sub_proc) {
+		input_err(true, &info->client->dev, "%s: failed to alloc cmoffset_sub_proc\n", __func__);
+		goto err_alloc_sub;
+	}
+
+	info->cmoffset_main_proc = kzalloc(info->proc_size, GFP_KERNEL);
+	if (!info->cmoffset_main_proc) {
+		input_err(true, &info->client->dev, "%s: failed to alloc cmoffset_main_proc\n", __func__);
+		goto err_alloc_main;
+	}
+
+	entry_sdc = proc_create("tsp_cmoffset_sdc", S_IFREG | S_IRUGO, NULL, &tsp_cmoffset_sdc_file_ops);
+	if (!entry_sdc) {
+		input_err(true, &info->client->dev, "%s: failed to create /proc/tsp_cmoffset_sdc\n", __func__);
+		goto err;
+	}
+	proc_set_size(entry_sdc, info->proc_size);
+
+	entry_sub = proc_create("tsp_cmoffset_sub", S_IFREG | S_IRUGO, NULL, &tsp_cmoffset_sub_file_ops);
+	if (!entry_sub) {
+		input_err(true, &info->client->dev, "%s: failed to create /proc/tsp_cmoffset_sub\n", __func__);
+		goto err;
+	}
+	proc_set_size(entry_sub, info->proc_size);
+
+	entry_main = proc_create("tsp_cmoffset_main", S_IFREG | S_IRUGO, NULL, &tsp_cmoffset_main_file_ops);
+	if (!entry_main) {
+		input_err(true, &info->client->dev, "%s: failed to create /proc/tsp_cmoffset_main\n", __func__);
+		goto err;
+	}
+	proc_set_size(entry_main, info->proc_size);
+
+	g_info = info;
+	input_info(true, &info->client->dev, "%s: done\n", __func__);
+	return;
+err:
+	kfree(info->cmoffset_main_proc);
+err_alloc_main:
+	kfree(info->cmoffset_sub_proc);
+err_alloc_sub:
+	kfree(info->cmoffset_sdc_proc);
+
+	info->cmoffset_sdc_proc = NULL;
+	info->cmoffset_sub_proc = NULL;
+	info->cmoffset_main_proc = NULL;
+
+	input_err(true, &info->client->dev, "%s: failed\n", __func__);
+}
+
 static int fts_init(struct fts_ts_info *info)
 {
 	u8 retry = 3;
@@ -1221,11 +1371,9 @@ static int fts_init(struct fts_ts_info *info)
 		if (rc < 0) {
 			fts_reset(info, 20);
 
-			if (rc == -FTS_ERROR_EVENT_ID) {
-				info->fw_version_of_ic = 0;
-				info->config_version_of_ic = 0;
-				info->fw_main_version_of_ic = 0;
-			}
+			info->fw_version_of_ic = 0;
+			info->config_version_of_ic = 0;
+			info->fw_main_version_of_ic = 0;
 		} else {
 			fts_get_version_info(info);
 			break;
@@ -1264,13 +1412,32 @@ static int fts_init(struct fts_ts_info *info)
 	}
 
 	info->pFrame = kzalloc(info->SenseChannelLength * info->ForceChannelLength * 2 + 1, GFP_KERNEL);
-	if (info->pFrame == NULL)
+	if (!info->pFrame)
 		return 1;
 
-	info->cx_data = kzalloc(info->SenseChannelLength * info->ForceChannelLength + 1, GFP_KERNEL);
+	info->miscal_ref_raw = kzalloc(info->SenseChannelLength * info->ForceChannelLength * 2 + 1, GFP_KERNEL);
+	if (!info->miscal_ref_raw) {
+		kfree(info->pFrame);
+		return 1;
+	}
 
-#if defined(FTS_SUPPORT_STRINGLIB) && defined(CONFIG_SEC_FACTORY)
-	fts_disable_string(info);
+	info->cx_data = kzalloc(info->SenseChannelLength * info->ForceChannelLength + 1, GFP_KERNEL);
+	if (!info->cx_data) {
+		kfree(info->miscal_ref_raw);
+		kfree(info->pFrame);
+		return 1;
+	}
+
+	info->ito_result = kzalloc(FTS_ITO_RESULT_PRINT_SIZE, GFP_KERNEL);
+	if (!info->ito_result) {
+		kfree(info->cx_data);
+		kfree(info->miscal_ref_raw);
+		kfree(info->pFrame);
+		return 1;
+	}
+
+#if defined(FTS_SUPPORT_SPONGELIB) && defined(CONFIG_SEC_FACTORY)
+	fts_disable_sponge(info);
 #endif
 #endif
 
@@ -1291,10 +1458,9 @@ static int fts_init(struct fts_ts_info *info)
 	else
 		info->lowpower_flag = 0x00;
 
-	info->external_factory = false;
-
-	info->scan_mode = FTS_SCAN_MODE_DEFAULT;
-
+#ifdef TCLM_CONCEPT
+	info->tdata->external_factory = false;
+#endif
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	info->tsp_keystatus = 0x00;
 #endif
@@ -1321,7 +1487,7 @@ static int fts_init(struct fts_ts_info *info)
 		info->scan_mode |= FTS_SCAN_MODE_KEY_SCAN;
 #endif
 
-	fts_set_scanmode(info);
+	fts_set_scanmode(info, info->scan_mode);
 
 	input_info(true, &info->client->dev, "%s: resolution:(IC)x:%d y:%d, (DT)x:%d,y:%d\n",
 			__func__, info->ICXResolution, info->ICYResolution, info->board->max_x, info->board->max_y);
@@ -1352,8 +1518,8 @@ static u8 fts_event_handler_type_b(struct fts_ts_info *info)
 	fts_read_reg(info, &regAdd, 1, (u8 *)&data[0 * FTS_EVENT_SIZE], FTS_EVENT_SIZE);
 	left_event_count = (data[7] & 0x3F);
 
-	if (left_event_count > FTS_FIFO_MAX)
-		left_event_count = FTS_FIFO_MAX;
+	if (left_event_count >= FTS_FIFO_MAX)
+		left_event_count = FTS_FIFO_MAX - 1;
 
 	if (left_event_count > 0) {
 		regAdd = FTS_READ_ALL_EVENT;
@@ -1484,21 +1650,25 @@ static u8 fts_event_handler_type_b(struct fts_ts_info *info)
 
 #if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
 					input_info(true, &info->client->dev,
-							"%s[R] tID:%d mc:%d tc:%d lx:%d ly:%d Ver[%02X%04X|%01X] P%02XT%04X[%02X]\n",
+							"%s[R] tID:%d mc:%d tc:%d lx:%d ly:%d Ver[%02X%04X|%01X] C%02XT%04X.%4s%s\n",
 							info->dex_name,
 							TouchID, info->finger[TouchID].mcount, info->touch_count,
 							info->finger[TouchID].x, info->finger[TouchID].y,
 							info->panel_revision, info->fw_main_version_of_ic,
-							info->flip_enable, info->cal_count, info->tune_fix_ver,
-							info->test_result.data[0]);
+							info->flip_enable,
+							info->tdata->nvdata.cal_count, info->tdata->nvdata.tune_fix_ver,
+							info->tdata->tclm_string[info->tdata->nvdata.cal_position].f_name,
+							(info->tdata->tclm_level == TCLM_LEVEL_LOCKDOWN) ? ".L" : " ");
 #else
 					input_info(true, &info->client->dev,
-							"%s[R] tID:%d mc:%d tc:%d Ver[%02X%04X|%01X] P%02XT%04X[%02X] F%02X%02X\n",
+							"%s[R] tID:%d mc:%d tc:%d Ver[%02X%04X|%01X] C%02XT%04X.%4s%s F%02X%02X\n",
 							info->dex_name,
 							TouchID, info->finger[TouchID].mcount, info->touch_count,
 							info->panel_revision, info->fw_main_version_of_ic,
-							info->flip_enable, info->cal_count, info->tune_fix_ver,
-							info->test_result.data[0],
+							info->flip_enable,
+							info->tdata->nvdata.cal_count, info->tdata->nvdata.tune_fix_ver,
+							info->tdata->tclm_string[info->tdata->nvdata.cal_position].f_name,
+							(info->tdata->tclm_level == TCLM_LEVEL_LOCKDOWN) ? ".L" : " ",
 							info->pressure_cal_base, info->pressure_cal_delta);
 #endif
 
@@ -1627,15 +1797,30 @@ static u8 fts_event_handler_type_b(struct fts_ts_info *info)
 			break;
 		case FTS_GESTURE_EVENT:
 			p_gesture_status = (struct fts_gesture_status *)event_buff;
-			input_info(true, &info->client->dev, "%s: gesture %X, %X, %X, %X, %X, %X, %X\n",
-					__func__, p_gesture_status->eid, p_gesture_status->stype, p_gesture_status->gesture_id,
-					p_gesture_status->gesture_data_1, p_gesture_status->gesture_data_2,
-					p_gesture_status->gesture_data_3, p_gesture_status->gesture_data_4);
-			if ((info->lowpower_flag & FTS_MODE_AOD) && p_gesture_status->gesture_id == 0x01) {
-				input_info(true, &info->client->dev, "%s: AOT\n", __func__);
-				input_report_key(info->input_dev, KEY_HOMEPAGE, 1);
-				input_sync(info->input_dev);
-				input_report_key(info->input_dev, KEY_HOMEPAGE, 0);
+			input_info(true, &info->client->dev, "%s: [GESTURE] type:%X sf:%X id:%X | %X, %X, %X, %X\n",
+				__func__, p_gesture_status->stype, p_gesture_status->sf, p_gesture_status->gesture_id,
+				p_gesture_status->gesture_data_1, p_gesture_status->gesture_data_2,
+				p_gesture_status->gesture_data_3, p_gesture_status->gesture_data_4);
+
+#ifdef FTS_SUPPORT_SPONGELIB
+			if (p_gesture_status->sf == FTS_GESTURE_SAMSUNG_FEATURE) {
+				if ((info->lowpower_flag & FTS_MODE_DOUBLETAP_WAKEUP) &&
+						p_gesture_status->stype == FTS_SPONGE_EVENT_DOUBLETAP) {
+					input_report_key(info->input_dev, KEY_HOMEPAGE, 1);
+					input_sync(info->input_dev);
+					input_report_key(info->input_dev, KEY_HOMEPAGE, 0);
+					input_info(true, &info->client->dev, "%s: Dobule Tap Wake up\n", __func__);
+					break;
+				}
+			} else
+#endif
+			{
+				if ((info->lowpower_flag & FTS_MODE_DOUBLETAP_WAKEUP) && p_gesture_status->gesture_id == 0x01) {
+					input_info(true, &info->client->dev, "%s: AOT\n", __func__);
+					input_report_key(info->input_dev, KEY_HOMEPAGE, 1);
+					input_sync(info->input_dev);
+					input_report_key(info->input_dev, KEY_HOMEPAGE, 0);
+				}
 			}
 			break;
 		case FTS_VENDOR_EVENT: // just print message for debugging
@@ -1791,7 +1976,6 @@ int fts_irq_enable(struct fts_ts_info *info,
 	return retval;
 }
 
-#ifdef CONFIG_OF
 #ifdef FTS_SUPPORT_TA_MODE
 struct fts_callbacks *fts_charger_callbacks;
 void tsp_charger_infom(bool en)
@@ -2034,6 +2218,8 @@ static int fts_parse_dt(struct i2c_client *client)
 	if (of_property_read_u32(np, "stm,use_pressure", &pdata->use_pressure) < 0)
 		pdata->use_pressure = 0;
 
+	pdata->support_aot = of_property_read_bool(np, "stm,support_aot");
+
 	pdata->support_hover = false;
 	pdata->support_glove = false;
 #ifdef CONFIG_SEC_FACTORY
@@ -2042,6 +2228,9 @@ static int fts_parse_dt(struct i2c_client *client)
 #ifdef FTS_SUPPORT_TA_MODE
 	pdata->register_cb = fts_tsp_register_callback;
 #endif
+
+	if (of_property_read_u32(np, "stm,factory_item_version", &pdata->item_version) < 0)
+		pdata->item_version = 0;
 
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (of_property_read_u32(np, "stm,num_touchkey", &pdata->num_touchkey))
@@ -2060,23 +2249,14 @@ static int fts_parse_dt(struct i2c_client *client)
 	if (of_property_read_u32(np, "stm,device_num", &pdata->device_num))
 		input_err(true, dev, "%s: Failed to get device_num property\n", __func__);
 
-#ifdef PAT_CONTROL
-	if (of_property_read_u32(np, "stm,pat_function", &pdata->pat_function) < 0) {
-		pdata->pat_function = PAT_CONTROL_NONE;
-		input_err(true, dev, "%s: Failed to get pat_function property\n", __func__);
-	}
-
-	if (of_property_read_u32(np, "stm,afe_base", &pdata->afe_base) < 0) {
-		pdata->afe_base = 0;
-		input_err(true, dev, "%s: Failed to get afe_base property\n", __func__);
-	}
-#endif
+	pdata->chip_on_board = of_property_read_bool(np, "stm,chip_on_board");
 
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 	lcdtype = get_lcd_attached("GET");
 	if (lcdtype == 0xFFFFFF) {
 		input_err(true, &client->dev, "%s: lcd is not attached\n", __func__);
-		return -ENODEV;
+		if (!pdata->chip_on_board)
+			return -ENODEV;
 	}
 #endif
 
@@ -2084,12 +2264,14 @@ static int fts_parse_dt(struct i2c_client *client)
 	connected = get_lcd_info("connected");
 	if (connected < 0) {
 		input_err(true, dev, "%s: Failed to get lcd info\n", __func__);
-		return -EINVAL;
+		if (!pdata->chip_on_board)
+			return -EINVAL;
 	}
 
 	if (!connected) {
 		input_err(true, &client->dev, "%s: lcd is disconnected\n", __func__);
-		return -ENODEV;
+		if (!pdata->chip_on_board)
+			return -ENODEV;
 	}
 
 	input_info(true, &client->dev, "%s: lcd is connected\n", __func__);
@@ -2097,7 +2279,8 @@ static int fts_parse_dt(struct i2c_client *client)
 	lcdtype = get_lcd_info("id");
 	if (lcdtype < 0) {
 		input_err(true, dev, "%s: Failed to get lcd info\n", __func__);
-		return -EINVAL;
+		if (!pdata->chip_on_board)
+			return -EINVAL;
 	}
 #endif
 	input_info(true, &client->dev, "%s: lcdtype 0x%08X\n", __func__, lcdtype);
@@ -2105,12 +2288,33 @@ static int fts_parse_dt(struct i2c_client *client)
 	pdata->panel_revision = ((lcdtype >> 8) & 0xFF) >> 4;
 
 	input_err(true, dev,
-			"%s: irq :%d, irq_type: 0x%04x, max[x,y]: [%d,%d], project/model_name: %s/%s, pat_function(%d), panel_revision: %d, gesture: %d, device_num: %d, dex: %d\n",
+			"%s: irq :%d, irq_type: 0x%04x, max[x,y]: [%d,%d], project/model_name: %s/%s, "
+			"panel_revision: %d, gesture: %d, device_num: %d, dex: %d, aot: %d%s\n",
 			__func__, pdata->irq_gpio, pdata->irq_type, pdata->max_x, pdata->max_y,
-			pdata->project_name, pdata->model_name, pdata->pat_function, pdata->panel_revision,
-			pdata->support_sidegesture, pdata->device_num, pdata->support_dex);
+			pdata->project_name, pdata->model_name, pdata->panel_revision,
+			pdata->support_sidegesture, pdata->device_num, pdata->support_dex, pdata->support_aot,
+			pdata->chip_on_board ? ", COB type" : "");
 
 	return retval;
+}
+
+#ifdef TCLM_CONCEPT
+static void sec_tclm_parse_dt(struct i2c_client *client, struct sec_tclm_data *tdata)
+{
+	struct device *dev = &client->dev;
+	struct device_node *np = dev->of_node;
+
+	if (of_property_read_u32(np, "stm,tclm_level", &tdata->tclm_level) < 0) {
+		tdata->tclm_level = 0;
+		input_err(true, dev, "%s: Failed to get tclm_level property\n", __func__);
+	}
+
+	if (of_property_read_u32(np, "stm,afe_base", &tdata->afe_base) < 0) {
+		tdata->afe_base = 0;
+		input_err(true, dev, "%s: Failed to get afe_base property\n", __func__);
+	}
+
+	input_err(true, &client->dev, "%s: tclm_level %d, sec_afe_base %d\n", __func__, tdata->tclm_level, tdata->afe_base);
 }
 #endif
 
@@ -2119,6 +2323,7 @@ static int fts_setup_drv_data(struct i2c_client *client)
 	int retval = 0;
 	struct fts_i2c_platform_data *pdata;
 	struct fts_ts_info *info;
+	struct sec_tclm_data *tdata = NULL;
 
 	/* parse dt */
 	if (client->dev.of_node) {
@@ -2136,6 +2341,15 @@ static int fts_setup_drv_data(struct i2c_client *client)
 			input_err(true, &client->dev, "%s: Failed to parse dt\n", __func__);
 			return retval;
 		}
+
+		tdata = devm_kzalloc(&client->dev,
+				sizeof(struct sec_tclm_data), GFP_KERNEL);
+		if (!tdata)
+			return -ENOMEM;
+
+#ifdef TCLM_CONCEPT
+		sec_tclm_parse_dt(client, tdata);
+#endif
 	} else {
 		pdata = client->dev.platform_data;
 	}
@@ -2172,7 +2386,6 @@ static int fts_setup_drv_data(struct i2c_client *client)
 	info->irq = client->irq;
 	info->irq_type = info->board->irq_type;
 	info->irq_enabled = false;
-	info->touch_stopped = false;
 	info->panel_revision = info->board->panel_revision;
 	info->stop_device = fts_stop_device;
 	info->start_device = fts_start_device;
@@ -2183,9 +2396,23 @@ static int fts_setup_drv_data(struct i2c_client *client)
 	info->fts_get_version_info = fts_get_version_info;
 	info->fts_get_sysinfo_data = fts_get_sysinfo_data;
 	info->fts_wait_for_ready = fts_wait_for_ready;
-#ifdef FTS_SUPPORT_STRINGLIB
-	info->fts_read_from_string = fts_read_from_string;
-	info->fts_write_to_string = fts_write_to_string;
+#ifdef FTS_SUPPORT_SPONGELIB
+	info->fts_read_from_sponge = fts_read_from_sponge;
+	info->fts_write_to_sponge = fts_write_to_sponge;
+#endif
+	info->tdata = tdata;
+	if (!info->tdata) {
+		input_err(true, &client->dev, "%s: No tclm data found\n", __func__);
+		kfree(info);
+		return -EINVAL;
+	}
+
+#ifdef TCLM_CONCEPT
+	sec_tclm_initialize(info->tdata);
+	info->tdata->client = info->client;
+	info->tdata->tclm_read = sec_tclm_data_read;
+	info->tdata->tclm_write = sec_tclm_data_write;
+	info->tdata->tclm_execute_force_calibration = sec_tclm_execute_force_calibration;
 #endif
 
 #ifdef USE_OPEN_DWORK
@@ -2318,8 +2545,6 @@ static int fts_probe(struct i2c_client *client, const struct i2c_device_id *idp)
 		info->board->power(info, true);
 	info->fts_power_state = FTS_POWER_STATE_ACTIVE;
 
-	info->dev = &info->client->dev;
-
 	info->input_dev = input_allocate_device();
 	if (!info->input_dev) {
 		input_err(true, &info->client->dev, "%s: Failed to alloc input_dev\n", __func__);
@@ -2346,6 +2571,9 @@ static int fts_probe(struct i2c_client *client, const struct i2c_device_id *idp)
 		input_err(true, &info->client->dev, "%s: fts_init fail!\n", __func__);
 		goto err_fts_init;
 	}
+
+	fts_init_proc(info);
+
 	mutex_lock(&info->device_mutex);
 	info->reinit_done = true;
 	mutex_unlock(&info->device_mutex);
@@ -2489,7 +2717,7 @@ static int fts_probe(struct i2c_client *client, const struct i2c_device_id *idp)
 	info->probe_done = true;
 
 
-#ifdef FTS_SUPPORT_STRINGLIB
+#ifdef FTS_SUPPORT_SPONGELIB
 	fts_check_custom_library(info);
 #endif
 
@@ -2526,7 +2754,9 @@ err_register_input:
 	wake_lock_destroy(&info->wakelock);
 
 #ifdef SEC_TSP_FACTORY_TEST
+	kfree(info->ito_result);
 	kfree(info->cx_data);
+	kfree(info->miscal_ref_raw);
 	kfree(info->pFrame);
 #endif
 err_fts_init:
@@ -2544,6 +2774,8 @@ err_input_allocate_device:
 		info->board->power(info, false);
 	if (gpio_is_valid(info->board->irq_gpio))
 		gpio_free(info->board->irq_gpio);
+
+	g_info = NULL;
 	kfree(info);
 err_get_drv_data:
 err_setup_drv_data:
@@ -2600,7 +2832,9 @@ static int fts_remove(struct i2c_client *client)
 			&sec_touch_factory_attr_group);
 	sec_cmd_exit(&info->sec, SEC_CLASS_DEVT_TSP);
 
+	kfree(info->ito_result);
 	kfree(info->cx_data);
+	kfree(info->miscal_ref_raw);
 	kfree(info->pFrame);
 #endif
 
@@ -2623,6 +2857,8 @@ static int fts_remove(struct i2c_client *client)
 		info->board->led_power(info, false);
 #endif
 	info->shutdown_is_on_going = false;
+
+	g_info = NULL;
 	kfree(info);
 
 	return 0;
@@ -2692,7 +2928,11 @@ static void fts_input_close(struct input_dev *dev)
 	if (info->board->use_pressure)
 		info->lowpower_flag |= FTS_MODE_PRESSURE;
 #endif
-	fts_stop_device(info, info->lowpower_flag);
+	if (info->prox_power_off)
+		fts_stop_device(info, 0);
+	else
+		fts_stop_device(info, info->lowpower_flag);
+	info->prox_power_off = 0;
 
 }
 #endif
@@ -2717,7 +2957,7 @@ static void fts_reinit_fac(struct fts_ts_info *info)
 		info->scan_mode |= FTS_SCAN_MODE_KEY_SCAN;
 #endif
 
-	fts_set_scanmode(info);
+	fts_set_scanmode(info, info->scan_mode);
 
 	if (info->flip_enable)
 		fts_set_cover_type(info, true);
@@ -2748,7 +2988,7 @@ static void fts_reinit(struct fts_ts_info *info)
 	u8 retry = 3;
 	int rc = 0;
 
-	if (info->fts_power_state == FTS_POWER_STATE_POWERDOWN) {
+	if (info->fts_power_state == FTS_POWER_STATE_ACTIVE) {
 		rc = fts_wait_for_ready(info);
 		if (rc < 0) {
 			input_err(true, &info->client->dev, "%s: Failed to wait for ready\n", __func__);
@@ -2776,8 +3016,8 @@ static void fts_reinit(struct fts_ts_info *info)
 		return;
 	}
 
-#if defined(FTS_SUPPORT_STRINGLIB) && defined(CONFIG_SEC_FACTORY)
-	fts_disable_string(info);
+#if defined(FTS_SUPPORT_SPONGELIB) && defined(CONFIG_SEC_FACTORY)
+	fts_disable_sponge(info);
 #endif
 
 	fts_command(info, FTS_CMD_CLEAR_ALL_EVENT, true);
@@ -2838,20 +3078,8 @@ static void fts_reinit(struct fts_ts_info *info)
 
 	info->touch_count = 0;
 
-	info->scan_mode = FTS_SCAN_MODE_DEFAULT;
-
-#ifdef FTS_SUPPORT_PRESSURE_SENSOR
-	info->scan_mode |= FTS_SCAN_MODE_FORCE_TOUCH_SCAN;
-#endif
 	fts_delay(50);
-
-#ifdef FTS_SUPPORT_TOUCH_KEY
-	if (info->board->support_mskey)
-		info->scan_mode |= FTS_SCAN_MODE_KEY_SCAN;
-#endif
-
-	fts_set_scanmode(info);
-
+	fts_set_scanmode(info, info->scan_mode);
 }
 
 void fts_release_all_finger(struct fts_ts_info *info)
@@ -2994,27 +3222,23 @@ static void fts_reset_work(struct work_struct *work)
 		input_err(true, &info->client->dev, "%s: Failed to start device\n", __func__);
 
 	if (info->input_dev_touch->disabled) {
+		u8 data[8] = { 0 };
 		input_err(true, &info->client->dev, "%s: call input_close\n", __func__);
 
 		fts_stop_device(info, info->lowpower_flag);
 
-		if ((info->lowpower_flag & FTS_MODE_AOD) && info->use_sponge) {
-			int i, ret = -1;
-			u8 data[8] = {0, };
-#ifdef FTS_SUPPORT_STRINGLIB
-			u16 addr = FTS_CMD_STRING_ACCESS + 2;
-#endif
+		if ((info->lowpower_flag & FTS_MODE_DOUBLETAP_WAKEUP) && info->use_sponge &&
+				memcmp(data, info->rect_data, sizeof(info->rect_data)) != 0) {
+			int i;
+
 			for (i = 0; i < 4; i++) {
 				data[i * 2] = info->rect_data[i] & 0xFF;
 				data[i * 2 + 1] = (info->rect_data[i] >> 8) & 0xFF;
 			}
-
-#ifdef FTS_SUPPORT_STRINGLIB
-			ret = info->fts_write_to_string(info, &addr, data, sizeof(data));
+#ifdef FTS_SUPPORT_SPONGELIB
+			info->fts_write_to_sponge(info, FTS_CMD_SPONGE_OFFSET_AOD_RECT,
+					data, sizeof(data));
 #endif
-			if (ret < 0)
-				input_err(true, &info->client->dev, "%s: failed. ret: %d\n", __func__, ret);
-
 		}
 	}
 	info->reset_is_on_going = false;
@@ -3032,10 +3256,9 @@ static void fts_read_info_work(struct work_struct *work)
 	short maxval = 0x8000;
 	int ret;
 
-	fts_get_calibration_information(info);
-
-#ifdef FTS_SUPPORT_PRESSURE_SENSOR
-	fts_get_pressure_calibration_information(info);
+#ifdef TCLM_CONCEPT
+	ret = sec_tclm_check_cal_case(info->tdata);
+	input_info(true, &info->client->dev, "%s: sec_tclm_check_cal_case ret: %d \n", __func__, ret);
 #endif
 
 	ret = fts_get_tsp_test_result(info);
@@ -3043,10 +3266,12 @@ static void fts_read_info_work(struct work_struct *work)
 		input_err(true, &info->client->dev, "%s: failed to get result\n",
 				__func__);
 
-	input_raw_info(true, &info->client->dev, "%s: test result:%02X, cal: %02X, fix ver:%04X\n",
-			__func__, info->test_result.data[0], info->cal_count, info->tune_fix_ver);
+	input_raw_info(true, &info->client->dev, "%s: fac test result %02X\n",
+				__func__, info->test_result.data[0]);
 
 #ifdef FTS_SUPPORT_PRESSURE_SENSOR
+	fts_get_pressure_calibration_information(info);
+
 	ret = get_nvm_data(info, GROUP_INDEX, &index);
 
 	/*
@@ -3082,10 +3307,7 @@ static void fts_read_info_work(struct work_struct *work)
 	}
 #endif
 
-	fts_panel_ito_test(info);
-
-	input_raw_info(true, &info->client->dev, "%s: [ito] %02X, %02X, %02X, %02X\n",
-			__func__, info->ito_test[0], info->ito_test[1], info->ito_test[2], info->ito_test[3]);
+	fts_panel_ito_test(info, OPEN_SHORT_CRACK_TEST);
 
 	fts_read_frame(info, TYPE_BASELINE_DATA, &minval, &maxval);
 
@@ -3094,8 +3316,6 @@ err_data:
 	kfree(data);
 err_no_mem:
 #endif
-	input_log_fix();
-
 	fts_interrupt_set(info, INT_ENABLE);
 }
 
@@ -3108,7 +3328,11 @@ static int fts_stop_device(struct fts_ts_info *info, bool lpmode)
 #endif
 	mutex_lock(&info->device_mutex);
 
-	if (info->touch_stopped) {
+#ifdef TCLM_CONCEPT
+	sec_tclm_debug_info(info->tdata);
+#endif
+
+	if (info->fts_power_state == FTS_POWER_STATE_POWERDOWN) {
 		input_err(true, &info->client->dev, "%s: already power off\n", __func__);
 		goto out;
 	}
@@ -3127,6 +3351,11 @@ static int fts_stop_device(struct fts_ts_info *info, bool lpmode)
 		fts_set_opmode(info, FTS_OPMODE_LOWPOWER);
 
 		info->fts_power_state = FTS_POWER_STATE_LOWPOWER;
+
+#ifdef FTS_SUPPORT_SPONGELIB
+		info->fts_write_to_sponge(info, FTS_CMD_SPONGE_OFFSET_MODE,
+				&info->lowpower_flag, sizeof(info->lowpower_flag));
+#endif
 	} else {
 		fts_ic_interrupt_set(info, INT_DISABLE);
 		fts_command(info, FTS_CMD_CLEAR_ALL_EVENT, true);
@@ -3137,7 +3366,6 @@ static int fts_stop_device(struct fts_ts_info *info, bool lpmode)
 		fts_release_all_key(info);
 #endif
 
-		info->touch_stopped = true;
 		info->hover_enabled = false;
 		info->hover_ready = false;
 		info->fts_power_state = FTS_POWER_STATE_POWERDOWN;
@@ -3154,7 +3382,7 @@ out:
 static int fts_start_device(struct fts_ts_info *info)
 {
 	input_info(true, &info->client->dev, "%s%s\n",
-			__func__, info->fts_power_state ? ": exit low power mode TP" : "");
+			__func__, info->fts_power_state ? ": exit low power mode" : "");
 
 #if defined(CONFIG_SECURE_TOUCH)
 	fts_secure_touch_stop(info, 1);
@@ -3174,33 +3402,32 @@ static int fts_start_device(struct fts_ts_info *info)
 	if (info->fts_power_state == FTS_POWER_STATE_POWERDOWN) {
 		if (info->board->power)
 			info->board->power(info, true);
-		info->touch_stopped = false;
 
 		info->reinit_done = false;
+		info->fts_power_state = FTS_POWER_STATE_ACTIVE;
 		fts_reinit(info);
 		info->reinit_done = true;
 	} else {	/* FTS_POWER_STATE_LOWPOWER */
-		info->reinit_done = false;
-		fts_reinit(info);
-		info->reinit_done = true;
+		int ret;
+
+		ret = fts_set_opmode(info, FTS_OPMODE_NORMAL);
+		if (ret < 0) {
+			info->reinit_done = false;
+			fts_reinit(info);
+			info->reinit_done = true;
+		}
 
 		if (device_may_wakeup(&info->client->dev))
 			disable_irq_wake(info->irq);
 	}
 	info->fts_power_state = FTS_POWER_STATE_ACTIVE;
 
-#ifdef FTS_SUPPORT_STRINGLIB
+#ifdef FTS_SUPPORT_SPONGELIB
 #ifndef CONFIG_SEC_FACTORY
 	if (info->lowpower_flag)
 #endif
-	{
-		u16 addr = FTS_CMD_STRING_ACCESS;
-		int ret;
-
-		ret = info->fts_write_to_string(info, &addr, &info->lowpower_flag, sizeof(info->lowpower_flag));
-		if (ret < 0)
-			input_err(true, &info->client->dev, "%s: failed. ret: %d\n", __func__, ret);
-	}
+		info->fts_write_to_sponge(info, FTS_CMD_SPONGE_OFFSET_MODE,
+				&info->lowpower_flag, sizeof(info->lowpower_flag));
 #endif
 
 out:

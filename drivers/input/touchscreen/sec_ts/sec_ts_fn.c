@@ -88,13 +88,13 @@ static void spay_enable(void *device_data);
 static void set_aod_rect(void *device_data);
 static void get_aod_rect(void *device_data);
 static void aod_enable(void *device_data);
+static void singletap_enable(void *device_data);
 static void set_grip_data(void *device_data);
 static void dex_enable(void *device_data);
 static void brush_enable(void *device_data);
 static void set_touchable_area(void *device_data);
 static void set_log_level(void *device_data);
 static void debug(void *device_data);
-static void fix_active_mode(void *device_data);
 static void not_support_cmd(void *device_data);
 
 static int execute_selftest(struct sec_ts_data *ts, bool save_result);
@@ -181,13 +181,13 @@ static struct sec_cmd sec_cmds[] = {
 	{SEC_CMD("set_aod_rect", set_aod_rect),},
 	{SEC_CMD("get_aod_rect", get_aod_rect),},
 	{SEC_CMD("aod_enable", aod_enable),},
+	{SEC_CMD("singletap_enable", singletap_enable),},
 	{SEC_CMD("set_grip_data", set_grip_data),},
 	{SEC_CMD("dex_enable", dex_enable),},
 	{SEC_CMD("brush_enable", brush_enable),},
 	{SEC_CMD("set_touchable_area", set_touchable_area),},
 	{SEC_CMD("set_log_level", set_log_level),},
 	{SEC_CMD("debug", debug),},
-	{SEC_CMD("fix_active_mode", fix_active_mode),},
 	{SEC_CMD("not_support_cmd", not_support_cmd),},
 };
 
@@ -906,6 +906,9 @@ static ssize_t ic_status_show(struct device *dev,
 	snprintf(temp, sizeof(temp), "spay,%d,", data[0] & 0x02 ? 1 : 0);
 	strncat(buff, temp, sizeof(temp));
 
+	snprintf(temp, sizeof(temp), "singletap,%d,", data[0] & 0x08 ? 1 : 0);
+	strncat(buff, temp, sizeof(temp));
+
 	data[0] = 0;
 
 	ret = ts->sec_ts_i2c_read(ts, SEC_TS_CMD_SET_DEX_MODE, data, 1);
@@ -929,6 +932,25 @@ static ssize_t ic_status_show(struct device *dev,
 	return snprintf(buf, SEC_CMD_BUF_SIZE, "%s\n", buff);
 }
 
+static ssize_t read_support_feature(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct sec_cmd_data *sec = dev_get_drvdata(dev);
+	struct sec_ts_data *ts = container_of(sec, struct sec_ts_data, sec);
+	u32 feature = 0;
+
+	if (ts->plat_data->support_pressure)
+		feature |= INPUT_FEATURE_ENABLE_PRESSURE;
+
+	input_info(true, &ts->client->dev, "%s: %d%s%s%s\n",
+			__func__, feature,
+			feature & INPUT_FEATURE_ENABLE_SETTINGS_AOT ? " aot" : "",
+			feature & INPUT_FEATURE_ENABLE_PRESSURE ? " pressure" : "",
+			feature & INPUT_FEATURE_ENABLE_SYNC_RR120 ? " RR120hz" : "");
+
+	return snprintf(buf, SEC_CMD_BUF_SIZE, "%d", feature);
+}
+
 static DEVICE_ATTR(ito_check, 0444, read_ito_check_show, NULL);
 static DEVICE_ATTR(raw_check, 0444, read_raw_check_show, NULL);
 static DEVICE_ATTR(multi_count, 0664, read_multi_count_show, clear_multi_count_store);
@@ -949,6 +971,7 @@ static DEVICE_ATTR(read_ambient_channel_delta, 0444, read_ambient_channel_delta_
 static DEVICE_ATTR(get_lp_dump, 0444, get_lp_dump, NULL);
 static DEVICE_ATTR(force_recal_count, 0444, get_force_recal_count, NULL);
 static DEVICE_ATTR(status, 0444, ic_status_show, NULL);
+static DEVICE_ATTR(support_feature, 0444, read_support_feature, NULL);
 
 static struct attribute *cmd_attributes[] = {
 	&dev_attr_scrub_pos.attr,
@@ -972,6 +995,7 @@ static struct attribute *cmd_attributes[] = {
 	&dev_attr_get_lp_dump.attr,
 	&dev_attr_force_recal_count.attr,
 	&dev_attr_status.attr,
+	&dev_attr_support_feature.attr,
 	NULL,
 };
 
@@ -5415,6 +5439,40 @@ NG:
 	sec_cmd_set_cmd_exit(sec);
 }
 
+static void singletap_enable(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct sec_ts_data *ts = container_of(sec, struct sec_ts_data, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+
+	sec_cmd_set_default_result(sec);
+
+	if (!ts->use_sponge || sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1)
+		goto NG;
+
+	if (sec->cmd_param[0])
+		ts->lowpower_mode |= SEC_TS_MODE_SPONGE_SINGLE_TAP;
+	else
+		ts->lowpower_mode &= ~SEC_TS_MODE_SPONGE_SINGLE_TAP;
+
+	input_info(true, &ts->client->dev, "%s: %s, %02X\n",
+			__func__, sec->cmd_param[0] ? "on" : "off", ts->lowpower_mode);
+
+	sec_ts_set_custom_library(ts);
+
+	snprintf(buff, sizeof(buff), "%s", "OK");
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+	return;
+
+NG:
+	snprintf(buff, sizeof(buff), "%s", "NG");
+	sec->cmd_state = SEC_CMD_STATUS_FAIL;
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+}
+
 /*
  *	flag     1  :  set edge handler
  *		2  :  set (portrait, normal) edge zone data
@@ -5865,45 +5923,6 @@ static void debug(void *device_data)
 	snprintf(buff, sizeof(buff), "%s", "OK");
 	sec->cmd_state = SEC_CMD_STATUS_OK;
 	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
-}
-
-static void fix_active_mode(void *device_data)
-{
-	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
-	struct sec_ts_data *ts = container_of(sec, struct sec_ts_data, sec);
-	char buff[SEC_CMD_STR_LEN] = { 0 };
-
-	sec_cmd_set_default_result(sec);
-
-	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
-		snprintf(buff, sizeof(buff), "%s", "NG");
-		sec->cmd_state = SEC_CMD_STATUS_FAIL;
-		goto out;
-	}
-
-	ts->fix_active_mode = sec->cmd_param[0];
-
-	if (ts->power_status == SEC_TS_STATE_POWER_OFF) {
-		input_err(true, &ts->client->dev, "%s: Touch is stopped!\n", __func__);
-		snprintf(buff, sizeof(buff), "%s", "TSP turned off");
-		sec->cmd_state = SEC_CMD_STATUS_NOT_APPLICABLE;
-		goto out;
-	}
-
-	if (ts->power_status != SEC_TS_STATE_LPM) {
-		if (ts->fix_active_mode)
-			sec_ts_fix_tmode(ts, TOUCH_SYSTEM_MODE_TOUCH, TOUCH_MODE_STATE_TOUCH);
-		else
-			sec_ts_release_tmode(ts);
-	}
-
-	snprintf(buff, sizeof(buff), "%s", "OK");
-	sec->cmd_state = SEC_CMD_STATUS_OK;
-out:
-	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
-	sec_cmd_set_cmd_exit(sec);
-
-	input_info(true, &ts->client->dev, "%s: %s\n", __func__, buff);
 }
 
 static void not_support_cmd(void *device_data)

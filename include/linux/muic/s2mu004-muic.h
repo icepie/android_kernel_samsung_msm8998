@@ -42,6 +42,7 @@
 #define CTRL_SWITCH_OPEN_SHIFT	4
 #define CTRL_RAW_DATA_SHIFT		3
 #define CTRL_MANUAL_SW_SHIFT	2
+#define CTRL_MANUAL_SW_MASK		(0x1 << CTRL_MANUAL_SW_SHIFT)
 #define CTRL_WAIT_SHIFT			1
 #define CTRL_INT_MASK_SHIFT		0
 
@@ -311,6 +312,9 @@
 #define RID_CTRL_ADC_OFF_SHIFT	1
 #define RID_CTRL_ADC_OFF_MASK	(0x1 << RID_CTRL_ADC_OFF_SHIFT)
 
+#define EN_MRST_SHIFT	3
+#define EN_MRST_MASK	(0x1 << EN_MRST_SHIFT)
+
 #define WATER_DET_RETRY_CNT				10
 #define WATER_CCIC_WAIT_DURATION_MS		4000
 #define WATER_DRY_RETRY_INTERVAL_MS		30000
@@ -475,10 +479,12 @@ struct s2mu004_muic_data {
 	int temp;
 	bool jig_state;
 	struct delayed_work muic_pdic_work;
+	struct delayed_work debug_work;
 	int re_detect;
 	bool afc_check;
 	bool otg_state;
-#if defined(CONFIG_HV_MUIC_S2MU004_AFC)
+	bool keyboard_state;
+#if defined(CONFIG_MUIC_HV)
 	int irq_dnres;
 	int irq_mrxrdy;
 	int irq_mpnack;
@@ -519,6 +525,7 @@ struct s2mu004_muic_data {
 	struct delayed_work water_detect_handler;
 	struct delayed_work water_dry_handler;
 	struct delayed_work afc_mrxrdy;
+	struct delayed_work detect_dev;
 
 	struct notifier_block pdic_nb;
 
@@ -529,6 +536,7 @@ struct s2mu004_muic_data {
 	bool is_otg_vboost;
 	bool is_otg_reboost;
 	bool is_otg_test;
+	bool is_hiccup_mode;
 
 	int rev_id;
 	int afc_irq;
@@ -542,7 +550,7 @@ struct s2mu004_muic_data {
 	t_water_dry_status water_dry_status;
 #endif
 
-#if defined(CONFIG_HV_MUIC_S2MU004_AFC)
+#if defined(CONFIG_MUIC_HV)
 	muic_afc_data_t afc_data;
 
 	bool is_afc_muic_ready;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 TRUSTONIC LIMITED
+ * Copyright (c) 2013-2018 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -21,7 +21,7 @@
 #include <linux/mutex.h>
 
 #define MC_VERSION(major, minor) \
-		(((major & 0x0000ffff) << 16) | (minor & 0x0000ffff))
+		((((major) & 0x0000ffff) << 16) | ((minor) & 0x0000ffff))
 #define MC_VERSION_MAJOR(x) ((x) >> 16)
 #define MC_VERSION_MINOR(x) ((x) & 0xffff)
 
@@ -39,6 +39,8 @@
 #endif /* !DEBUG */
 
 #define TEEC_TT_LOGIN_KERNEL	0x80000000
+
+#define TEE_START_NOT_TRIGGERED 1
 
 /* MobiCore Driver Kernel Module context data. */
 struct mc_device_ctx {
@@ -81,12 +83,15 @@ extern struct mc_device_ctx g_ctx;
 
 /* Debug stuff */
 struct kasnprintf_buf {
-	struct mutex mutex; 	/* Protect buf/size/off access */
+	struct mutex mutex;	/* Protect buf/size/off access */
 	gfp_t gfp;
 	void *buf;
 	int size;
 	int off;
 };
+
+/* Wait for TEE to start and get status */
+int mc_wait_tee_start(void);
 
 extern __printf(2, 3)
 int kasnprintf(struct kasnprintf_buf *buf, const char *fmt, ...);
@@ -96,7 +101,7 @@ ssize_t debug_generic_read(struct file *file, char __user *user_buf,
 int debug_generic_open(struct inode *inode, struct file *file);
 int debug_generic_release(struct inode *inode, struct file *file);
 
-static inline int kref_read(struct kref *kref)
+static inline unsigned int kref_read(struct kref *kref)
 {
 	return atomic_read(&kref->refcount);
 }

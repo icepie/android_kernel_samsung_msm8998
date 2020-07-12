@@ -1,8 +1,5 @@
 /*
- * Copyright (c) 2011, 2014-2017 The Linux Foundation. All rights reserved.
- *
- * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
- *
+ * Copyright (c) 2011, 2014-2018 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -17,12 +14,6 @@
  * PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
  * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
- */
-
-/*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
  */
 
 #include <qdf_net_types.h>      /* QDF_NBUF_EXEMPT_NO_EXEMPTION, etc. */
@@ -199,7 +190,6 @@ struct ol_tx_desc_t *ol_tx_desc_alloc(struct ol_txrx_pdev_t *pdev,
 			if (qdf_unlikely(pool->avail_desc < pool->stop_th)
 				&& (pool->status != FLOW_POOL_ACTIVE_PAUSED)) {
 				pool->status = FLOW_POOL_ACTIVE_PAUSED;
-				qdf_spin_unlock_bh(&pool->flow_pool_lock);
 				/* pause network queues */
 				pdev->pause_cb(vdev->vdev_id,
 					       WLAN_STOP_ALL_NETIF_QUEUE,
@@ -208,13 +198,14 @@ struct ol_tx_desc_t *ol_tx_desc_alloc(struct ol_txrx_pdev_t *pdev,
 				pdev->pause_cb(vdev->vdev_id,
 					       WLAN_NETIF_PRIORITY_QUEUE_ON,
 					       WLAN_DATA_FLOW_CONTROL_PRIORITY);
+				qdf_spin_unlock_bh(&pool->flow_pool_lock);
 			} else if (qdf_unlikely(pool->avail_desc <
 						pool->stop_priority_th)) {
-				qdf_spin_unlock_bh(&pool->flow_pool_lock);
 				/* pause priority queue */
 				pdev->pause_cb(vdev->vdev_id,
 					       WLAN_NETIF_PRIORITY_QUEUE_OFF,
 					       WLAN_DATA_FLOW_CONTROL_PRIORITY);
+				qdf_spin_unlock_bh(&pool->flow_pool_lock);
 			} else {
 				qdf_spin_unlock_bh(&pool->flow_pool_lock);
 			}
@@ -424,6 +415,7 @@ static void ol_tx_desc_free_common(struct ol_txrx_pdev_t *pdev,
 	/* clear the ref cnt */
 	qdf_atomic_init(&tx_desc->ref_cnt);
 	tx_desc->vdev_id = OL_TXRX_INVALID_VDEV_ID;
+	tx_desc->notify_tx_comp = 0;
 }
 
 #ifndef QCA_LL_TX_FLOW_CONTROL_V2
@@ -740,8 +732,20 @@ void ol_tx_desc_frame_list_free(struct ol_txrx_pdev_t *pdev,
 		/* restore original hdr offset */
 		OL_TX_RESTORE_HDR(tx_desc, msdu);
 #endif
-		if (qdf_nbuf_get_users(msdu) <= 1)
-			qdf_nbuf_unmap(pdev->osdev, msdu, QDF_DMA_TO_DEVICE);
+
+		/*
+		 * In MCC IPA tx context, IPA driver provides skb with directly
+		 * DMA mapped address. In such case, there's no need for WLAN
+		 * driver to DMA unmap the skb.
+		 */
+		if (qdf_nbuf_get_users(msdu) <= 1) {
+			if (!qdf_nbuf_ipa_owned_get(msdu))
+				qdf_nbuf_unmap(pdev->osdev, msdu,
+					       QDF_DMA_TO_DEVICE);
+			else if (qdf_mem_smmu_s1_enabled(pdev->osdev))
+				qdf_nbuf_unmap(pdev->osdev, msdu,
+					       QDF_DMA_TO_DEVICE);
+		}
 
 		/* free the tx desc */
 		ol_tx_desc_free(pdev, tx_desc);
@@ -884,20 +888,22 @@ struct qdf_tso_seg_elem_t *ol_tso_alloc_segment(struct ol_txrx_pdev_t *pdev)
 		pdev->tso_seg_pool.num_free--;
 		tso_seg = pdev->tso_seg_pool.freelist;
 		if (tso_seg->on_freelist != 1) {
-			qdf_print("Do not alloc tso seg as this seg is not in freelist\n");
 			qdf_spin_unlock_bh(&pdev->tso_seg_pool.tso_mutex);
+			qdf_print("tso seg alloc failed: not in freelist");
 			QDF_BUG(0);
 			return NULL;
 		} else if (tso_seg->cookie != TSO_SEG_MAGIC_COOKIE) {
-			qdf_print("Do not alloc tso seg as cookie is not good\n");
 			qdf_spin_unlock_bh(&pdev->tso_seg_pool.tso_mutex);
+			qdf_print("tso seg alloc failed: bad cookie");
 			QDF_BUG(0);
 			return NULL;
 		}
 		/*this tso seg is not a part of freelist now.*/
 		tso_seg->on_freelist = 0;
-		qdf_tso_seg_dbg_record(tso_seg, TSOSEG_LOC_ALLOC);
+		tso_seg->sent_to_target = 0;
+		tso_seg->force_free = 0;
 		pdev->tso_seg_pool.freelist = pdev->tso_seg_pool.freelist->next;
+		qdf_tso_seg_dbg_record(tso_seg, TSOSEG_LOC_ALLOC);
 	}
 	qdf_spin_unlock_bh(&pdev->tso_seg_pool.tso_mutex);
 
@@ -921,11 +927,18 @@ void ol_tso_free_segment(struct ol_txrx_pdev_t *pdev,
 	qdf_spin_lock_bh(&pdev->tso_seg_pool.tso_mutex);
 	if (tso_seg->on_freelist != 0) {
 		qdf_spin_unlock_bh(&pdev->tso_seg_pool.tso_mutex);
-		qdf_tso_seg_dbg_bug("Do not free tso seg, already freed");
+		qdf_print("Do not free tso seg, already freed");
+		QDF_BUG(0);
 		return;
 	} else if (tso_seg->cookie != TSO_SEG_MAGIC_COOKIE) {
-		qdf_print("Do not free the tso seg as cookie is not good. Looks like memory corruption");
 		qdf_spin_unlock_bh(&pdev->tso_seg_pool.tso_mutex);
+		qdf_print("Do not free tso seg: cookie is not good.");
+		QDF_BUG(0);
+		return;
+	} else if ((tso_seg->sent_to_target != 1) &&
+		   (tso_seg->force_free != 1)) {
+		qdf_spin_unlock_bh(&pdev->tso_seg_pool.tso_mutex);
+		qdf_print("Do not free tso seg:  yet to be sent to target");
 		QDF_BUG(0);
 		return;
 	}
@@ -937,10 +950,14 @@ void ol_tso_free_segment(struct ol_txrx_pdev_t *pdev,
 	qdf_tso_seg_dbg_zero(tso_seg);
 	tso_seg->next = pdev->tso_seg_pool.freelist;
 	tso_seg->on_freelist = 1;
+	tso_seg->sent_to_target = 0;
 	tso_seg->cookie = TSO_SEG_MAGIC_COOKIE;
-	qdf_tso_seg_dbg_record(tso_seg, TSOSEG_LOC_FREE);
 	pdev->tso_seg_pool.freelist = tso_seg;
 	pdev->tso_seg_pool.num_free++;
+	qdf_tso_seg_dbg_record(tso_seg, tso_seg->force_free
+			       ? TSOSEG_LOC_FORCE_FREE
+			       : TSOSEG_LOC_FREE);
+	tso_seg->force_free = 0;
 	qdf_spin_unlock_bh(&pdev->tso_seg_pool.tso_mutex);
 }
 

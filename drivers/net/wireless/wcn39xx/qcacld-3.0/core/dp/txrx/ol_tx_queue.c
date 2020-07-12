@@ -1,8 +1,5 @@
 /*
- * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
- *
- * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
- *
+ * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -17,12 +14,6 @@
  * PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
  * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
- */
-
-/*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
  */
 
 #include <qdf_nbuf.h>           /* qdf_nbuf_t, etc. */
@@ -615,6 +606,7 @@ void ol_txrx_vdev_unpause(ol_txrx_vdev_handle vdev, uint32_t reason)
 
 	TAILQ_FOREACH(peer, &vdev->peer_list, peer_list_elem) {
 		int i;
+
 		for (i = 0; i < QDF_ARRAY_SIZE(peer->txqs); i++)
 			ol_txrx_peer_tid_unpause_base(pdev, peer, i);
 	}
@@ -856,7 +848,7 @@ ol_txrx_bad_peer_txctl_update_threshold(struct ol_txrx_pdev_t *pdev,
  * Return: None
  */
 static void
-ol_tx_pdev_peer_bal_timer(void *context)
+ol_tx_pdev_peer_bal_timer(unsigned long context)
 {
 	int i;
 	struct ol_txrx_pdev_t *pdev = (struct ol_txrx_pdev_t *)context;
@@ -1743,7 +1735,7 @@ void ol_txrx_vdev_unpause(ol_txrx_vdev_handle vdev, uint32_t reason)
 			vdev->ll_pause.is_q_paused = false;
 			vdev->ll_pause.q_unpause_cnt++;
 			qdf_spin_unlock_bh(&vdev->ll_pause.mutex);
-			ol_tx_vdev_ll_pause_queue_send(vdev);
+			ol_tx_vdev_ll_pause_queue_send((unsigned long) vdev);
 		} else {
 			qdf_spin_unlock_bh(&vdev->ll_pause.mutex);
 		}
@@ -1775,9 +1767,16 @@ void ol_txrx_vdev_flush(ol_txrx_vdev_handle vdev)
 		qdf_nbuf_t next =
 			qdf_nbuf_next(vdev->ll_pause.txq.head);
 		qdf_nbuf_set_next(vdev->ll_pause.txq.head, NULL);
-		qdf_nbuf_unmap(vdev->pdev->osdev,
-			       vdev->ll_pause.txq.head,
-			       QDF_DMA_TO_DEVICE);
+		if (QDF_NBUF_CB_PADDR(vdev->ll_pause.txq.head)) {
+			if (!qdf_nbuf_ipa_owned_get(vdev->ll_pause.txq.head))
+				qdf_nbuf_unmap(vdev->pdev->osdev,
+					       vdev->ll_pause.txq.head,
+					       QDF_DMA_TO_DEVICE);
+			else if (qdf_mem_smmu_s1_enabled(vdev->pdev->osdev))
+				qdf_nbuf_unmap(vdev->pdev->osdev,
+					       vdev->ll_pause.txq.head,
+					       QDF_DMA_TO_DEVICE);
+		}
 		qdf_nbuf_tx_free(vdev->ll_pause.txq.head,
 				 QDF_NBUF_PKT_ERROR);
 		vdev->ll_pause.txq.head = next;
@@ -1965,7 +1964,7 @@ void ol_txrx_thermal_unpause(struct ol_txrx_pdev_t *pdev)
 }
 #endif
 
-static void ol_tx_pdev_throttle_phase_timer(void *context)
+static void ol_tx_pdev_throttle_phase_timer(unsigned long context)
 {
 	struct ol_txrx_pdev_t *pdev = (struct ol_txrx_pdev_t *)context;
 	int ms;
@@ -2014,7 +2013,7 @@ static void ol_tx_pdev_throttle_phase_timer(void *context)
 }
 
 #ifdef QCA_LL_LEGACY_TX_FLOW_CONTROL
-static void ol_tx_pdev_throttle_tx_timer(void *context)
+static void ol_tx_pdev_throttle_tx_timer(unsigned long context)
 {
 	struct ol_txrx_pdev_t *pdev = (struct ol_txrx_pdev_t *)context;
 
@@ -2213,6 +2212,7 @@ u_int32_t ol_tx_txq_group_credit_limit(
 	for (i = 0; i < OL_TX_MAX_GROUPS_PER_QUEUE; i++) {
 		if (txq->group_ptrs[i]) {
 			int group_credit;
+
 			group_credit = qdf_atomic_read(
 					&txq->group_ptrs[i]->credit);
 			updated_credit = QDF_MIN(updated_credit, group_credit);

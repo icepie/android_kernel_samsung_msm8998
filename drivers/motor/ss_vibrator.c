@@ -132,6 +132,7 @@ EXPORT_SYMBOL(boost_power_on);
 
 void vibe_set_intensity(int intensity)
 {
+#if !defined(CONFIG_MOTOR_S2MU004)
 	if (0 == intensity)
 		vibe_pwm_onoff(0);
 	else {
@@ -144,6 +145,18 @@ void vibe_set_intensity(int intensity)
 		vibe_set_pwm_freq(intensity);
 		vibe_pwm_onoff(1);
 	}
+#else
+	if (0 == intensity)
+		vibe_pwm_onoff(0);
+	else {
+		if ((intensity < 0) || (intensity > MAX_INTENSITY)) {
+			intensity = MAX_INTENSITY;
+			pr_err("[VIB] used wrong intensity, force set [%d]\n", MAX_INTENSITY);
+		}
+		s2mu004_set_intensity(intensity);
+		vibe_pwm_onoff(1);
+	}
+#endif
 }
 
 void vibe_set_freq(struct ss_vib *vib, int set_freq)
@@ -342,10 +355,12 @@ static void set_vibrator(struct ss_vib *vib)
 			pr_debug("[VIB]: Target does not use pinctrl\n");
 			motor_pinctrl = NULL;
 		}
-		gpio_set_value(vib->vib_pwm_gpio, VIBRATION_OFF);
 #else
 		max778xx_haptic_en(vib, false);
 #endif
+
+		gpio_set_value(vib->vib_pwm_gpio, VIBRATION_OFF);
+
 		if (vib->flag_en_gpio)
 			gpio_set_value(vib->vib_en_gpio, VIBRATION_OFF);
 #if defined(CONFIG_BOOST_POWER_SHARE)
@@ -699,6 +714,7 @@ static ssize_t intensity_show(struct device *dev,
 
 static DEVICE_ATTR(intensity, 0660, intensity_show, intensity_store);
 
+#if !defined(CONFIG_MOTOR_S2MU004)
 static ssize_t force_touch_intensity_store(struct device *dev,
 		struct device_attribute *devattr, const char *buf, size_t count)
 {
@@ -860,6 +876,7 @@ static ssize_t haptic_engine_show(struct device *dev, struct device_attribute *a
 }                                                                             
 
 static DEVICE_ATTR(haptic_engine, 0660, haptic_engine_show, haptic_engine_store);
+#endif
 
 #if defined(CONFIG_MOTOR_DRV_MAX77854) || defined(CONFIG_MOTOR_DRV_SM5720)
 #if !defined(CONFIG_BOOST_POWER_SHARE)
@@ -1070,7 +1087,8 @@ static int ss_vibrator_probe(struct platform_device *pdev)
 	if (rc < 0) {
 		pr_err("[VIB]: Failed to register sysfs intensity: %d\n", rc);
 	}
-	
+
+#if !defined(CONFIG_MOTOR_S2MU004)
 	rc = sysfs_create_file(&vib->timed_dev.dev->kobj, &dev_attr_force_touch_intensity.attr);
 	if (rc < 0) {
 		pr_err("[VIB]: Failed to register sysfs force_touch_intensity: %d\n", rc);
@@ -1087,6 +1105,7 @@ static int ss_vibrator_probe(struct platform_device *pdev)
 			pr_err("[VIB]: Failed to register sysfs haptic_engine: %d\n", rc);
 		}
 	}
+#endif
 
 	vib_dev = device_create(sec_class, NULL, 0, NULL, "vib");
 	if (IS_ERR(vib_dev)) {

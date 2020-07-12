@@ -1820,6 +1820,8 @@ static void ncm_unbind(struct usb_configuration *c, struct usb_function *f)
 
 	DBG(c->cdev, "ncm unbind\n");
 
+	opts->bound = false;
+
 	ncm_string_defs[0].id = 0;
 	usb_free_all_descriptors(f);
 
@@ -1827,7 +1829,6 @@ static void ncm_unbind(struct usb_configuration *c, struct usb_function *f)
 	usb_ep_free_request(ncm->notify, ncm->notify_req);
 
 	gether_cleanup(netdev_priv(opts->net));
-	opts->bound = false;
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	c->cdev->is_ncm = false;
 	printk(KERN_DEBUG "usb: %s - clear is_ncm\n", __func__);

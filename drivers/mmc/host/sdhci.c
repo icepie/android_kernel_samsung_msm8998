@@ -110,6 +110,10 @@ static void sdhci_dump_state(struct sdhci_host *host)
 		mmc_hostname(mmc), mmc->parent->power.runtime_status,
 		atomic_read(&mmc->parent->power.usage_count),
 		mmc->parent->power.disable_depth);
+	pr_info("%s: send %d at %lld, isr %d at %lld, finish_tasklet at %lld.\n", mmc_hostname(mmc),
+			host->send_cmd_idx, host->send_cmd_timestamp,
+			host->irq_cmd_idx, host->irq_timestamp,
+			host->finish_tasklet_timestamp);
 }
 
 static void sdhci_dumpregs(struct sdhci_host *host)
@@ -1242,6 +1246,8 @@ void sdhci_send_command(struct sdhci_host *host, struct mmc_command *cmd)
 		host->data_start_time = ktime_get();
 	trace_mmc_cmd_rw_start(cmd->opcode, cmd->arg, cmd->flags);
 	sdhci_writew(host, SDHCI_MAKE_CMD(cmd->opcode, flags), SDHCI_COMMAND);
+	host->send_cmd_timestamp = ktime_to_us(ktime_get());
+	host->send_cmd_idx = cmd->opcode;
 	MMC_TRACE(host->mmc,
 		"%s: updated 0x8=0x%08x 0xC=0x%08x 0xE=0x%08x\n", __func__,
 		sdhci_readl(host, SDHCI_ARGUMENT),
@@ -1705,7 +1711,8 @@ static void sdhci_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	sdhci_runtime_pm_get(host);
 	if (sdhci_check_state(host)) {
 		sdhci_dump_state(host);
-		WARN(1, "sdhci in bad state");
+		pr_err("%s: sdhci in bad state\n",
+			mmc_hostname(host->mmc));
 		mrq->cmd->error = -EIO;
 		if (mrq->data)
 			mrq->data->error = -EIO;
@@ -2791,6 +2798,8 @@ static void sdhci_tasklet_finish(unsigned long param)
 
 	host = (struct sdhci_host*)param;
 
+	host->finish_tasklet_timestamp = ktime_to_us(ktime_get());
+
 	spin_lock_irqsave(&host->lock, flags);
 
         /*
@@ -2911,6 +2920,9 @@ static void sdhci_cmd_irq(struct sdhci_host *host, u32 intmask, u32 *mask)
 	trace_mmc_cmd_rw_end(host->cmd->opcode, intmask,
 				sdhci_readl(host, SDHCI_RESPONSE));
 
+	host->irq_timestamp = ktime_to_us(ktime_get());
+	host->irq_cmd_idx = host->cmd->opcode;
+
 	if (intmask & SDHCI_INT_TIMEOUT)
 		host->cmd->error = -ETIMEDOUT;
 	else if (intmask & (SDHCI_INT_CRC | SDHCI_INT_END_BIT |
@@ -3000,13 +3012,13 @@ static void sdhci_adma_show_error(struct sdhci_host *host)
 		struct sdhci_adma2_64_desc *dma_desc = desc;
 
 		if (host->flags & SDHCI_USE_64_BIT_DMA)
-			DBG("%s: %p: DMA 0x%08x%08x, LEN 0x%04x, Attr=0x%02x\n",
+			DBG("%s: %pK: DMA 0x%08x%08x, LEN 0x%04x,Attr=0x%02x\n",
 			    name, desc, le32_to_cpu(dma_desc->addr_hi),
 			    le32_to_cpu(dma_desc->addr_lo),
 			    le16_to_cpu(dma_desc->len),
 			    le16_to_cpu(dma_desc->cmd));
 		else
-			DBG("%s: %p: DMA 0x%08x, LEN 0x%04x, Attr=0x%02x\n",
+			DBG("%s: %pK: DMA 0x%08x, LEN 0x%04x, Attr=0x%02x\n",
 			    name, desc, le32_to_cpu(dma_desc->addr_lo),
 			    le16_to_cpu(dma_desc->len),
 			    le16_to_cpu(dma_desc->cmd));
@@ -3029,6 +3041,9 @@ static void sdhci_data_irq(struct sdhci_host *host, u32 intmask)
 
 	command = SDHCI_GET_CMD(sdhci_readw(host, SDHCI_COMMAND));
 	trace_mmc_data_rw_end(command, intmask);
+
+	host->irq_timestamp = ktime_to_us(ktime_get());
+	host->irq_cmd_idx = command;
 
 	/* CMD19 generates _only_ Buffer Read Ready interrupt */
 	if (intmask & SDHCI_INT_DATA_AVAIL) {

@@ -191,6 +191,9 @@
 		qcom,mdss-pan-physical-height-dimension = <147>;
 		
 		qcom,mdss-dsi-panel-mode-gpio-state = "invalid";
+		/* use fake_regulators in board dtsi,
+		 * instead of qcom,mdss-dsi-reset-sequence
+		 */
 		qcom,mdss-dsi-reset-sequence = <1 5>, <0 5>, <1 5>;
 
 		/*qcom,partial-update-enabled;*/

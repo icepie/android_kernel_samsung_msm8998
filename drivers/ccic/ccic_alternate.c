@@ -538,7 +538,8 @@ static int process_discover_svids(void * data)
 					CCIC_NOTIFY_DEV_USB, CCIC_NOTIFY_ID_USB, 0/*attach*/, USB_STATUS_NOTIFY_DETACH/*drp*/, 0);
 			usbpd_data->is_host = HOST_OFF;
 
-			if(!dwc3_msm_is_suspended())
+			/* if suspned && turn off , skip : if turn on host ot not low power mode */
+			if(!dwc3_msm_is_suspended() || usbpd_data->host_turn_on_event )
 			{
 				timeleft = wait_for_completion_interruptible_timeout(&usbpd_data->suspend_wait,
 							  msecs_to_jiffies(USB_PHY_SUSPEND_WAIT_MS));

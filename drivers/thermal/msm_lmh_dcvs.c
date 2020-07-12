@@ -82,6 +82,7 @@ struct msm_lmh_dcvs_hw {
 	uint32_t affinity;
 	uint32_t temp_limits[LIMITS_TRIP_MAX];
 	struct sensor_threshold default_lo, default_hi;
+	struct thermal_cooling_device *cdev;
 	int irq_num;
 	void *osm_hw_reg;
 	void *int_clr_reg;
@@ -414,18 +415,46 @@ int msm_lmh_dcvsh_sw_notify(int cpu)
 	return 0;
 }
 
+static int __ref lmh_dcvs_cpu_callback(struct notifier_block *nfb,
+		unsigned long action, void *hcpu)
+{
+	uint32_t cpu = (uintptr_t)hcpu;
+	struct msm_lmh_dcvs_hw *hw = get_dcvsh_hw_from_cpu(cpu);
+
+	if (!hw || hw->cdev)
+		return NOTIFY_OK;
+
+	switch (action & ~CPU_TASKS_FROZEN) {
+	case CPU_ONLINE:
+		hw->cdev = cpufreq_platform_cooling_register(&hw->core_map,
+				&cd_ops);
+		if (IS_ERR_OR_NULL(hw->cdev))
+			hw->cdev = NULL;
+		break;
+	default:
+		break;
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block __refdata lmh_dcvs_cpu_notifier = {
+	.notifier_call = lmh_dcvs_cpu_callback,
+};
+
 static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 {
 	int ret;
 	int affinity = -1;
 	struct msm_lmh_dcvs_hw *hw;
 	struct thermal_zone_device *tzdev;
-	struct thermal_cooling_device *cdev;
 	struct device_node *dn = pdev->dev.of_node;
 	struct device_node *cpu_node, *lmh_node;
 	uint32_t id, max_freq, request_reg, clear_reg;
 	int cpu;
 	cpumask_t mask = { CPU_BITS_NONE };
+#ifdef CONFIG_SEC_PM
+	int hi_temp;	/* for dynamic thermal threshold for each model from dt */
+#endif
 
 	for_each_possible_cpu(cpu) {
 		cpu_node = of_cpu_device_node_get(cpu);
@@ -476,7 +505,21 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 	hw->default_lo.trip = THERMAL_TRIP_CONFIGURABLE_LOW;
 	hw->default_lo.notify = trip_notify;
 
+
+/* for dynamic thermal threshold for each model from dt */
+#ifdef CONFIG_SEC_PM
+	hi_temp = 0;
+	ret = of_property_read_u32(dn, "ss,high-thresh", &hi_temp);
+	if (ret)
+		hw->default_hi.temp = MSM_LIMITS_HIGH_THRESHOLD_VAL;
+	else
+		hw->default_hi.temp = hi_temp;
+
+	pr_info("%s: LMh threshold: %lu\n", __func__, hw->default_hi.temp);
+#else
 	hw->default_hi.temp = MSM_LIMITS_HIGH_THRESHOLD_VAL;
+#endif
+
 	hw->default_hi.trip = THERMAL_TRIP_CONFIGURABLE_HI;
 	hw->default_hi.notify = trip_notify;
 
@@ -499,10 +542,6 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 	if (IS_ERR_OR_NULL(tzdev))
 		return PTR_ERR(tzdev);
 
-	/* Setup cooling devices to request mitigation states */
-	cdev = cpufreq_platform_cooling_register(&hw->core_map, &cd_ops);
-	if (IS_ERR_OR_NULL(cdev))
-		return PTR_ERR(cdev);
 	/*
 	 * Driver defaults to for low and hi thresholds.
 	 * Since we make a check for hi > lo value, set the hi threshold
@@ -572,8 +611,15 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	if (list_empty(&lmh_dcvs_hw_list))
+		register_cpu_notifier(&lmh_dcvs_cpu_notifier);
+
 	INIT_LIST_HEAD(&hw->list);
 	list_add(&hw->list, &lmh_dcvs_hw_list);
+
+	/* Better register explicitly for 1st CPU of each HW */
+	lmh_dcvs_cpu_callback(&lmh_dcvs_cpu_notifier, CPU_ONLINE,
+			(void *)(long)cpumask_first(&hw->core_map));
 
 #ifdef CONFIG_SEC_PM
 	if (!lmh_dcvs_ipc_log)

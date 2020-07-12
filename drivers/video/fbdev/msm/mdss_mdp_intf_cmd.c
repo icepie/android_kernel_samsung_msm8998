@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -410,7 +410,7 @@ static void mdss_mdp_cmd_wait4_autorefresh_pp(struct mdss_mdp_ctl *ctl)
 		return;
 	}
 
-	if (line_out < ctl->mixer_left->roi.h) {
+	if ((line_out < ctl->mixer_left->roi.h) && (line_out)) {
 		reinit_completion(&ctx->autorefresh_ppdone);
 
 		/* enable ping pong done */
@@ -1119,6 +1119,21 @@ static inline void mdss_mdp_cmd_clk_off(struct mdss_mdp_cmd_ctx *ctx)
 {
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	struct dsi_panel_clk_ctrl clk_ctrl;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = samsung_get_vdd();
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata;
+	struct mdss_mdp_ctl *ctl;
+	struct mdss_panel_data *pdata;
+	bool tcon_clk_on_support;
+
+	ctl = ctx->ctl;
+	pdata = ctl->panel_data;
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+						panel_data);
+	tcon_clk_on_support =
+		vdd->dtsi_data[ctrl_pdata->ndx].samsung_tcon_clk_on_support;
+#endif
+
 
 	pr_debug("%pS-->%s: task:%s ctx%d\n", __builtin_return_address(0),
 		__func__, current->group_leader->comm, ctx->current_pp_num);
@@ -1141,6 +1156,18 @@ static inline void mdss_mdp_cmd_clk_off(struct mdss_mdp_cmd_ctx *ctx)
 		mdss_mdp_ctl_intf_event
 			(ctx->ctl, MDSS_EVENT_PANEL_CLK_CTRL,
 			(void *)&clk_ctrl, flags);
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		/* In case of tcon_clk_on_support, like ANAPASS,
+		 * it skips disable display clock during booting.
+		 * To ballance clk ref count, disable clk.
+		 */ 
+		if (unlikely(vdd->samsung_first_blank) &&
+				tcon_clk_on_support) {
+			mdss_mdp_ctl_intf_event
+				(ctx->ctl, MDSS_EVENT_PANEL_CLK_CTRL,
+				(void *)&clk_ctrl, flags);
+		}
+#endif
 	} else {
 		pr_err("OFF with ctl:NULL\n");
 	}
@@ -2040,6 +2067,17 @@ int mdss_mdp_cmd_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	struct mdss_mdp_cmd_ctx *sctx = NULL;
 	struct dsi_panel_clk_ctrl clk_ctrl;
 	int ret = 0;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = samsung_get_vdd();
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata;
+	bool tcon_clk_on_support;
+
+	pdata = ctl->panel_data;
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+						panel_data);
+	tcon_clk_on_support =
+		vdd->dtsi_data[ctrl_pdata->ndx].samsung_tcon_clk_on_support;
+#endif
 
 	/* Get both controllers in the correct order for dual displays */
 	mdss_mdp_get_split_display_ctls(&ctl, &sctl);
@@ -2056,6 +2094,35 @@ int mdss_mdp_cmd_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	clk_ctrl.state = MDSS_DSI_CLK_OFF;
 	clk_ctrl.client = DSI_CLK_REQ_MDP_CLIENT;
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	if (tcon_clk_on_support) {
+		/* In case of tcon_clk_on_support, like ANAPASS,
+		 * it should keep HS clock mode during display on.
+		 * Skip to disable clock and configure op mode
+		 * that be called in clock off and on sequence.
+		 */
+		if (sctx && sctx->ctl && sctx->ctl->panel_data) { /* then slave */
+			struct mdss_panel_data *spdata = sctx->ctl->panel_data;
+			mdss_dsi_op_mode_config(spdata->panel_info.mipi.mode,
+					spdata);
+		}
+
+		mdss_dsi_op_mode_config(pdata->panel_info.mipi.mode, pdata);
+	} else {
+		if (sctx) { /* then slave */
+			u32 flags = CTL_INTF_EVENT_FLAG_SKIP_BROADCAST;
+
+			if (sctx->pingpong_split_slave)
+				flags |= CTL_INTF_EVENT_FLAG_SLAVE_INTF;
+
+			mdss_mdp_ctl_intf_event(sctx->ctl, MDSS_EVENT_PANEL_CLK_CTRL,
+						(void *)&clk_ctrl, flags);
+		}
+
+		mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_PANEL_CLK_CTRL,
+				(void *)&clk_ctrl, CTL_INTF_EVENT_FLAG_SKIP_BROADCAST);
+	}
+#else
 	if (sctx) { /* then slave */
 		u32 flags = CTL_INTF_EVENT_FLAG_SKIP_BROADCAST;
 
@@ -2067,7 +2134,9 @@ int mdss_mdp_cmd_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	}
 
 	mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_PANEL_CLK_CTRL,
-		(void *)&clk_ctrl, CTL_INTF_EVENT_FLAG_SKIP_BROADCAST);
+			(void *)&clk_ctrl, CTL_INTF_EVENT_FLAG_SKIP_BROADCAST);
+
+#endif
 
 	pdata->panel_info.cont_splash_enabled = 0;
 	if (sctl)
@@ -2197,10 +2266,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 				"dsi_dbg_bus");
 #else
 			MDSS_XLOG(0xbad);
-			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0_ctrl", "dsi0_phy",
-				"dsi1_ctrl", "dsi1_phy", "vbif", "vbif_nrt",
-				"dbg_bus", "vbif_dbg_bus",
-				"dsi_dbg_bus", "panic");
 #endif
 		} else if (ctx->pp_timeout_report_cnt == MAX_RECOVERY_TRIALS) {
 			MDSS_XLOG(0xbad2);
@@ -2567,6 +2632,7 @@ int mdss_mdp_cmd_set_autorefresh_mode(struct mdss_mdp_ctl *mctl, int frame_cnt)
 		 */
 		ctx->autorefresh_state = MDP_AUTOREFRESH_ON_REQUESTED;
 		ctx->autorefresh_frame_cnt = frame_cnt;
+		mctl->mdata->serialize_wait4pp = true;
 
 		/* Cancel GATE Work Item */
 		if (cancel_work_sync(&ctx->gate_clk_work))
@@ -2580,8 +2646,10 @@ int mdss_mdp_cmd_set_autorefresh_mode(struct mdss_mdp_ctl *mctl, int frame_cnt)
 		if (frame_cnt == 0) {
 			ctx->autorefresh_state = MDP_AUTOREFRESH_OFF;
 			ctx->autorefresh_frame_cnt = 0;
+			mctl->mdata->serialize_wait4pp = false;
 		} else {
 			ctx->autorefresh_frame_cnt = frame_cnt;
+			mctl->mdata->serialize_wait4pp = true;
 		}
 		break;
 	case MDP_AUTOREFRESH_ON:
@@ -2593,6 +2661,7 @@ int mdss_mdp_cmd_set_autorefresh_mode(struct mdss_mdp_ctl *mctl, int frame_cnt)
 			ctx->autorefresh_state = MDP_AUTOREFRESH_OFF_REQUESTED;
 		} else {
 			ctx->autorefresh_frame_cnt = frame_cnt;
+			mctl->mdata->serialize_wait4pp = true;
 		}
 		break;
 	case MDP_AUTOREFRESH_OFF_REQUESTED:
@@ -2602,6 +2671,7 @@ int mdss_mdp_cmd_set_autorefresh_mode(struct mdss_mdp_ctl *mctl, int frame_cnt)
 			pr_debug("cancelling autorefresh off request\n");
 			ctx->autorefresh_state = MDP_AUTOREFRESH_ON;
 			ctx->autorefresh_frame_cnt = frame_cnt;
+			mctl->mdata->serialize_wait4pp = true;
 		}
 		break;
 	default:
@@ -2930,6 +3000,7 @@ static int mdss_mdp_disable_autorefresh(struct mdss_mdp_ctl *ctl,
 	cfg |= BIT(20);
 	mdss_mdp_pingpong_write(pp_base,
 				MDSS_MDP_REG_PP_SYNC_CONFIG_VSYNC, cfg);
+	ctl->mdata->serialize_wait4pp = false;
 
 	return 0;
 }

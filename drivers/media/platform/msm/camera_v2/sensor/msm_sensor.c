@@ -39,6 +39,20 @@ extern char iris_cam_fw_full_ver[40];
 extern char iris_cam_fw_user_ver[40];
 extern char iris_cam_fw_factory_ver[40];
 bool is_iris_cam_resolution_check = 0;
+
+/*Caution before changing below enum - TZ environment, user-space sensor drivers too sharing it.*/
+typedef enum {
+  IRIS_CMD_INITIALIZE,
+  IRIS_CMD_START_STREAM,
+  IRIS_CMD_STOP_STREAM,
+  IRIS_CMD_SET_RESOLUTION,
+  IRIS_CMD_GROUP_ON,
+  IRIS_CMD_GROUP_OFF,
+  IRIS_CMD_SET_EXPOSURE,
+  IRIS_CMD_SET_GAIN,
+  IRIS_CMD_CONFIG_FIRMWARE,
+} iris_i2c_cmd;
+
 #endif
 
 #define SENSOR_SOF_DEBUG_COUNT	5
@@ -406,6 +420,109 @@ int msm_sensor_check_resolution(struct msm_sensor_ctrl_t *s_ctrl)
 			} else { // fail
 				snprintf(iris_cam_fw_factory_ver, FW_VER_SIZE, "NG_RES %c %c %c\n", year_month_company[0], year_month_company[1], year_month_company[2]); //resolution check fail with 0x00
 			}
+		}
+
+	} else if (!strcmp(sensor_name, "s5k5f1sx") && !is_iris_cam_resolution_check) {
+
+		bool is_read_ver = false;
+		bool is_final_module = false;
+
+		is_iris_cam_resolution_check = 1;
+
+		/* 1. prepare sensor for read */
+		rc = sensor_i2c_client->i2c_func_tbl->i2c_write(sensor_i2c_client,
+								IRIS_CMD_CONFIG_FIRMWARE, 0x01,
+								MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0) {
+			pr_err("%s:%d prepare sensor failed!\n", __func__, __LINE__);
+			goto exit;
+		}
+
+
+		/*2. read data */
+		/*2. i. read year */
+		rc = sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x0A07,
+			&iris_cam_year, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s:%d read year failed", __func__, __LINE__);
+
+		CDBG("%s:%d read year : %c", __func__, __LINE__, iris_cam_year);
+
+		/*2. ii. read month */
+		rc = sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x0A08,
+			&iris_cam_month, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s:%d read month failed", __func__, __LINE__);
+
+		CDBG("%s:%d read month : %c", __func__, __LINE__, iris_cam_month);
+
+		/*2. iii. read company */
+		rc = sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x0A09,
+			&iris_cam_company, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s:%d read company failed", __func__, __LINE__);
+
+		CDBG("%s:%d read company : %c",  __func__, __LINE__, iris_cam_company);
+
+		/*2. iv. read sensor revision*/
+		rc = sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x0002,
+			&sensor_rev, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0) {
+			is_read_ver = false;
+			pr_err("%s:%d read sensor_rev failed", __func__, __LINE__);
+		} else {
+			is_read_ver = true;
+		if (sensor_rev == 0xA1)
+			is_final_module = true;
+		else
+			is_final_module = false;
+		}
+		pr_err("%s:%d read sensor_rev : 0x%x, is_final_module %d", __func__, __LINE__, sensor_rev, (is_final_module ? 1 : 0));
+
+
+		/* 3. stream off sensor */
+		rc = sensor_i2c_client->i2c_func_tbl->i2c_write(sensor_i2c_client,
+								IRIS_CMD_CONFIG_FIRMWARE, 0x00,
+								MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0) {
+			pr_err("%s:%d stream off failed!\n", __func__, __LINE__);
+			goto exit;
+		}
+
+		/* write sysfs for resolution/year/month/company */
+		if (iris_cam_year != 0x00 && iris_cam_year >= 'A' && iris_cam_year <= 'Z')
+			year_month_company[0] = (uint8_t)iris_cam_year;
+
+		if (iris_cam_month != 0x00 && iris_cam_month >= 'A' && iris_cam_month <= 'Z')
+			year_month_company[1] = (uint8_t)iris_cam_month;
+
+		if (iris_cam_company != 0x00 && iris_cam_company >= 'A' && iris_cam_company <= 'Z')
+			year_month_company[2] = (uint8_t)iris_cam_company;
+
+exit:
+
+		if (is_read_ver) {
+			if (is_final_module) {
+				snprintf(iris_cam_fw_user_ver, FW_VER_SIZE, "OK\n");
+
+				snprintf(iris_cam_fw_factory_ver, FW_VER_SIZE, "OK %c %c %c\n", year_month_company[0],
+					year_month_company[1], year_month_company[2]); // resolution check pass with 0x01
+			} else {
+				snprintf(iris_cam_fw_user_ver, FW_VER_SIZE, "NG\n");
+
+				snprintf(iris_cam_fw_factory_ver, FW_VER_SIZE, "NG_VER %c %c %c\n", year_month_company[0],
+					year_month_company[1], year_month_company[2]); // resolution check pass but dev module ver
+			}
+			snprintf(iris_cam_fw_ver, FW_VER_SIZE, "S5K5F1 N\n");
+			snprintf(iris_cam_fw_full_ver, FW_VER_SIZE, "S5K5F1 N N\n");
+		} else {
+			snprintf(iris_cam_fw_user_ver, FW_VER_SIZE, "NG\n");
+
+			snprintf(iris_cam_fw_factory_ver, FW_VER_SIZE, "NG_VER %c %c %c\n", year_month_company[0],
+					year_month_company[1], year_month_company[2]); // resolution check pass but dev module ver
+
+			snprintf(iris_cam_fw_ver, FW_VER_SIZE, "UNKNOWN N\n");
+			snprintf(iris_cam_fw_full_ver, FW_VER_SIZE, "UNKNOWN N N\n");
 		}
 	}
 
@@ -1569,6 +1686,20 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			s_ctrl->sensordata->sensor_name);
 		break;
 	}
+#if defined(CONFIG_CAMERA_IRIS)
+        case CFG_SET_IR_LED: {
+                pr_info("%s IR LED enable to FPGA \n",
+                        s_ctrl->sensordata->sensor_name);
+                ir_led_on(1);
+                break;
+        }
+        case CFG_RESET_IR_LED: {
+                pr_info("%s IR LED disable to FPGA \n",
+                        s_ctrl->sensordata->sensor_name);
+                ir_led_off();
+                break;
+        }
+#endif
 	default:
 		rc = -EFAULT;
 		break;

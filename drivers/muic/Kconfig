@@ -84,6 +84,13 @@ config MUIC_UNIVERSAL_MAX77854
 	help
 	  If you say yes here you will get support for the MAX77854 MUIC chip.
 
+config MUIC_KEYBOARD
+	bool "MUIC_KEYBOARD"
+	depends on USE_MUIC
+	default n
+	help
+	  If you say yes here you will get support for the KEYBOARD.
+
 config MUIC_HV
 	bool "MUIC_HV"
 	depends on USE_MUIC
@@ -175,6 +182,13 @@ config MUIC_S2MU004
 	help
 	  If you say yes here you will get support for the S2MU004 MUIC chip.
 
+config MUIC_S2MU004_SUPPORT_BC1P2_CERTI
+	bool "Using S2MU004 MUIC BC1P2_CERTI"
+	depends on USE_MUIC && MFD_S2MU004
+	default n
+	help
+	  If you say yes here you will get support for the S2MU004 BC1P2_CERTI.
+
  config HV_MUIC_S2MU004_AFC
      bool "Using S2MU004 MUIC AFC"
      depends on MUIC_S2MU004
@@ -196,11 +210,19 @@ config MUIC_S2MU004_NON_USB_C_TYPE
 	help
 	  If you say yes here you will get support for the NON TYPE C.
 
-config HV_MUIC_VOLTAGE_CTRL
-	bool "Using AFC Voltage control functionality"
-	depends on MUIC_HV_S2MU004_AFC
+config HICCUP_CHARGER
+	bool "Using HICCUP charger"
+	depends on USE_MUIC
 	default n
 	help
-	  If you say yes here you will get support for
-	  the AFC voltage control functionality.
+		If you say yes here you will get support for
+		for the hiccup charger feature.
+
+
+config GPIO_UART_SEL
+	bool "GPIO_UART_SEL"
+	depends on USE_MUIC
+	default n
+	help
+	  If you say yes here you will get support for gpio setting for uart_sel.
 

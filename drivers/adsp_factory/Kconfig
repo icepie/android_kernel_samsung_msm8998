@@ -40,6 +40,12 @@ config AK09916C_FACTORY
 	help
 	  ak09916c file for factory test in adsp.
 
+config AK09918C_FACTORY
+	tristate "factory test for adsp - ak09918c"
+	default n
+	help
+	  ak09918c file for factory test in adsp.
+
 config BMP280_FACTORY
 	tristate "factory test for adsp - bmp280"
 	default n

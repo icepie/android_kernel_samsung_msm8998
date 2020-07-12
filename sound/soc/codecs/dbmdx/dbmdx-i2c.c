@@ -508,7 +508,7 @@ static void i2c_transport_enable(struct dbmdx_private *p, bool enable)
 	if (enable) {
 
 #ifdef CONFIG_PM_WAKELOCKS
-		wake_lock(&i2c_p->ps_nosuspend_wl);
+		__pm_stay_awake(&i2c_p->ps_nosuspend_wl);
 #endif
 
 		ret = wait_event_interruptible(dbmdx_wq,
@@ -529,7 +529,7 @@ static void i2c_transport_enable(struct dbmdx_private *p, bool enable)
 		msleep(DBMDX_MSLEEP_I2C_WAKEUP);
 	} else {
 #ifdef CONFIG_PM_WAKELOCKS
-		wake_unlock(&i2c_p->ps_nosuspend_wl);
+		__pm_relax(&i2c_p->ps_nosuspend_wl);
 #endif
 		p->wakeup_release(p);
 	}
@@ -847,8 +847,7 @@ int i2c_common_probe(struct i2c_client *client,
 	p->pdata = pdata;
 
 #ifdef CONFIG_PM_WAKELOCKS
-	wake_lock_init(&p->ps_nosuspend_wl, WAKE_LOCK_SUSPEND,
-		"dbmdx_nosuspend_wakelock_i2c");
+	wakeup_source_init(&p->ps_nosuspend_wl, "dbmdx_nosuspend_wakelock_i2c");
 #endif
 
 	/* fill in chip interface functions */
@@ -898,7 +897,7 @@ int i2c_common_remove(struct i2c_client *client)
 	struct dbmdx_i2c_private *p = (struct dbmdx_i2c_private *)ci->pdata;
 
 #ifdef CONFIG_PM_WAKELOCKS
-	wake_lock_destroy(&p->ps_nosuspend_wl);
+	wakeup_source_trash(&p->ps_nosuspend_wl);
 #endif
 
 	kfree(p);

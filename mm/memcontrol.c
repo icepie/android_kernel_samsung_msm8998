@@ -996,7 +996,7 @@ static void invalidate_reclaim_iterators(struct mem_cgroup *dead_memcg)
 	int nid, zid;
 	int i;
 
-	while ((memcg = parent_mem_cgroup(memcg))) {
+	for (; memcg; memcg = parent_mem_cgroup(memcg)) {
 		for_each_node(nid) {
 			for (zid = 0; zid < MAX_NR_ZONES; zid++) {
 				mz = &memcg->nodeinfo[nid]->zoneinfo[zid];
@@ -3239,7 +3239,17 @@ static int memcg_stat_show(struct seq_file *m, void *v)
 
 	return 0;
 }
+static u64 mem_cgroup_vmpressure_read(struct cgroup_subsys_state *css,
+				      struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+	struct vmpressure *vmpr = memcg_to_vmpressure(memcg);
+	unsigned long vmpressure;
 
+	vmpressure = vmpr->pressure;
+
+	return vmpressure;
+}
 static u64 mem_cgroup_swappiness_read(struct cgroup_subsys_state *css,
 				      struct cftype *cft)
 {
@@ -4075,6 +4085,10 @@ static struct cftype mem_cgroup_legacy_files[] = {
 	},
 	{
 		.name = "pressure_level",
+	},
+	{
+		.name = "vmpressure",
+		.read_u64 = mem_cgroup_vmpressure_read,
 	},
 #ifdef CONFIG_NUMA
 	{
@@ -5576,7 +5590,7 @@ static void uncharge_list(struct list_head *page_list)
 		next = page->lru.next;
 
 		VM_BUG_ON_PAGE(PageLRU(page), page);
-		VM_BUG_ON_PAGE(page_count(page), page);
+		VM_BUG_ON_PAGE(!PageHWPoison(page) && page_count(page), page);
 
 		if (!page->mem_cgroup)
 			continue;

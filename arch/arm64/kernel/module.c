@@ -38,7 +38,12 @@ int randomize_module_space __read_mostly =  1;
 
 void *module_alloc(unsigned long size)
 {
+	gfp_t gfp_mask = GFP_KERNEL;
 	void *p;
+
+	/* Silence the initial allocation */
+	if (IS_ENABLED(CONFIG_ARM64_MODULE_PLTS))
+		gfp_mask |= __GFP_NOWARN;
 
 #ifdef CONFIG_RELOCATABLE_KERNEL
 	static unsigned long module_va = 0; 
@@ -49,13 +54,13 @@ void *module_alloc(unsigned long size)
 			module_va += ALIGN( get_random_int() %  RANDOMIZE_MODULE_REGION, PAGE_SIZE * 4); 
 	}
 	p = __vmalloc_node_range(size, 1, module_va, module_alloc_base + MODULES_VSIZE,
-				    GFP_KERNEL, PAGE_KERNEL_EXEC, 0, 
+				    gfp_mask, PAGE_KERNEL_EXEC, 0, 
 				    NUMA_NO_NODE, __builtin_return_address(0));
 	
 #else
 	p = __vmalloc_node_range(size, MODULE_ALIGN, module_alloc_base,
 				module_alloc_base + MODULES_VSIZE,
-				GFP_KERNEL, PAGE_KERNEL_EXEC, 0,
+				gfp_mask, PAGE_KERNEL_EXEC, 0,
 				NUMA_NO_NODE, __builtin_return_address(0));
 #endif
 	if (!p && IS_ENABLED(CONFIG_ARM64_MODULE_PLTS) &&

@@ -101,6 +101,8 @@ void ufs_set_sec_unique_number(struct ufs_hba *hba, u8 *str_desc_buf, u8 *desc_b
 	/* Null terminate the unique number string */
 	hba->unique_number[UFS_UN_16_DIGITS] = '\0';
 #endif
+	hba->manufacturer_date =
+		desc_buf[DEVICE_DESC_PARAM_MANF_DATE] << 8 | desc_buf[DEVICE_DESC_PARAM_MANF_DATE+1];
 }
 
 static int ufs_get_device_info(struct ufs_hba *hba,

@@ -62,6 +62,7 @@ struct adsp_data {
 	unsigned int dump_reg_ready_flag;
 	void *pdata;
 	bool sysfs_created[ADSP_FACTORY_SENSOR_MAX];
+	struct mutex remove_sysfs_mutex;
 };
 
 int adsp_get_sensor_data(int sensor_type);

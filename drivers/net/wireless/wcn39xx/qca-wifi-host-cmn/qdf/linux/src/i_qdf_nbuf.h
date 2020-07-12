@@ -1,8 +1,5 @@
 /*
- * Copyright (c) 2014-2017 The Linux Foundation. All rights reserved.
- *
- * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
- *
+ * Copyright (c) 2014-2018 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -17,12 +14,6 @@
  * PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
  * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
- */
-
-/*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
  */
 
 /**
@@ -45,7 +36,6 @@
 #include <qdf_mem.h>
 #include <linux/tcp.h>
 #include <qdf_util.h>
-#include <qdf_nbuf.h>
 
 /*
  * Use socket buffer as the underlying implentation as skbuf .
@@ -514,6 +504,18 @@ bool __qdf_nbuf_data_is_arp_req(uint8_t *data);
 bool __qdf_nbuf_data_is_arp_rsp(uint8_t *data);
 uint32_t __qdf_nbuf_get_arp_src_ip(uint8_t *data);
 uint32_t __qdf_nbuf_get_arp_tgt_ip(uint8_t *data);
+uint8_t *__qdf_nbuf_get_dns_domain_name(uint8_t *data, uint32_t len);
+bool __qdf_nbuf_data_is_dns_query(uint8_t *data);
+bool __qdf_nbuf_data_is_dns_response(uint8_t *data);
+bool __qdf_nbuf_data_is_tcp_syn(uint8_t *data);
+bool __qdf_nbuf_data_is_tcp_syn_ack(uint8_t *data);
+bool __qdf_nbuf_data_is_tcp_ack(uint8_t *data);
+uint16_t __qdf_nbuf_data_get_tcp_src_port(uint8_t *data);
+uint16_t __qdf_nbuf_data_get_tcp_dst_port(uint8_t *data);
+bool __qdf_nbuf_data_is_icmpv4_req(uint8_t *data);
+bool __qdf_nbuf_data_is_icmpv4_rsp(uint8_t *data);
+uint32_t __qdf_nbuf_get_icmpv4_src_ip(uint8_t *data);
+uint32_t __qdf_nbuf_get_icmpv4_tgt_ip(uint8_t *data);
 enum qdf_proto_subtype  __qdf_nbuf_data_get_dhcp_subtype(uint8_t *data);
 enum qdf_proto_subtype  __qdf_nbuf_data_get_eapol_subtype(uint8_t *data);
 enum qdf_proto_subtype  __qdf_nbuf_data_get_arp_subtype(uint8_t *data);
@@ -525,6 +527,18 @@ uint8_t __qdf_nbuf_data_get_ipv6_proto(uint8_t *data);
 void __qdf_nbuf_init_replenish_timer(void);
 void __qdf_nbuf_deinit_replenish_timer(void);
 #endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
+#define qdf_nbuf_users_inc atomic_inc
+#define qdf_nbuf_users_dec atomic_dec
+#define qdf_nbuf_users_set atomic_set
+#define qdf_nbuf_users_read atomic_read
+#else
+#define qdf_nbuf_users_inc refcount_inc
+#define qdf_nbuf_users_dec refcount_dec
+#define qdf_nbuf_users_set refcount_set
+#define qdf_nbuf_users_read refcount_read
+#endif /* KERNEL_VERSION(4, 13, 0) */
 
 /**
  * __qdf_to_status() - OS to QDF status conversion
@@ -1493,45 +1507,9 @@ static inline size_t __qdf_nbuf_tcp_tso_size(struct sk_buff *skb)
  */
 static inline void __qdf_nbuf_init(__qdf_nbuf_t nbuf)
 {
-	atomic_set(&nbuf->users, 1);
+	qdf_nbuf_users_set(&nbuf->users, 1);
 	nbuf->data = nbuf->head + NET_SKB_PAD;
 	skb_reset_tail_pointer(nbuf);
-}
-
-/**
- * __qdf_nbuf_set_rx_info() - set rx info
- * @nbuf: sk buffer
- * @info: rx info
- * @len: length
- *
- * Return: none
- */
-static inline void
-__qdf_nbuf_set_rx_info(__qdf_nbuf_t nbuf, void *info, uint32_t len)
-{
-	/* Customer may have skb->cb size increased, e.g. to 96 bytes,
-	 * then len's large enough to save the rs status info struct
-	 */
-	uint8_t offset = sizeof(struct qdf_nbuf_cb);
-	uint32_t max = sizeof(((struct sk_buff *)0)->cb)-offset;
-
-	len = (len > max ? max : len);
-
-	memcpy(((uint8_t *)(nbuf->cb) + offset), info, len);
-}
-
-/**
- * __qdf_nbuf_get_rx_info() - get rx info
- * @nbuf: sk buffer
- *
- * Return: rx_info
- */
-static inline void *
-__qdf_nbuf_get_rx_info(__qdf_nbuf_t nbuf)
-{
-	uint8_t offset = sizeof(struct qdf_nbuf_cb);
-
-	return (void *)((uint8_t *)(nbuf->cb) + offset);
 }
 
 /*

@@ -61,7 +61,7 @@
 #define IDLE_STATE		0
 #define TOUCH_STATE		1
 
-#define HALLIC1_PATH		"/sys/class/sec/sec_key/hall_detect"
+#define HALLIC_PATH		"/sys/class/sec/sec_key/hall_detect"
 
 struct sx9320_p {
 	struct i2c_client *client;
@@ -126,45 +126,42 @@ struct sx9320_p {
 
 	atomic_t enable;
 
-	unsigned char hall_ic1[6];
-	unsigned char hall_ic2[6];
+	char hall_ic[6];
 };
 
-static int sx9320_check_hallic_state(char *file_path,
-	unsigned char hall_ic_status[])
+static int sx9320_check_hallic_state(char *file_path, char hall_ic_status[])
 {
 	int iRet = 0;
 	mm_segment_t old_fs;
 	struct file *filep;
-	u8 hall_sysfs[4];
+	char hall_sysfs[5];
 
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
 
-	filep = filp_open(file_path, O_RDONLY, 0666);
+	filep = filp_open(file_path, O_RDONLY, 0440);
 	if (IS_ERR(filep)) {
 		iRet = PTR_ERR(filep);
-		if (iRet != -ENOENT)
-			pr_err("[SX9320_WIFI_SUB]: %s - file open fail [%s] - %d\n",
-				__func__, file_path, iRet);
+		pr_err("[SX9320_WIFI_SUB]: %s - file open fail %d\n", __func__, iRet);
 		set_fs(old_fs);
-		goto exit;
+		return iRet;
 	}
 
 	iRet = filep->f_op->read(filep, hall_sysfs,
 		sizeof(hall_sysfs), &filep->f_pos);
 
-	if (iRet != sizeof(hall_sysfs)) {
-		pr_err("[SX9320_WIFI_SUB]: %s - Can't read hall ic status\n", __func__);
-		iRet = -EIO;
+	if (iRet <= 0) {
+		pr_err("[SX9320_WIFI_SUB]: %s - file read fail %d\n", __func__, iRet);
+		filp_close(filep, current->files);
+		set_fs(old_fs);
+		return -EIO;
 	} else {
-		strlcpy(hall_ic_status, hall_sysfs, sizeof(hall_sysfs) + 1);
+		strncpy(hall_ic_status, hall_sysfs, sizeof(hall_sysfs));
 	}
 
 	filp_close(filep, current->files);
 	set_fs(old_fs);
 
-exit:
 	return iRet;
 }
 
@@ -449,15 +446,9 @@ static void sx9320_check_status(struct sx9320_p *data, int enable)
 
 static void sx9320_set_enable(struct sx9320_p *data, int enable)
 {
-	u8 status = 0;
-
 	pr_info("[SX9320_WIFI_SUB]: %s\n", __func__);
 
 	if (enable == ON) {
-
-		pr_info("[SX9320_WIFI_SUB]: %s - enable(status : 0x%x)\n",
-			__func__, status);
-
 		data->diff_avg = 0;
 		data->diff_cnt = 0;
 		data->useful_avg = 0;
@@ -536,7 +527,7 @@ static ssize_t sx9320_register_write_store(struct device *dev,
 	int regist = 0, val = 0;
 	struct sx9320_p *data = dev_get_drvdata(dev);
 
-	if (sscanf(buf, "%3d,%3d", &regist, &val) != 2) {
+	if (sscanf(buf, "%4x,%4x", &regist, &val) != 2) {
 		pr_err("[SX9320_WIFI_SUB]: %s - The number of data are wrong\n",
 			__func__);
 		return -EINVAL;
@@ -558,11 +549,11 @@ static ssize_t sx9320_register_read_show(struct device *dev,
 	for (idx = 0; idx < (int)(sizeof(setup_reg) >> 1); idx++) {
 		sx9320_i2c_read(data, setup_reg[idx].reg, &val);
 
-		pr_info("[SX9320_WIFI_SUB]: %s - Read Reg: 0x%x Value: 0x%x\n\n",
+		pr_info("[SX9320_WIFI_SUB]: %s - Read Reg: 0x%2x Value: 0x%2x\n\n",
 			__func__, setup_reg[idx].reg, val);
 
 		offset += snprintf(buf + offset, PAGE_SIZE - offset,
-			"Reg: 0x%x Value: 0x%x\n", setup_reg[idx].reg, val);
+			"Reg: 0x%2x Value: 0x%2x\n", setup_reg[idx].reg, val);
 	}
 
 	return offset;
@@ -582,11 +573,15 @@ static ssize_t sx9320_sw_reset_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct sx9320_p *data = dev_get_drvdata(dev);
+	u8 status = 0;
 
 	pr_info("[SX9320_WIFI_SUB]: %s\n", __func__);
 	sx9320_set_offset_calibration(data);
 	msleep(400);
 	sx9320_get_data(data);
+
+	sx9320_i2c_read(data, SX9320_STAT0_REG, &status);
+	pr_info("[SX9320_WIFI_SUB]: %s (status : 0x%x)\n", __func__, status);
 
 	return snprintf(buf, PAGE_SIZE, "%d\n", 0);
 }
@@ -1306,6 +1301,18 @@ static void sx9320_debug_work_func(struct work_struct *work)
 
 	static int hall_flag = 1;
 
+	sx9320_check_hallic_state(HALLIC_PATH, data->hall_ic);
+
+	if (strcmp(data->hall_ic, "CLOSE") == 0) {
+		if (hall_flag) {
+			pr_info("[SX9320_WIFI_SUB]: %s - hall IC is closed\n", __func__);
+			sx9320_set_offset_calibration(data);
+			hall_flag = 0;
+		}
+	} else {
+		hall_flag = 1;
+	}
+
 	if (atomic_read(&data->enable) == ON) {
 		if (data->abnormal_mode) {
 			sx9320_get_data(data);
@@ -1320,19 +1327,6 @@ static void sx9320_debug_work_func(struct work_struct *work)
 			}
 		}
 	}
-
-	sx9320_check_hallic_state(HALLIC1_PATH, data->hall_ic1);
-
-	/* Hall IC closed : offset cal (once)*/
-	if (strcmp(data->hall_ic1, "OPEN") != 0) {
-		if (hall_flag) {
-			pr_info("[SX9320_WIFI_SUB]: %s - hall IC1 is closed\n",
-				__func__);
-			sx9320_set_offset_calibration(data);
-			hall_flag = 0;
-		}
-	} else
-		hall_flag = 1;
 
 	schedule_delayed_work(&data->debug_work, msecs_to_jiffies(2000));
 }
@@ -1545,6 +1539,11 @@ static int sx9320_ccic_handle_notification(struct notifier_block *nb,
 	struct sx9320_p *pdata =
 		container_of(nb, struct sx9320_p, cpuidle_ccic_nb);
 
+	static int pre_attach = 0;
+
+	if (pre_attach == usb_status.attach)
+		return 0;
+
 	pr_info("[SX9320_WIFI_SUB]: %s - src = %d, dest = %d, id = %d, attach = %d, drp = %d\n",
 		__func__, usb_status.src, usb_status.dest, usb_status.id, usb_status.attach, usb_status.drp);
 
@@ -1581,8 +1580,11 @@ static int sx9320_ccic_handle_notification(struct notifier_block *nb,
 		else
 			sx9320_i2c_write(pdata, SX9320_PROXCTRL7_REG,
 				pdata->normal_th);
-	} else
+
+		pre_attach = usb_status.attach;
+	} else {
 		pr_info("[SX9320_WIFI_SUB]: %s - has not initialized\n", __func__);
+	}
 
 	return 0;
 }

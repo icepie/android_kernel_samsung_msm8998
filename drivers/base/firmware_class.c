@@ -120,7 +120,7 @@ struct firmware_cache {
 	struct list_head head;
 	int state;
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_FW_CACHE
 	/*
 	 * Names of firmware images which have been cached successfully
 	 * will be added into the below list so that device uncache
@@ -445,7 +445,7 @@ static void fw_set_page_data(struct firmware_buf *buf, struct firmware *fw)
 		 (unsigned int)buf->size);
 }
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_FW_CACHE
 static void fw_name_devm_release(struct device *dev, void *res)
 {
 	struct fw_name_devm *fwn = res;
@@ -1115,7 +1115,7 @@ static int _request_firmware_load(struct firmware_priv *fw_priv,
 		timeout = MAX_JIFFY_OFFSET;
 	}
 
-	timeout = wait_for_completion_killable_timeout(&buf->completion,
+	timeout = wait_for_completion_interruptible_timeout(&buf->completion,
 			timeout);
 	if (timeout == -ERESTARTSYS || !timeout) {
 		retval = timeout;
@@ -1150,7 +1150,7 @@ static int fw_load_from_user_helper(struct firmware *firmware,
 	return _request_firmware_load(fw_priv, desc->opt_flags, timeout);
 }
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_FW_CACHE
 /* kill pending requests without uevent to avoid blocking suspend */
 static void kill_requests_without_uevent(void)
 {
@@ -1177,7 +1177,7 @@ fw_load_from_user_helper(struct firmware *firmware,
 /* No abort during direct loading */
 #define is_fw_load_aborted(buf) false
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_FW_CACHE
 static inline void kill_requests_without_uevent(void) { }
 #endif
 
@@ -1628,7 +1628,7 @@ request_firmware_nowait_into_buf(
 }
 EXPORT_SYMBOL_GPL(request_firmware_nowait_into_buf);
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_FW_CACHE
 static ASYNC_DOMAIN_EXCLUSIVE(fw_cache_domain);
 
 /**
@@ -1974,7 +1974,7 @@ static void __init fw_cache_init(void)
 	INIT_LIST_HEAD(&fw_cache.head);
 	fw_cache.state = FW_LOADER_NO_CACHE;
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_FW_CACHE
 	spin_lock_init(&fw_cache.name_lock);
 	INIT_LIST_HEAD(&fw_cache.fw_names);
 
@@ -2001,7 +2001,7 @@ static int __init firmware_class_init(void)
 
 static void __exit firmware_class_exit(void)
 {
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_FW_CACHE
 	unregister_syscore_ops(&fw_syscore_ops);
 	unregister_pm_notifier(&fw_cache.pm_notify);
 #endif

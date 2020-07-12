@@ -288,10 +288,12 @@ size_t kvaddr_to_paddr(unsigned long vaddr)
 
 static void dump_reg(char *addr, int len)
 {
+	bool v_in_interrupt;
+
 	if (IS_ERR_OR_NULL(addr))
 		return;
-
-	mdss_dump_reg("ss_dump", MDSS_DBG_DUMP_IN_LOG, addr, len, NULL, false);
+	v_in_interrupt = in_interrupt() ? 1 : 0;
+	mdss_dump_reg("ss_dump", MDSS_DBG_DUMP_IN_LOG, addr, len, NULL, v_in_interrupt);
 }
 
 void mdss_samsung_dump_regs(void)
@@ -1388,6 +1390,7 @@ static int ss_register_dpci(struct samsung_display_driver_data *vdd)
 			sizeof(vdd->dpci_notif));
 	vdd->dpci_notif.notifier_call = dpci_notifier_callback;
 
+	LCD_INFO("Register dpci\n");
 	ret = dpui_logging_register(&vdd->dpci_notif, DPUI_TYPE_CTRL);
 	return ret;
 }
@@ -1477,13 +1480,13 @@ int mdss_sasmung_panel_debug_init(struct samsung_display_driver_data *vdd)
 	if (ret)
 		LCD_ERR("Fail to create files for debugfs\n");
 
-end:
-	if (ret && !IS_ERR_OR_NULL(debug_data->root))
-			debugfs_remove_recursive(debug_data->root);
-
 #ifdef CONFIG_DISPLAY_USE_INFO
 	ss_register_dpci(vdd);
 #endif
+
+end:
+	if (ret && !IS_ERR_OR_NULL(debug_data->root))
+			debugfs_remove_recursive(debug_data->root);
 
 	return ret;
 }

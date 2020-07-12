@@ -5,143 +5,161 @@
 #include <linux/input/sec_cmd.h>
 #include <linux/wakelock.h>
 #include <linux/vmalloc.h>
+#include <linux/proc_fs.h>
 
 #undef FTS_SUPPORT_TOUCH_KEY
 #undef FTS_SUPPORT_PRESSURE_SENSOR
-#undef FTS_SUPPORT_STRINGLIB
+#define FTS_SUPPORT_SPONGELIB
 
 #define USE_OPEN_CLOSE
 #define SEC_TSP_FACTORY_TEST
-#define PAT_CONTROL
+
+#include <linux/input/sec_tclm_v2.h>
+#ifdef CONFIG_INPUT_TOUCHSCREEN_TCLMV2
+#define TCLM_CONCEPT
+#endif
 
 #define USE_POR_AFTER_I2C_RETRY
 
-#define BRUSH_Z_DATA		63	/* for ArtCanvas */
+#define BRUSH_Z_DATA			63 /* for ArtCanvas */
 
 #undef FTS_SUPPORT_TA_MODE
 #undef USE_OPEN_DWORK
 
 #ifdef USE_OPEN_DWORK
-#define TOUCH_OPEN_DWORK_TIME 10
+#define TOUCH_OPEN_DWORK_TIME		10
 #endif
 
-#define FIRMWARE_IC					"fts_ic"
-#define FTS_MAX_FW_PATH					64
-#define FTS_TS_DRV_NAME					"fts_touch"
-#define FTS_TS_DRV_VERSION				"0100"
+/*
+ * fts_input_feature_support
+ *
+ * bit value should be made a promise with InputFramework.
+ *	bit	: feature
+ *	0	: AOT -Doubletap wakeup in whole screen when LCD off.
+ */
+#define INPUT_FEATURE_SUPPORT_AOT	(1 << 0)
 
-#define FTS_TS_I2C_RETRY_CNT				3
 
-#define PRESSURE_SENSOR_COUNT				3
+#define FIRMWARE_IC			"fts_ic"
+#define FTS_MAX_FW_PATH			64
+#define FTS_TS_DRV_NAME			"fts_touch"
+#define FTS_TS_DRV_VERSION		"0100"
 
-#define FTS_ID0						0x39
-#define FTS_ID1						0x36
+#define FTS_TS_I2C_RETRY_CNT		3
 
-#define FTS_FIFO_MAX					32
-#define FTS_EVENT_SIZE					8
+#define PRESSURE_SENSOR_COUNT		3
 
-#define PRESSURE_MIN					0
-#define PRESSURE_MAX					127
-#define FINGER_MAX					10
-#define AREA_MIN					PRESSURE_MIN
-#define AREA_MAX					PRESSURE_MAX
+#define FTS_ID0				0x39
+#define FTS_ID1				0x36
 
-#define INT_ENABLE  1
-#define INT_DISABLE 0
+#define FTS_FIFO_MAX			32
+#define FTS_EVENT_SIZE			8
 
-#define FTS_CMD_STRING_ACCESS				0x0000
+#define PRESSURE_MIN			0
+#define PRESSURE_MAX			127
+#define FINGER_MAX			10
+#define AREA_MIN			PRESSURE_MIN
+#define AREA_MAX			PRESSURE_MAX
+
+#define INT_ENABLE			1
+#define INT_DISABLE			0
+
+#define FTS_CMD_SPONGE_ACCESS				0x0000
 
 /* COMMANDS */
-#define FTS_CMD_SENSE_ON			0x10
-#define FTS_CMD_SENSE_OFF			0x11
-#define FTS_CMD_SW_RESET			0x12
-#define FTS_CMD_FORCE_CALIBRATION		0x13
-#define FTS_CMD_FACTORY_PANELCALIBRATION	0x14
+#define FTS_CMD_SENSE_ON				0x10
+#define FTS_CMD_SENSE_OFF				0x11
+#define FTS_CMD_SW_RESET				0x12
+#define FTS_CMD_FORCE_CALIBRATION			0x13
+#define FTS_CMD_FACTORY_PANELCALIBRATION		0x14
 
-#define FTS_READ_GPIO_STATUS			0x20
-#define FTS_READ_FIRMWARE_INTEGRITY		0x21
-#define FTS_READ_DEVICE_ID			0x22
-#define FTS_READ_PANEL_INFO			0x23
-#define FTS_READ_FW_VERSION		0x24
+#define FTS_READ_GPIO_STATUS				0x20
+#define FTS_READ_FIRMWARE_INTEGRITY			0x21
+#define FTS_READ_DEVICE_ID				0x22
+#define FTS_READ_PANEL_INFO				0x23
+#define FTS_READ_FW_VERSION				0x24
 
-#define FTS_CMD_SET_GET_TOUCHTYPE		0x30
-#define FTS_CMD_SET_GET_OPMODE			0x31
-#define FTS_CMD_SET_GET_CHARGER_MODE		0x32
-#define FTS_CMD_SET_GET_NOISE_MODE		0x33
-#define FTS_CMD_SET_GET_REPORT_RATE		0x34
+#define FTS_CMD_SET_GET_TOUCHTYPE			0x30
+#define FTS_CMD_SET_GET_OPMODE				0x31
+#define FTS_CMD_SET_GET_CHARGER_MODE			0x32
+#define FTS_CMD_SET_GET_NOISE_MODE			0x33
+#define FTS_CMD_SET_GET_REPORT_RATE			0x34
 #define FTS_CMD_SET_GET_TOUCH_MODE_FOR_THRESHOLD	0x35
-#define FTS_CMD_SET_GET_TOUCH_THRESHOLD		0x36
-#define FTS_CMD_SET_GET_KEY_THRESHOLD		0x37
-#define FTS_CMD_SET_GET_COVERTYPE		0x38
-#define FTS_CMD_WRITE_WAKEUP_GESTURE		0x39
-#define FTS_CMD_WRITE_COORDINATE_FILTER		0x3A
+#define FTS_CMD_SET_GET_TOUCH_THRESHOLD			0x36
+#define FTS_CMD_SET_GET_KEY_THRESHOLD			0x37
+#define FTS_CMD_SET_GET_COVERTYPE			0x38
+#define FTS_CMD_WRITE_WAKEUP_GESTURE			0x39
+#define FTS_CMD_WRITE_COORDINATE_FILTER			0x3A
 
-#define FTS_READ_ONE_EVENT			0x60
-#define FTS_READ_ALL_EVENT			0x61
-#define FTS_CMD_CLEAR_ALL_EVENT	0x62
+#define FTS_READ_ONE_EVENT				0x60
+#define FTS_READ_ALL_EVENT				0x61
+#define FTS_CMD_CLEAR_ALL_EVENT				0x62
 
-#define FTS_CMD_SELECT_MUTUAL_DATA_TYPE  0x70
-#define FTS_CMD_SELECT_SELF_DATA_TYPE		0x71
-#define FTS_READ_MUTUAL_DATA  0x72
-#define FTS_READ_SELF_DATA		0x73
+#define FTS_CMD_SENSITIVITY_MODE			0x70
+#define FTS_READ_SENSITIVITY_VALUE			0x72
 
 /* FTS SPONGE COMMAND */
-#define FTS_CMD_SPONGE_READ_WRITE_CMD		0xAA
-#define FTS_CMD_SPINGE_NOTIFY_CMD	  0xC0
-#define FTS_CMD_OFFSET_PRESSURE_LEVEL			0x5E
-#define FTS_CMD_OFFSET_PRESSURE_THD_HIGH		0x84
-#define FTS_CMD_OFFSET_PRESSURE_THD_LOW			0x86
+#define FTS_CMD_SPONGE_READ_WRITE_CMD			0xAA
+#define FTS_CMD_SPONGE_NOTIFY_CMD			0xC0
 
-#define FTS_EVENT_STATUS_REPORT   0x43
-#define FTS_EVENT_ERROR_REPORT    0xF3
+#define FTS_CMD_SPONGE_OFFSET_MODE			0x00
+#define FTS_CMD_SPONGE_OFFSET_AOD_RECT			0x02
+#define FTS_CMD_SPONGE_OFFSET_PRESSURE_LEVEL		0x5E
+#define FTS_CMD_SPONGE_OFFSET_PRESSURE_THD_HIGH		0x84
+#define FTS_CMD_SPONGE_OFFSET_PRESSURE_THD_LOW		0x86
+#define FTS_CMD_SPONGE_LP_DUMP				0x01F0
+
+#define FTS_EVENT_STATUS_REPORT				0x43
+#define FTS_EVENT_ERROR_REPORT				0xF3
 
 /* Status Event */
-#define FTS_COORDINATE_EVENT	0
-#define FTS_STATUS_EVENT		  1
-#define FTS_GESTURE_EVENT		  2
-#define FTS_VENDOR_EVENT	    3
+#define FTS_COORDINATE_EVENT			0
+#define FTS_STATUS_EVENT			1
+#define FTS_GESTURE_EVENT			2
+#define FTS_VENDOR_EVENT			3
 
-#define FTS_GESTURE_CODE_SPAY		0x00
+#define FTS_GESTURE_CODE_SPAY			0x00
 #define FTS_GESTURE_CODE_DOUBLE_TAP		0x01
 
 #define FTS_COORDINATE_ACTION_NONE		0
 #define FTS_COORDINATE_ACTION_PRESS		1
 #define FTS_COORDINATE_ACTION_MOVE		2
-#define FTS_COORDINATE_ACTION_RELEASE	3
+#define FTS_COORDINATE_ACTION_RELEASE		3
 
 #define FTS_EVENT_TOUCHTYPE_NORMAL		0
-#define FTS_EVENT_TOUCHTYPE_HOVER		  1
-#define FTS_EVENT_TOUCHTYPE_FLIPCOVER	2
-#define FTS_EVENT_TOUCHTYPE_GLOVE		  3
+#define FTS_EVENT_TOUCHTYPE_HOVER		1
+#define FTS_EVENT_TOUCHTYPE_FLIPCOVER		2
+#define FTS_EVENT_TOUCHTYPE_GLOVE		3
 #define FTS_EVENT_TOUCHTYPE_STYLUS		4
-#define FTS_EVENT_TOUCHTYPE_PALM		  5
-#define FTS_EVENT_TOUCHTYPE_WET		    6
-#define FTS_EVENT_TOUCHTYPE_PROXIMITY	7
-#define FTS_EVENT_TOUCHTYPE_JIG		    8
+#define FTS_EVENT_TOUCHTYPE_PALM		5
+#define FTS_EVENT_TOUCHTYPE_WET			6
+#define FTS_EVENT_TOUCHTYPE_PROXIMITY		7
+#define FTS_EVENT_TOUCHTYPE_JIG			8
 
 /* Status - ERROR event */
-#define FTS_EVENT_STATUSTYPE_CMDDRIVEN    0
-#define FTS_EVENT_STATUSTYPE_ERROR        1
-#define FTS_EVENT_STATUSTYPE_INFORMATION  2
-#define FTS_EVENT_STATUSTYPE_USERINPUT    3
-#define FTS_EVENT_STATUSTYPE_VENDORINFO   7
+#define FTS_EVENT_STATUSTYPE_CMDDRIVEN		0
+#define FTS_EVENT_STATUSTYPE_ERROR		1
+#define FTS_EVENT_STATUSTYPE_INFORMATION	2
+#define FTS_EVENT_STATUSTYPE_USERINPUT		3
+#define FTS_EVENT_STATUSTYPE_VENDORINFO		7
 
-#define FTS_ERR_EVNET_CORE_ERR	0x00
-#define FTS_ERR_EVENT_QUEUE_FULL	0x01
-#define FTS_ERR_EVENT_ESD		0x02
+#define FTS_ERR_EVNET_CORE_ERR			0x00
+#define FTS_ERR_EVENT_QUEUE_FULL		0x01
+#define FTS_ERR_EVENT_ESD			0x02
 
 /* Status - Information report */
-#define FTS_INFO_READY_STATUS  0x00
-#define FTS_INFO_WET_MODE	0x01
-#define FTS_INFO_NOISE_MODE	0x02
+#define FTS_INFO_READY_STATUS			0x00
+#define FTS_INFO_WET_MODE			0x01
+#define FTS_INFO_NOISE_MODE			0x02
 
 
 // Scan mode for A0 command
-#define FTS_SCAN_MODE_MS_SS_SCAN  0x01
-#define FTS_SCAN_MODE_KEY_SCAN  0x02
-#define FTS_SCAN_MODE_HOVER_SCAN  0x04
-#define FTS_SCAN_MODE_FORCE_TOUCH_SCAN  0x10
-#define FTS_SCAN_MODE_DEFAULT FTS_SCAN_MODE_MS_SS_SCAN
+#define FTS_SCAN_MODE_SCAN_OFF			0
+#define FTS_SCAN_MODE_MS_SS_SCAN		(1 << 0)
+#define FTS_SCAN_MODE_KEY_SCAN			(1 << 1)
+#define FTS_SCAN_MODE_HOVER_SCAN		(1 << 2)
+#define FTS_SCAN_MODE_FORCE_TOUCH_SCAN		(1 << 4)
+#define FTS_SCAN_MODE_DEFAULT			FTS_SCAN_MODE_MS_SS_SCAN
 
 
 /* Control Command */
@@ -153,70 +171,53 @@
 #define FTS_TOUCHTYPE_BIT_GLOVE		(1 << 3)
 #define FTS_TOUCHTYPE_BIT_STYLUS	(1 << 4)
 #define FTS_TOUCHTYPE_BIT_PALM		(1 << 5)
-#define FTS_TOUCHTYPE_BIT_WET			(1 << 6)
+#define FTS_TOUCHTYPE_BIT_WET		(1 << 6)
 #define FTS_TOUCHTYPE_BIT_PROXIMITY	(1 << 7)
-#define FTS_TOUCHTYPE_DEFAULT_ENABLE  (FTS_TOUCHTYPE_BIT_TOUCH | FTS_TOUCHTYPE_BIT_PALM | FTS_TOUCHTYPE_BIT_WET)
+#define FTS_TOUCHTYPE_DEFAULT_ENABLE	(FTS_TOUCHTYPE_BIT_TOUCH | FTS_TOUCHTYPE_BIT_PALM | FTS_TOUCHTYPE_BIT_WET)
 
 // For 0x31 command - touch operation mode
-#define FTS_OPMODE_NORMAL   0
-#define FTS_OPMODE_LOWPOWER 1
+#define FTS_OPMODE_NORMAL		0
+#define FTS_OPMODE_LOWPOWER		1
 
 // For 0x32 command - charger mode
-#define FTS_BIT_CHARGER_MODE_NORMAL 0
-#define FTS_BIT_CHARGER_MODE_WIRE_CHARGER   1
-#define FTS_BIT_CHARGER_MODE_WIRELESS_CHARGER   2
-#define FTS_BIT_CHARGER_MODE_WIRELESS_BATTERY_PACK  3
+#define FTS_BIT_CHARGER_MODE_NORMAL			0
+#define FTS_BIT_CHARGER_MODE_WIRE_CHARGER		1
+#define FTS_BIT_CHARGER_MODE_WIRELESS_CHARGER		2
+#define FTS_BIT_CHARGER_MODE_WIRELESS_BATTERY_PACK	3
 
 
 #define FTS_RETRY_COUNT					10
 #define FTS_DELAY_NVWRITE				50
 
-#define FTS_STRING_EVENT_SPAY				(1 << 1)
-#define FTS_STRING_EVENT_AOD_TRIGGER			(1 << 2)
-#define FTS_STRING_EVENT_PRESSURE_TOUCHED		(1 << 6)
-#define FTS_STRING_EVENT_PRESSURE_RELEASED		(1 << 7)
+/* gesture SF */
+#define FTS_GESTURE_SAMSUNG_FEATURE			1
+
+/* gesture type */
+#define FTS_SPONGE_EVENT_SWIPE_UP			0
+#define FTS_SPONGE_EVENT_DOUBLETAP			1
+#define FTS_SPONGE_EVENT_PRESSURE			2
+
+/* gesture ID */
+#define FTS_SPONGE_GESTURE_ID_PRESSURE_PRESS		0
+#define FTS_SPONGE_GESTURE_ID_PRESSURE_RELEASE		1
 
 #define FTS_ENABLE					1
 #define FTS_DISABLE					0
 
+/* sponge mode */
 #define FTS_MODE_SPAY					(1 << 1)
 #define FTS_MODE_AOD					(1 << 2)
-#define FTS_MODE_PRESSURE					(1 << 6)
-
-#ifdef PAT_CONTROL
-/********************************************************************
- * apply to server
- *	0x00 : no action
- *	0x01 : clear nv
- *	0x02 : pat magic
- *	0x03 : rfu
- *
- * use for temp bin
- *	0x05 : forced clear nv & f/w update  before pat magic, eventhough same f/w
- *	0x06 : rfu
- *********************************************************************/
-#define PAT_CONTROL_NONE		0x00
-#define PAT_CONTROL_CLEAR_NV		0x01
-#define PAT_CONTROL_PAT_MAGIC		0x02
-#define PAT_CONTROL_FORCE_UPDATE	0x05
-
-#define PAT_COUNT_ZERO			0x00
-#define PAT_ONE_LCIA			0x01
-#define PAT_MAX_LCIA			0x80
-#define PAT_MAGIC_NUMBER		0x83
-#define PAT_MAX_MAGIC			0xC5
-#define PAT_EXT_FACT			0xE0
-#define PAT_MAX_EXT			0xF5
-#endif
+#define FTS_MODE_DOUBLETAP_WAKEUP			(1 << 2)
+#define FTS_MODE_PRESSURE				(1 << 6)
 
 #ifdef FTS_SUPPORT_TOUCH_KEY
 /* TSP Key Feature*/
-#define KEY_PRESS       1
-#define KEY_RELEASE     0
-#define TOUCH_KEY_NULL	0
+#define KEY_PRESS		1
+#define KEY_RELEASE		0
+#define TOUCH_KEY_NULL		0
 
 /* support 2 touch keys */
-#define TOUCH_KEY_RECENT		0x01
+#define TOUCH_KEY_RECENT	0x01
 #define TOUCH_KEY_BACK		0x02
 
 struct fts_touchkey {
@@ -258,18 +259,18 @@ struct fts_sponge_information {
 	u8 sponge_model_name[32];
 } __packed;
 
-#define FTS_CMD_EDGE_HANDLER	0x00
+#define FTS_CMD_EDGE_HANDLER		0x00
 #define FTS_CMD_EDGE_AREA		0x01
 #define FTS_CMD_DEAD_ZONE		0x02
-#define FTS_CMD_LANDSCAPE_MODE	0x03
+#define FTS_CMD_LANDSCAPE_MODE		0x03
 
 enum grip_write_mode {
 	G_NONE				= 0,
 	G_SET_EDGE_HANDLER		= 1,
 	G_SET_EDGE_ZONE			= 2,
 	G_SET_NORMAL_MODE		= 4,
-	G_SET_LANDSCAPE_MODE	= 8,
-	G_CLR_LANDSCAPE_MODE	= 16,
+	G_SET_LANDSCAPE_MODE		= 8,
+	G_CLR_LANDSCAPE_MODE		= 16,
 };
 enum grip_set_data {
 	ONLY_EDGE_HANDLER		= 0,
@@ -327,21 +328,40 @@ enum fts_config_value_feature {
 };
 
 enum {
-	SPECIAL_EVENT_TYPE_SPAY			= 0x04,
-	SPECIAL_EVENT_TYPE_PRESSURE_TOUCHED	= 0x05,
-	SPECIAL_EVENT_TYPE_PRESSURE_RELEASED	= 0x06,
-	SPECIAL_EVENT_TYPE_AOD			= 0x08,
-	SPECIAL_EVENT_TYPE_AOD_PRESS		= 0x09,
-	SPECIAL_EVENT_TYPE_AOD_LONGPRESS	= 0x0A,
-	SPECIAL_EVENT_TYPE_AOD_DOUBLETAB	= 0x0B,
-	SPECIAL_EVENT_TYPE_AOD_HOMEKEY_PRESS	= 0x0C,
-	SPECIAL_EVENT_TYPE_AOD_HOMEKEY_RELEASE	= 0x0D,
+	SPECIAL_EVENT_TYPE_SPAY					= 0x04,
+	SPECIAL_EVENT_TYPE_PRESSURE_TOUCHED			= 0x05,
+	SPECIAL_EVENT_TYPE_PRESSURE_RELEASED			= 0x06,
+	SPECIAL_EVENT_TYPE_AOD					= 0x08,
+	SPECIAL_EVENT_TYPE_AOD_PRESS				= 0x09,
+	SPECIAL_EVENT_TYPE_AOD_LONGPRESS			= 0x0A,
+	SPECIAL_EVENT_TYPE_AOD_DOUBLETAB			= 0x0B,
+	SPECIAL_EVENT_TYPE_AOD_HOMEKEY_PRESS			= 0x0C,
+	SPECIAL_EVENT_TYPE_AOD_HOMEKEY_RELEASE			= 0x0D,
 	SPECIAL_EVENT_TYPE_AOD_HOMEKEY_RELEASE_NO_HAPTIC	= 0x0E
 };
 
 enum fts_system_information_address {
 	FTS_SI_CONFIG_CHECKSUM = 0x58, /* 4 bytes */
 };
+
+enum fts_ito_test_mode {
+	OPEN_TEST = 0,
+	OPEN_SHORT_CRACK_TEST,
+	SAVE_MISCAL_REF_RAW,
+};
+
+enum fts_ito_test_result {
+	ITO_PASS = 0,
+	ITO_FAIL,
+};
+
+enum fts_miscal_test_result {
+	MISCAL_PASS = 0,
+	MISCAL_FAIL,
+};
+
+#define UEVENT_OPEN_SHORT_PASS		1
+#define UEVENT_OPEN_SHORT_FAIL		2
 
 /* ----------------------------------------
  * write 0xE4 [ 11 | 10 | 01 | 00 ]
@@ -381,6 +401,45 @@ struct fts_ts_test_result {
 #define TEST_OCTA_NONE		0
 #define TEST_OCTA_FAIL		1
 #define TEST_OCTA_PASS		2
+
+#define SEC_OFFSET_SIGNATURE		0x59525446
+
+enum offset_fac_position {
+	OFFSET_FAC_NOSAVE		= 0,	// FW index 0
+	OFFSET_FAC_SUB			= 1,	// FW Index 2
+	OFFSET_FAC_MAIN			= 2,	// FW Index 3
+	OFFSET_FAC_SVC			= 3,	// FW Index 4
+};
+
+enum offset_fw_position {
+	OFFSET_FW_NOSAVE		= 0,
+	OFFSET_FW_SDC			= 1,
+	OFFSET_FW_SUB			= 2,
+	OFFSET_FW_MAIN			= 3,
+	OFFSET_FW_SVC			= 4,
+};
+
+#define FTS_ITO_RESULT_PRINT_SIZE	1024
+
+struct fts_sec_panel_test_result {
+	u8 flag;
+	u8 num_of_test;
+	u16 max_of_tx_gap;
+	u16 max_of_rx_gap;
+	u8 tx_of_txmax_gap;
+	u8 rx_of_txmax_gap;
+	u8 tx_of_rxmax_gap;
+	u8 rx_of_rxmax_gap;
+} __packed;
+
+struct fts_sdc_panel_test_result {
+	u16 max_of_tx_gap;
+	u16 max_of_rx_gap;
+	u8 tx_of_txmax_gap;
+	u8 rx_of_txmax_gap;
+	u8 tx_of_rxmax_gap;
+	u8 rx_of_rxmax_gap;
+} __packed;
 
 /* 8 byte */
 struct fts_event_coordinate {
@@ -451,12 +510,11 @@ struct fts_i2c_platform_data {
 	bool support_mt_pressure;
 	bool support_sidegesture;
 	bool support_dex;
+	bool support_aot;
 	int max_x;
 	int max_y;
 	int use_pressure;
 	u8 panel_revision;	/* to identify panel info */
-	int pat_function;	/*  copyed by dt, select function for suitable process  - pat_control */
-	int afe_base;		/*  set f/w version when afe is fixed			- pat_control */
 	const char *firmware_name;
 	const char *project_name;
 	const char *model_name;
@@ -492,11 +550,12 @@ struct fts_i2c_platform_data {
 	int gpio_sda;
 
 	int bringup;
+
+	int item_version;
+	bool chip_on_board;
 };
 
-
 struct fts_ts_info {
-	struct device *dev;
 	struct i2c_client *client;
 	struct input_dev *input_dev;
 	struct input_dev *input_dev_pad;
@@ -517,10 +576,16 @@ struct fts_ts_info {
 	int SenseChannelLength;
 	int ForceChannelLength;
 	short *pFrame;
+	short *miscal_ref_raw;
+	u8 miscal_result;
 	u8 *cx_data;
+	u8 *ito_result;
 #endif
 	struct fts_ts_test_result test_result;
 	u8 disassemble_count;
+	u8 fac_nv;
+
+	struct sec_tclm_data *tdata;
 
 	bool hover_ready;
 	bool hover_enabled;
@@ -549,7 +614,7 @@ struct fts_ts_info {
 	u8 lowpower_flag;
 	bool deepsleep_mode;
 	bool wet_mode;
-	int fts_power_state;
+	volatile int fts_power_state;
 	int wakeful_edge_side;
 	struct completion resume_done;
 	struct wake_lock wakelock;
@@ -622,16 +687,11 @@ struct fts_ts_info {
 	struct mutex irq_mutex;
 	struct mutex device_mutex;
 	struct mutex eventlock;
-	bool touch_stopped;
 	bool reinit_done;
 
 	u8 ddi_type;
 
 	const char *firmware_name;
-
-	u8 cal_count;		/* calibration count		- pat_control */
-	u16 tune_fix_ver;	/* calibration version which f/w based on  - pat_control */
-	bool external_factory;
 
 	u8 grip_edgehandler_direction;
 	int grip_edgehandler_start_y;
@@ -667,6 +727,14 @@ struct fts_ts_info {
 	u8 pressure_cal_base;
 	u8 pressure_cal_delta;
 
+	u8 factory_position;
+	int proc_size;
+	char *cmoffset_sdc_proc;
+	char *cmoffset_sub_proc;
+	char *cmoffset_main_proc;
+
+	int prox_power_off;
+
 	int (*stop_device)(struct fts_ts_info *info, bool lpmode);
 	int (*start_device)(struct fts_ts_info *info);
 
@@ -678,38 +746,39 @@ struct fts_ts_info {
 	int (*fts_get_version_info)(struct fts_ts_info *info);
 	int (*fts_get_sysinfo_data)(struct fts_ts_info *info, u8 sysinfo_addr, u8 read_cnt, u8 *data);
 
-#ifdef FTS_SUPPORT_STRINGLIB
-	int (*fts_read_from_string)(struct fts_ts_info *info, u16 *reg, u8 *data, int length);
-	int (*fts_write_to_string)(struct fts_ts_info *info, u16 *reg, u8 *data, int length);
+#ifdef FTS_SUPPORT_SPONGELIB
+	int (*fts_read_from_sponge)(struct fts_ts_info *info, u16 offset, u8 *data, int length);
+	int (*fts_write_to_sponge)(struct fts_ts_info *info, u16 offset, u8 *data, int length);
 #endif
 };
 
 int fts_fw_update_on_probe(struct fts_ts_info *info);
 int fts_fw_update_on_hidden_menu(struct fts_ts_info *info, int update_type);
 void fts_fw_init(struct fts_ts_info *info, bool boot);
-void fts_execute_autotune(struct fts_ts_info *info, bool IsSaving);
+int fts_execute_autotune(struct fts_ts_info *info, bool IsSaving);
 int fts_fw_wait_for_event(struct fts_ts_info *info, u8 *result, u8 result_cnt);
 int fts_fw_wait_for_echo_event(struct fts_ts_info *info, u8 *cmd, u8 cmd_cnt);
 int fts_irq_enable(struct fts_ts_info *info, bool enable);
-#ifdef PAT_CONTROL
 int fts_set_calibration_information(struct fts_ts_info *info, u8 count, u16 version);
-int fts_get_calibration_information(struct fts_ts_info *info);
-int fts_ts_tclm(struct fts_ts_info *info, bool boot, bool run_force);
-#endif
 int fts_get_tsp_test_result(struct fts_ts_info *info);
 int fts_read_pressure_data(struct fts_ts_info *info);
 void fts_interrupt_set(struct fts_ts_info *info, int enable);
 void fts_release_all_finger(struct fts_ts_info *info);
 void fts_delay(unsigned int ms);
 int fts_set_opmode(struct fts_ts_info *info, u8 mode);
-int fts_set_scanmode(struct fts_ts_info *info);
+int fts_set_scanmode(struct fts_ts_info *info, u8 scan_mode);
 
+#ifdef TCLM_CONCEPT
+int sec_tclm_data_read(struct i2c_client *client, int address);
+int sec_tclm_data_write(struct i2c_client *client);
+int sec_tclm_execute_force_calibration(struct i2c_client *client, int cal_mode);
+#endif
 int set_nvm_data(struct fts_ts_info *info, u8 type, u8 *buf);
 int get_nvm_data(struct fts_ts_info *info, int type, u8 *nvdata);
 int fts_set_pressure_calibration_information(struct fts_ts_info *info, u8 base, u8 delta);
 int fts_get_pressure_calibration_information(struct fts_ts_info *info);
 
-int fts_panel_ito_test(struct fts_ts_info *info);
+int fts_panel_ito_test(struct fts_ts_info *info, int testmode);
 
 #ifndef CONFIG_SEC_SYSFS
 extern struct class *sec_class;

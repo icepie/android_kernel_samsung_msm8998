@@ -398,12 +398,9 @@ static int msm_compr_set_volume(struct snd_compr_stream *cstream,
 	} else {
 		gain_list[0] = volume_l;
 		gain_list[1] = volume_r;
-		/* force sending FR/FL/FC volume for mono */
-		if (prtd->num_channels == 1) {
-			gain_list[2] = volume_l;
-			num_channels = 3;
-			use_default = true;
-		}
+		gain_list[2] = volume_l;
+		num_channels = 3;
+		use_default = true;
 		rc = q6asm_set_multich_gain(prtd->audio_client, num_channels,
 					gain_list, chmap, use_default);
 	}
@@ -1276,9 +1273,6 @@ static int msm_compr_configure_dsp_for_playback
 	int dir = IN, ret = 0;
 	struct audio_client *ac = prtd->audio_client;
 	uint32_t stream_index;
-	union snd_codec_options *codec_options =
-		&(prtd->codec_param.codec.options);
-
 	struct asm_softpause_params softpause = {
 		.enable = SOFT_PAUSE_ENABLE,
 		.period = SOFT_PAUSE_PERIOD,
@@ -1303,9 +1297,6 @@ static int msm_compr_configure_dsp_for_playback
 		bits_per_sample = 24;
 	else if (prtd->codec_param.codec.format == SNDRV_PCM_FORMAT_S32_LE)
 		bits_per_sample = 32;
-	else if (prtd->codec == FORMAT_FLAC && codec_options &&
-		(codec_options->flac_dec.sample_size != 0))
-		bits_per_sample = codec_options->flac_dec.sample_size;
 
 	if (prtd->compr_passthr != LEGACY_PCM) {
 		ret = q6asm_open_write_compressed(ac, prtd->codec,
@@ -1592,11 +1583,11 @@ static int msm_compr_playback_open(struct snd_compr_stream *cstream)
 	int ret = 0;
 
 	pr_debug("%s\n", __func__);
-    if (pdata->is_in_use[rtd->dai_link->be_id] == true) {
-       pr_err("%s: %s is already in use,err: %d ",
-          __func__, rtd->dai_link->cpu_dai_name, -EBUSY);
-       return -EBUSY;
-    }	
+	if (pdata->is_in_use[rtd->dai_link->be_id] == true) {
+		pr_err("%s: %s is already in use,err: %d ",
+			__func__, rtd->dai_link->cpu_dai_name, -EBUSY);
+		return -EBUSY;
+	}
 	prtd = kzalloc(sizeof(struct msm_compr_audio), GFP_KERNEL);
 	if (prtd == NULL) {
 		pr_err("Failed to allocate memory for msm_compr_audio\n");
@@ -1677,6 +1668,7 @@ static int msm_compr_playback_open(struct snd_compr_stream *cstream)
 		if (ret < 0)
 			goto map_err;
 	}
+	pdata->is_in_use[rtd->dai_link->be_id] = true;
 	return 0;
 
 map_err:
@@ -1685,6 +1677,7 @@ ac_err:
 	kfree(pdata->audio_effects[rtd->dai_link->be_id]);
 	pdata->audio_effects[rtd->dai_link->be_id] = NULL;
 	kfree(pdata->dec_params[rtd->dai_link->be_id]);
+	pdata->dec_params[rtd->dai_link->be_id] = NULL;
 	pdata->cstream[rtd->dai_link->be_id] = NULL;
 	kfree(prtd);
 	runtime->private_data = NULL;
@@ -1861,16 +1854,15 @@ static int msm_compr_playback_free(struct snd_compr_stream *cstream)
 
 	q6asm_audio_client_free(ac);
 	msm_adsp_clean_mixer_ctl_pp_event_queue(soc_prtd);
-    if (pdata->audio_effects[soc_prtd->dai_link->be_id] != NULL) {
-       kfree(pdata->audio_effects[soc_prtd->dai_link->be_id]);
-       pdata->audio_effects[soc_prtd->dai_link->be_id] = NULL;
-    }
-    if (pdata->dec_params[soc_prtd->dai_link->be_id] != NULL) {
-       kfree(pdata->dec_params[soc_prtd->dai_link->be_id]);
-       pdata->dec_params[soc_prtd->dai_link->be_id] = NULL;
-    }
-    pdata->is_in_use[soc_prtd->dai_link->be_id] = false;	
-
+	if (pdata->audio_effects[soc_prtd->dai_link->be_id] != NULL) {
+	kfree(pdata->audio_effects[soc_prtd->dai_link->be_id]);
+	pdata->audio_effects[soc_prtd->dai_link->be_id] = NULL;
+	}
+	if (pdata->dec_params[soc_prtd->dai_link->be_id] != NULL) {
+	kfree(pdata->dec_params[soc_prtd->dai_link->be_id]);
+	pdata->dec_params[soc_prtd->dai_link->be_id] = NULL;
+	}
+	pdata->is_in_use[soc_prtd->dai_link->be_id] = false;
 	kfree(prtd);
 	runtime->private_data = NULL;
 
@@ -2226,8 +2218,6 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 	int stream_id;
 	uint32_t stream_index;
 	uint16_t bits_per_sample = 16;
-	union snd_codec_options *codec_options =
-		&(prtd->codec_param.codec.options);
 
 	spin_lock_irqsave(&prtd->lock, flags);
 	if (atomic_read(&prtd->error)) {
@@ -2646,9 +2636,6 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 		else if (prtd->codec_param.codec.format ==
 			 SNDRV_PCM_FORMAT_S32_LE)
 			bits_per_sample = 32;
-		else if (prtd->codec == FORMAT_FLAC && codec_options &&
-			(codec_options->flac_dec.sample_size != 0))
-			bits_per_sample = codec_options->flac_dec.sample_size;
 
 		pr_debug("%s: open_write stream_id %d bits_per_sample %d",
 				__func__, stream_id, bits_per_sample);
@@ -2708,8 +2695,8 @@ static int msm_compr_pointer(struct snd_compr_stream *cstream,
 		tstamp.copied_total = prtd->received_total;
 	first_buffer = prtd->first_buffer;
 	if (atomic_read(&prtd->error)) {
-		pr_err("%s Got RESET EVENTS notification, return error\n",
-			__func__);
+		pr_err_ratelimited("%s Got RESET EVENTS notification, return error\n",
+				   __func__);
 		if (cstream->direction == SND_COMPRESS_PLAYBACK)
 			runtime->total_bytes_transferred = tstamp.copied_total;
 		else
@@ -3770,9 +3757,8 @@ static int msm_compr_adsp_stream_cmd_put(struct snd_kcontrol *kcontrol,
 		goto done;
 	}
 
-
 	if (event_data->payload_len > sizeof(ucontrol->value.bytes.data)
-					- sizeof(struct msm_adsp_event_data)) {
+			 - sizeof(struct msm_adsp_event_data)) {
 		pr_err("%s param length=%d  exceeds limit",
 			__func__, event_data->payload_len);
 		ret = -EINVAL;

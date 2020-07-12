@@ -344,11 +344,7 @@ rst_gpio_err:
 	if (gpio_is_valid(ctrl_pdata->disp_en_gpio))
 		gpio_free(ctrl_pdata->disp_en_gpio);
 disp_en_gpio_err:
-#if defined(CONFIG_SEC_GTS4LLTE_PROJECT)
-	return 0; /*temp*/
-#else
 	return rc;
-#endif
 }
 
 int mdss_dsi_bl_gpio_ctrl(struct mdss_panel_data *pdata, int enable)
@@ -432,6 +428,9 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 	struct mdss_panel_info *pinfo = NULL;
 	int i, rc = 0;
 	int cnt = 0;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = NULL;
+#endif
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -443,6 +442,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 
 	pinfo = &(ctrl_pdata->panel_data.panel_info);
 
+#if !defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 	if ((mdss_dsi_is_right_ctrl(ctrl_pdata) &&
 		mdss_dsi_is_hw_config_split(ctrl_pdata->shared_data)) ||
 			pinfo->is_dba_panel) {
@@ -450,6 +450,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			__func__, __LINE__);
 		return rc;
 	}
+#endif
 
 	if (!gpio_is_valid(ctrl_pdata->disp_en_gpio)) {
 		pr_debug("%s:%d, reset line not configured\n",
@@ -545,7 +546,7 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			   __func__, __LINE__);
 		return rc;
 	}
-		while (!gpio_get_value(ctrl_pdata->tconrdy_gpio) && cnt++ < MAX_WAITTIME_TCONRDY)
+	while (!gpio_get_value(ctrl_pdata->tconrdy_gpio) && cnt++ < MAX_WAITTIME_TCONRDY)
 		usleep_range(1000, 1000);
 
 	if (cnt > MAX_WAITTIME_TCONRDY || cnt < MIN_WAITTIME_TCONRDY)
@@ -569,6 +570,13 @@ int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 			gpio_set_value((ctrl_pdata->disp_en_gpio), 0);
 			gpio_free(ctrl_pdata->disp_en_gpio);
 		}
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		vdd = check_valid_ctrl(ctrl_pdata);
+		if (gpio_is_valid(ctrl_pdata->rst_gpio) &&
+				vdd->dtsi_data[ctrl_pdata->ndx].samsung_dsi_off_reset_delay)
+			usleep_range(vdd->dtsi_data[ctrl_pdata->ndx].samsung_dsi_off_reset_delay,
+					vdd->dtsi_data[ctrl_pdata->ndx].samsung_dsi_off_reset_delay);
+#endif
 		gpio_set_value((ctrl_pdata->rst_gpio), 0);
 		gpio_free(ctrl_pdata->rst_gpio);
 		if (gpio_is_valid(ctrl_pdata->lcd_mode_sel_gpio)) {
@@ -1146,10 +1154,10 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 					else
 						mdss_samsung_panel_on_pre(pdata);
 				}
-				
+
 				if (ctrl->off_cmds.cmd_cnt)
 					mdss_dsi_panel_cmds_send(ctrl, &ctrl->off_cmds, CMD_REQ_COMMIT);
-				
+
 				vdd->hall_ic_status = hall_ic_status;
 				pr_info("%s %d hall_ic_status:%d\n", __func__, __LINE__, vdd->hall_ic_status);
 				/* Panel Select */

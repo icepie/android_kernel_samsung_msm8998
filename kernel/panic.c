@@ -92,7 +92,9 @@ void panic(const char *fmt, ...)
 	long i, i_next = 0;
 	int state = 0;
 
+#ifdef CONFIG_USER_RESET_DEBUG
 	sec_debug_store_extc_idx(false);
+#endif
 #ifdef CONFIG_SEC_ISDBT_FORCE_OFF
 	if (isdbt_force_off_callback)
 		isdbt_force_off_callback();

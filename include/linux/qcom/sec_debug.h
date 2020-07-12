@@ -545,6 +545,19 @@ extern void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd);
 extern void *kfree_hook(void *p, void *caller);
 #endif
 
+typedef struct {
+	char dev_name[24];
+	u32 fsr;
+	u32 fsynr;	
+	unsigned long iova;
+	unsigned long far;
+	char mas_name[24];
+	u8 cbndx;
+	phys_addr_t phys_soft;
+	phys_addr_t phys_atos;
+	u32 sid;
+} ex_info_smmu_t;
+
 #ifdef CONFIG_USER_RESET_DEBUG
 
 typedef enum {
@@ -595,19 +608,6 @@ typedef struct {
 } ex_info_fault_t;
 
 extern ex_info_fault_t ex_info_fault[NR_CPUS];
-
-typedef struct {
-	char dev_name[24];
-	u32 fsr;
-	u32 fsynr;	
-	unsigned long iova;
-	unsigned long far;
-	char mas_name[24];
-	u8 cbndx;
-	phys_addr_t phys_soft;
-	phys_addr_t phys_atos;
-	u32 sid;
-} ex_info_smmu_t;
 
 typedef struct {
 	int reason;
@@ -822,5 +822,15 @@ struct tsp_dump_callbacks {
 extern void (*isdbt_force_off_callback)(void);
 #endif
 
+#ifdef CONFIG_SEC_DEBUG_PWDT
+#define SEC_DEBUG_MAX_PWDT_RESTART_CNT 20	//200 seconds
+#define SEC_DEBUG_MAX_PWDT_SYNC_CNT 40	//400 seconds
+#define SEC_DEBUG_MAX_PWDT_INIT_CNT 200	//2000 seconds
+extern void sec_debug_check_pwdt(void);
+extern unsigned int is_verifiedboot_state(void);
+#endif
+
+extern unsigned int __is_boot_recovery(void);
+extern unsigned int __is_boot_lpm(void);
 extern unsigned int lpcharge;
 #endif	/* SEC_DEBUG_H */

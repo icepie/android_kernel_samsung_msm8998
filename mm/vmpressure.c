@@ -204,6 +204,7 @@ static bool vmpressure_event(struct vmpressure *vmpr,
 
 	pressure = vmpressure_calc_pressure(scanned, reclaimed);
 	level = vmpressure_level(pressure);
+	vmpr->pressure = pressure;
 
 	mutex_lock(&vmpr->events_lock);
 

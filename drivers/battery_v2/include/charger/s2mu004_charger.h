@@ -153,8 +153,12 @@
 #define CHG_MODE		3
 #define BUCK_MODE		1
 #define OTG_BST_MODE		6
+#define TX_BST_MODE		10
 
 /* S2MU004_CHG_CTRL1 */
+#define SEL_PRIO_WCIN_SHIFT		4
+#define SEL_PRIO_WCIN_WIDTH		1
+#define SEL_PRIO_WCIN_MASK	MASK(SEL_PRIO_WCIN_WIDTH, SEL_PRIO_WCIN_SHIFT)
 
 /* S2MU004_CHG_CTRL2 */
 #define INPUT_CURRENT_LIMIT_SHIFT	0
@@ -190,8 +194,8 @@
 #define SET_VF_VBAT_MASK	MASK(SET_VF_VBAT_WIDTH, SET_VF_VBAT_SHIFT)
 
 /* S2MU004_CHG_CTRL7 */
-#define SET_VF_VBYP_SHIFT	5
-#define SET_VF_VBYP_WIDTH	2
+#define SET_VF_VBYP_SHIFT	0
+#define SET_VF_VBYP_WIDTH	5
 #define SET_VF_VBYP_MASK	MASK(SET_VF_VBYP_WIDTH, SET_VF_VBYP_SHIFT)
 #define SET_VSYS_SHIFT		0
 #define SET_VSYS_WIDTH		3
@@ -209,6 +213,12 @@
 #define FAST_CHARGING_CURRENT_WIDTH	7
 #define FAST_CHARGING_CURRENT_MASK	MASK(FAST_CHARGING_CURRENT_WIDTH,\
 					FAST_CHARGING_CURRENT_SHIFT)
+
+/* S2MU004_CHG_CTRL10 */
+#define SET_BAT_OCP_SHIFT	0
+#define SET_BAT_OCP_WIDTH	3
+#define SET_BAT_OCP_MASK	MASK(SET_BAT_OCP_WIDTH,\
+					SET_BAT_OCP_SHIFT)
 
 /* S2MU004_CHG_CTRL11 */
 #define FIRST_TOPOFF_CURRENT_SHIFT	0
@@ -288,6 +298,16 @@ enum {
 /* S2MU004_REG_SELFDIS_CFG3 */
 #define SELF_DISCHG_MODE_SHIFT	7
 #define SELF_DISCHG_MODE_MASK	BIT(SELF_DISCHG_MODE_SHIFT)
+/* S2MU004_REG_SC_INT2 */
+#define S2MU004_IVR_I			(1 << 1)
+#define S2MU004_AICL_I			(1 << 2)
+#define S2MU004_IVR_M			(1 << 1)
+#define S2MU004_AICL_M			(1 << 2)
+#define IVR_STATUS			0x80
+#define IVR_M_SHIFT			1
+#define IVR_M_MASK			BIT(IVR_M_SHIFT)
+#define REDUCE_CURRENT_STEP		100
+#define MINIMUM_INPUT_CURRENT		300
 
 enum {
 	CHIP_ID = 0,
@@ -360,8 +380,11 @@ struct s2mu004_charger_platform_data {
 	int chg_switching_freq;
 	bool chg_freq_ctrl;
 	unsigned int support_pogo;
+	int wcinokb;
 	/* 2nd full check */
 	sec_battery_full_charged_t full_check_type_2nd;
+	/* Slow charging current */
+	int slow_charging_current;
 };
 
 #define s2mu004_charger_platform_data_t \
@@ -373,9 +396,6 @@ struct s2mu004_charger_data {
 	struct s2mu004_platform_data *s2mu004_pdata;
 	struct delayed_work	charger_work;
 	struct delayed_work	wpc_work;
-#ifndef CONFIG_SEC_FACTORY
-	struct delayed_work	otg_vbus_work;
-#endif
 	struct workqueue_struct *charger_wqueue;
 	struct wake_lock wpc_wake_lock;
 	struct power_supply		*psy_chg;
@@ -402,6 +422,7 @@ struct s2mu004_charger_data {
 
 	/* s2mu004 */
 	int irq_det_bat;
+	int irq_otg_fault;
 	int irq_chgin;
 	int irq_chg_fault;
 	int irq_vbus;
@@ -410,7 +431,12 @@ struct s2mu004_charger_data {
 	int irq_sys;
 	int irq_bat;
 	int irq_wcin;
-
+	int irq_ivr;
+	struct delayed_work ivr_work;
+	struct wake_lock ivr_wake_lock;
+	int irq_ivr_enabled;
+	int ivr_on;
+	bool slow_charging;
 	/* wireless charge, w(wpc), v(vbus) */
 	int wc_w_irq;
 	int wc_w_state;

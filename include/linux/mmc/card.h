@@ -357,6 +357,7 @@ struct mmc_card_error_log {
         u32     ecc_cnt;        // status[21] : ecc error
         u32     wp_cnt;         // status[26] : write protection error
         u32     oor_cnt;        // status[31] : out of range error
+	u32	noti_cnt;	// uevent notification count
 };
 
 /*

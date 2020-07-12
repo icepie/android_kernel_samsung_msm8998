@@ -584,11 +584,6 @@ static int32_t msm_actuator_piezo_move_focus(
 	struct msm_camera_i2c_reg_setting reg_setting;
 	CDBG("Enter\n");
 
-	if (a_ctrl->i2c_reg_tbl == NULL) {
-		pr_err("failed. i2c reg tabl is NULL");
-		return -EFAULT;
-	}
-
 	if (copy_from_user(&ringing_params_kernel,
 		&(move_params->ringing_params[0]),
 		sizeof(struct damping_params_t))) {
@@ -599,6 +594,11 @@ static int32_t msm_actuator_piezo_move_focus(
 	if (num_steps <= 0 || num_steps > MAX_NUMBER_OF_STEPS) {
 		pr_err("num_steps out of range = %d\n",
 			num_steps);
+		return -EFAULT;
+	}
+
+	if (a_ctrl->i2c_reg_tbl == NULL) {
+		pr_err("failed. i2c reg tabl is NULL");
 		return -EFAULT;
 	}
 
@@ -664,6 +664,7 @@ static int32_t msm_actuator_move_focus(
 		pr_err("failed. i2c reg tabl is NULL");
 		return -EFAULT;
 	}
+
 	if (dest_step_pos > a_ctrl->total_steps) {
 		pr_err("Step pos greater than total steps = %d\n",
 		dest_step_pos);
@@ -1399,7 +1400,6 @@ static int32_t msm_actuator_set_param(struct msm_actuator_ctrl_t *a_ctrl,
 		(a_ctrl->i2c_reg_tbl != NULL)) {
 		kfree(a_ctrl->i2c_reg_tbl);
 	}
-
 	a_ctrl->i2c_reg_tbl = NULL;
 	a_ctrl->i2c_reg_tbl =
 		kmalloc(sizeof(struct msm_camera_i2c_reg_array) *

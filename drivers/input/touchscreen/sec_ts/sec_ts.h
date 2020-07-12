@@ -295,6 +295,7 @@
 #define SEC_TS_SID_GESTURE		0x14
 #define SEC_TS_GESTURE_CODE_SPAY		0x00
 #define SEC_TS_GESTURE_CODE_DOUBLE_TAP		0x01
+#define SEC_TS_GESTURE_CODE_SINGLE_TAP		0x02
 
 #define SEC_TS_COORDINATE_ACTION_NONE		0
 #define SEC_TS_COORDINATE_ACTION_PRESS		1
@@ -455,7 +456,7 @@ typedef enum {
 	SPONGE_EVENT_TYPE_SPAY			= 0x04,
 	SPONGE_EVENT_TYPE_PRESSURE_TOUCHED = 0x05,
 	SPONGE_EVENT_TYPE_PRESSURE_RELEASED	= 0x06,
-	SPONGE_EVENT_TYPE_AOD			= 0x08,
+	SPONGE_EVENT_TYPE_SINGLE_TAP		= 0x08,
 	SPONGE_EVENT_TYPE_AOD_PRESS		= 0x09,
 	SPONGE_EVENT_TYPE_AOD_LONGPRESS		= 0x0A,
 	SPONGE_EVENT_TYPE_AOD_DOUBLETAB		= 0x0B,
@@ -464,6 +465,14 @@ typedef enum {
 	SPONGE_EVENT_TYPE_AOD_HOMEKEY_RELEASE_NO_HAPTIC	= 0x0E
 } SPONGE_EVENT_TYPE;
 
+/*
+ * support_feature
+ * bit value should be made a promise with InputFramework.
+ */
+#define INPUT_FEATURE_ENABLE_SETTINGS_AOT	(1 << 0) /* Double tap wakeup settings */
+#define INPUT_FEATURE_ENABLE_PRESSURE		(1 << 1) /* homekey pressure */
+#define INPUT_FEATURE_ENABLE_SYNC_RR120		(1 << 2) /* sync reportrate 120hz */
+
 #define CMD_RESULT_WORD_LEN		10
 
 #define SEC_TS_I2C_RETRY_CNT		3
@@ -471,10 +480,11 @@ typedef enum {
 
 #define SEC_TS_MODE_SPONGE_SPAY			(1 << 1)
 #define SEC_TS_MODE_SPONGE_AOD			(1 << 2)
-#define SEC_TS_MODE_SPONGE_FORCE_KEY	(1 << 6)
+#define SEC_TS_MODE_SPONGE_SINGLE_TAP		(1 << 3)
+#define SEC_TS_MODE_SPONGE_FORCE_KEY		(1 << 6)
 
-#define SEC_TS_MODE_LOWPOWER_FLAG			(SEC_TS_MODE_SPONGE_SPAY | SEC_TS_MODE_SPONGE_AOD \
-											| SEC_TS_MODE_SPONGE_FORCE_KEY)
+#define SEC_TS_MODE_LOWPOWER_FLAG		(SEC_TS_MODE_SPONGE_SPAY | SEC_TS_MODE_SPONGE_AOD \
+							| SEC_TS_MODE_SPONGE_SINGLE_TAP | SEC_TS_MODE_SPONGE_FORCE_KEY)
 
 #define SEC_TS_AOD_GESTURE_PRESS		(1 << 7)
 #define SEC_TS_AOD_GESTURE_LONGPRESS		(1 << 6)
@@ -789,7 +799,6 @@ struct sec_ts_data {
 #endif
 	short pressure_data[TYPE_RAWDATA_MAX][PRESSURE_CHANNEL_NUM];
 	int debug_flag;
-	int fix_active_mode;
 
 	int (*sec_ts_i2c_write)(struct sec_ts_data *ts, u8 reg, u8 *data, int len);
 	int (*sec_ts_i2c_read)(struct sec_ts_data *ts, u8 reg, u8 *data, int len);

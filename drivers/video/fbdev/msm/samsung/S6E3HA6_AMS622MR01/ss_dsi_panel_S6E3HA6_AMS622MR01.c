@@ -1827,8 +1827,8 @@ static void dsi_update_mdnie_data(void)
 	mdnie_data.dsi1_max_adjust_ldu = 6;
 	mdnie_data.dsi0_night_mode_table = night_mode_data;
 	mdnie_data.dsi1_night_mode_table = night_mode_data;
-	mdnie_data.dsi0_max_night_mode_index = 11;
-	mdnie_data.dsi1_max_night_mode_index = 11;
+	mdnie_data.dsi0_max_night_mode_index = 12;
+	mdnie_data.dsi1_max_night_mode_index = 12;
 	mdnie_data.dsi0_color_lens_table = color_lens_data;
 	mdnie_data.dsi1_color_lens_table = color_lens_data;
 	mdnie_data.dsi0_white_default_r = 0xff;

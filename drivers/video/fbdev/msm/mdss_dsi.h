@@ -757,6 +757,7 @@ void mdss_dsi_debug_bus_init(struct mdss_dsi_data *sdata);
 
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 void mdss_dsi_samsung_poc_perf_mode_ctl(struct mdss_dsi_ctrl_pdata *ctrl, int enable);
+int mdss_dsi_clk_config(struct mdss_panel_data *pdata, u64 new_clk_rate);
 #endif
 
 static inline const char *__mdss_dsi_pm_name(enum dsi_pm_type module)

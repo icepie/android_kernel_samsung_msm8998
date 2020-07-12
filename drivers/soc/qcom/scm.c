@@ -188,9 +188,8 @@ static int scm_remap_error(int err)
 	case SCM_ENOMEM:
 		return -ENOMEM;
 	case SCM_EBUSY:
-		return SCM_EBUSY;
 	case SCM_V2_EBUSY:
-		return SCM_V2_EBUSY;
+		return -EBUSY;
 	}
 	return -EINVAL;
 }
@@ -355,13 +354,13 @@ static int _scm_call_retry(u32 svc_id, u32 cmd_id, const void *cmd_buf,
 	do {
 		ret = scm_call_common(svc_id, cmd_id, cmd_buf, cmd_len,
 					resp_buf, resp_len, cmd, len);
-		if (ret == SCM_EBUSY)
+		if (ret == -EBUSY)
 			msleep(SCM_EBUSY_WAIT_MS);
 		if (retry_count == 33)
 			pr_warn("scm: secure world has been busy for 1 second!\n");
-	} while (ret == SCM_EBUSY && (retry_count++ < SCM_EBUSY_MAX_RETRY));
+	} while (ret == -EBUSY && (retry_count++ < SCM_EBUSY_MAX_RETRY));
 
-	if (ret == SCM_EBUSY)
+	if (ret == -EBUSY)
 		pr_err("scm: secure world busy (rc = SCM_EBUSY)\n");
 
 	return ret;
@@ -676,7 +675,10 @@ static int allocate_extra_arg_buffer(struct scm_desc *desc, gfp_t flags)
 */
 int scm_call2(u32 fn_id, struct scm_desc *desc)
 {
-	int call_from_ss_daemon;
+	const char* const proca_clients_names[] =
+	{"secure_storage_", "pa_daemon", "proca@1.0-servi", "wsmd", "wsm@1.0-service", NULL}; // keep last NULL!
+	int call_from_proca = 0;
+	int i = 0;
 	int arglen = desc->arginfo & 0xf;
 	int ret, retry_count = 0;
 	u64 x0;
@@ -692,9 +694,19 @@ int scm_call2(u32 fn_id, struct scm_desc *desc)
 	
 	
 	/*
-	 * in case of secure_storage_daemon
+	 * in case of pa_daemon
 	 */
-	call_from_ss_daemon = (strncmp(current_thread_info()->task->comm, "secure_storage_daemon", TASK_COMM_LEN - 1) == 0);
+	for (i = 0; proca_clients_names[i]; i++) {
+		if (current == NULL) {
+			break;
+		}
+		
+		if (strncmp(current->comm, proca_clients_names[i],
+					TASK_COMM_LEN - 1) == 0) {
+			call_from_proca = 1;
+			break;
+		}
+	}
 
 	do {
 		mutex_lock(&scm_lock);
@@ -704,7 +716,7 @@ int scm_call2(u32 fn_id, struct scm_desc *desc)
 
 		desc->ret[0] = desc->ret[1] = desc->ret[2] = 0;
 
-		if (call_from_ss_daemon) {
+		if (call_from_proca) {
 			flush_cache_all();
 #if defined(CONFIG_ARCH_MSM8998)
 			smp_call_function((void (*)(void *))__wrap_flush_cache_all, NULL, 1);
@@ -731,7 +743,7 @@ int scm_call2(u32 fn_id, struct scm_desc *desc)
 
 		trace_scm_call_end(desc);
 
-		if (call_from_ss_daemon) {
+		if (call_from_proca) {
 			flush_cache_all();
 #if defined(CONFIG_ARCH_MSM8998)
 			smp_call_function((void (*)(void *))__wrap_flush_cache_all, NULL, 1);
@@ -843,7 +855,7 @@ int scm_call(u32 svc_id, u32 cmd_id, const void *cmd_buf, size_t cmd_len,
 
 	ret = scm_call_common(svc_id, cmd_id, cmd_buf, cmd_len, resp_buf,
 				resp_len, cmd, len);
-	if (unlikely(ret == SCM_EBUSY))
+	if (unlikely(ret == -EBUSY))
 		ret = _scm_call_retry(svc_id, cmd_id, cmd_buf, cmd_len,
 				      resp_buf, resp_len, cmd, PAGE_ALIGN(len));
 	kfree(cmd);

@@ -38,7 +38,7 @@ char CCIC_NOTI_DEST_Print[9][10] =
     {"ALL"},
 };
 
-char CCIC_NOTI_ID_Print[13][20] =
+char CCIC_NOTI_ID_Print[CCIC_NOTI_ID_NUM][20] =
 {
     {"ID_INITIAL"},
     {"ID_ATTACH"},
@@ -46,6 +46,7 @@ char CCIC_NOTI_ID_Print[13][20] =
     {"ID_USB"},
     {"ID_POWER_STATUS"},
     {"ID_WATER"},
+    {"ID_DRY"},
     {"ID_VCONN"},
     {"ID_DP_CONNECT"},
     {"ID_DP_HPD"},
@@ -53,6 +54,10 @@ char CCIC_NOTI_ID_Print[13][20] =
     {"ID_DP_USB"},
     {"ID_ROLE_SWAP"},
     {"ID_FAC"},
+#ifdef CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET
+    {"ID_EARJACK"},
+#endif
+    {"ID_ROLE_SWAP_FAIL"},
 };
 
 char CCIC_NOTI_RID_Print[8][15] =
@@ -241,6 +246,7 @@ int ccic_notifier_notify(CC_NOTI_TYPEDEF *p_noti, void *pd, int pdic_attach)
 			((CC_NOTI_ATTACH_TYPEDEF *)p_noti)->dest,
 			((CC_NOTI_ATTACH_TYPEDEF *)p_noti)->id,
 			((CC_NOTI_ATTACH_TYPEDEF *)p_noti)->attach);
+		break;
 	default:
 		pr_info("%s: src:%01x dest:%01x id:%02x "
 			"sub1:%d sub2:%02x sub3:%02x\n", __func__,

@@ -59,6 +59,10 @@
 
 #define TFA98XX_VERSION	TFA98XX_API_REV_STR
 
+#if defined(TFA_NO_SND_FORMAT_CHECK)
+#define TFA_FULL_RATE_SUPPORT_WITH_POST_CONVERSION
+#endif
+
 /* Change volume selection behavior:
  * Uncomment following line to generate a profile change when updating
  * a volume control (also changes to the profile of the modified  volume
@@ -67,7 +71,11 @@
 /* #define TFA98XX_ALSA_CTRL_PROF_CHG_ON_VOL	1 */
 
 /* Supported rates and data formats */
+#if !defined(TFA_FULL_RATE_SUPPORT_WITH_POST_CONVERSION)
 #define TFA98XX_RATES SNDRV_PCM_RATE_8000_48000
+#else
+#define TFA98XX_RATES SNDRV_PCM_RATE_8000_192000
+#endif
 #define TFA98XX_FORMATS	(SNDRV_PCM_FMTBIT_S16_LE | \
 SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S32_LE)
 
@@ -76,7 +84,6 @@ SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S32_LE)
 #define TFA_FORCE_TO_WAIT_UNTIL_CALIBRATE
 #define TFA_CHECK_CALIBRATE_DONE
 #define TFA_DBGFS_CHECK_MTPEX
-#define TFA_FULL_RATE_SUPPORT_WITH_POST_CONVERSION
 
 #define XMEM_TAP_ACK  0x0122
 #define XMEM_TAP_READ 0x010f
@@ -85,6 +92,11 @@ int tfa98xx_log_revision;
 int tfa98xx_log_subrevision;
 int tfa98xx_log_i2c_devicenum;
 int tfa98xx_log_i2c_slaveaddress;
+
+#if defined(TFA_ACTIVATED_ASYNCHRONOUSLY)
+static unsigned char ready_to_activate; /* bit mapping with device */
+static int pending_pstream[MAX_HANDLES] = {0, 0, 0, 0};
+#endif
 
 #if defined(TFA_FULL_RATE_SUPPORT_WITH_POST_CONVERSION)
 static unsigned int sr_converted = 48000;
@@ -141,7 +153,11 @@ static int pcm_sample_format;
 module_param(pcm_sample_format, int, 0444);
 MODULE_PARM_DESC(pcm_sample_format, "PCM sample format: 0=S16_LE, 1=S24_LE, 2=S32_LE\n");
 
+#if defined(TFA_NO_SND_FORMAT_CHECK)
+static int pcm_no_constraint = 1;
+#else
 static int pcm_no_constraint;
+#endif
 module_param(pcm_no_constraint, int, 0444);
 MODULE_PARM_DESC(pcm_no_constraint, "do not use constraints for PCM parameters\n");
 
@@ -175,6 +191,14 @@ static struct tfa98xx_rate rate_to_fssel[] = {
 	{ 32000, 6 },
 	{ 44100, 7 },
 	{ 48000, 8 },
+#if defined(TFA_NO_SND_FORMAT_CHECK)
+/* out of range */
+	{ 64000, 9 },
+	{ 88200, 10 },
+	{ 96000, 11 },
+	{ 176400, 12 },
+	{ 192000, 13 },
+#endif
 };
 
 /* Wrapper for tfa start */
@@ -1563,7 +1587,7 @@ DEFINE_SIMPLE_ATTRIBUTE(tfa98xx_dbgfs_reg_##__reg##_fops, \
 
 #define TFA98XX_DEBUGFS_REG_CREATE_FILE(__reg, __name)			\
 	debugfs_create_file(TOSTRING(__reg) "-" TOSTRING(__name),	\
-			    0666, dbg_reg_dir,		\
+			    0664, dbg_reg_dir,		\
 			    i2c, &tfa98xx_dbgfs_reg_##__reg##_fops)
 
 TFA98XX_DEBUGFS_REG_SET(00);
@@ -2083,10 +2107,12 @@ static int tfa98xx_set_stop_ctl(struct snd_kcontrol *kcontrol,
 
 	if ((ucontrol->value.integer.value[0] != 0) && ready) {
 		cancel_delayed_work_sync(&tfa98xx->monitor_work);
-
 		cancel_delayed_work_sync(&tfa98xx->init_work);
+		tfa98xx->init_count = 0;
+
 		if (tfa98xx->dsp_fw_state != TFA98XX_DSP_FW_OK)
 			return 0;
+
 		mutex_lock(&tfa98xx->dsp_lock);
 		tfa_stop();
 		tfa98xx->dsp_init = TFA98XX_DSP_INIT_STOPPED;
@@ -2185,6 +2211,93 @@ static int tfa98xx_get_saam_ctl(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+#if defined(TFA_ACTIVATED_ASYNCHRONOUSLY)
+static int tfa98xx_set_activate_spk(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct tfa98xx *tfa98xx = snd_soc_codec_get_drvdata(codec);
+	struct tfa98xx *tfa98xx_queued;
+	int activate_spk = ucontrol->value.integer.value[0];
+	int prior_pstream;
+	int i = 0;
+
+	dev_dbg(&tfa98xx->i2c->dev, "%s: state: %d\n", __func__, activate_spk);
+
+	pr_info("%s: [0x%x] trigger tfa amp asynchronously (%s: 0x%x)\n",
+		__func__, tfa98xx->i2c->addr,
+		activate_spk ? "ready" : "suspend",
+		activate_spk);
+	/* activate_spk = b3;b2;b1;b0 to set which device to enable
+	 * e.g. b0: first device (left), b1: second device (right)
+	 *      activate_spk = 2 (0010b) to enable right / disable left
+	 */
+
+	if (ready_to_activate == (unsigned char)activate_spk) {
+		pr_info("%s: [0x%x] skip action for the same trigger\n",
+			__func__, tfa98xx->i2c->addr);
+		return 0;
+	}
+
+	ready_to_activate = (unsigned char)activate_spk;
+
+	if (ready_to_activate > 0) {
+		for (i = 0; i < tfa98xx_cnt_max_device(); i++) {
+			tfa98xx_queued = tfa98xx_devices[i];
+			if (tfa98xx_queued->pstream == 0)
+				continue;
+			prior_pstream = tfa98xx_queued->pstream;
+			pr_info("%s: [0x%x] trigger mute first if pstream is active\n",
+				__func__, tfa98xx_queued->i2c->addr);
+			_tfa98xx_mute(tfa98xx_queued,
+				1, SNDRV_PCM_STREAM_PLAYBACK);
+			pending_pstream[i] = prior_pstream;
+		}
+		for (i = 0; i < tfa98xx_cnt_max_device(); i++) {
+			if (pending_pstream[i] == 0)
+				continue;
+			tfa98xx_queued = tfa98xx_devices[i];
+			pr_info("%s: [0x%x] trigger unmute by force\n",
+				__func__, tfa98xx_queued->i2c->addr);
+			_tfa98xx_mute(tfa98xx_queued,
+				0, SNDRV_PCM_STREAM_PLAYBACK);
+		}
+	} else {
+		for (i = 0; i < tfa98xx_cnt_max_device(); i++) {
+			tfa98xx_queued = tfa98xx_devices[i];
+			if (tfa98xx_queued->pstream == 0)
+				continue;
+			prior_pstream = tfa98xx_queued->pstream;
+			pr_info("%s: [0x%x] trigger mute by force\n",
+				__func__, tfa98xx_queued->i2c->addr);
+			_tfa98xx_mute(tfa98xx_queued,
+				1, SNDRV_PCM_STREAM_PLAYBACK);
+			pending_pstream[i] = prior_pstream;
+		}
+	}
+
+	return 0;
+}
+
+static int tfa98xx_get_activate_spk(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = ready_to_activate;
+	return 0;
+}
+
+int tfa_is_selected_dev_to_activate(tfa98xx_handle_t handle)
+{
+	if (ready_to_activate & (1 << handle)) {
+		pr_info("%s: device matched for activation: [%d:0x%x]\n",
+			__func__, handle, ready_to_activate);
+		return 1;
+	}
+
+	return 0;
+}
+#endif /* TFA_ACTIVATED_ASYNCHRONOUSLY */
+
 static int tfa98xx_create_controls(struct tfa98xx *tfa98xx)
 {
 	int prof, nprof, mix_index = 0;
@@ -2215,6 +2328,10 @@ static int tfa98xx_create_controls(struct tfa98xx *tfa98xx)
 		if (tfa_cont_get_max_vstep(tfa98xx->handle, prof))
 			nr_controls++; /* Playback Volume control */
 	}
+
+#if defined(TFA_ACTIVATED_ASYNCHRONOUSLY)
+	nr_controls++; /* set ready to activate amplifier */
+#endif
 
 	tfa98xx_controls = devm_kzalloc(tfa98xx->codec->dev,
 			nr_controls * sizeof(tfa98xx_controls[0]), GFP_KERNEL);
@@ -2356,6 +2473,27 @@ static int tfa98xx_create_controls(struct tfa98xx *tfa98xx)
 		/* save number of profiles */
 		mix_index++;
 	}
+
+#if defined(TFA_ACTIVATED_ASYNCHRONOUSLY)
+	/*
+	 * Create a mixer item to activate amplifier
+	 * only at requesst instead of mixer routing
+	 */
+	name = devm_kzalloc
+		(tfa98xx->codec->dev, MAX_CONTROL_NAME, GFP_KERNEL);
+	if (!name)
+		return -ENOMEM;
+
+	scnprintf(name, MAX_CONTROL_NAME, "ActivateSpk");
+	tfa98xx_controls[mix_index].name = name;
+	tfa98xx_controls[mix_index].iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+	tfa98xx_controls[mix_index].info = snd_soc_info_bool_ext;
+	tfa98xx_controls[mix_index].get = tfa98xx_get_activate_spk;
+	tfa98xx_controls[mix_index].put = tfa98xx_set_activate_spk;
+	/* tfa98xx_controls[mix_index].private_value = profs; */
+	/* save number of profiles */
+	mix_index++;
+#endif /* TFA_ACTIVATED_ASYNCHRONOUSLY */
 
 	return snd_soc_add_codec_controls(tfa98xx->codec,
 		tfa98xx_controls, mix_index);
@@ -2882,7 +3020,6 @@ tfa98xx_container_loaded(const struct firmware *cont,	void *context)
 	enum tfa_error tfa_err;
 	int container_size;
 	int handle;
-	int ret;
 #if defined(TFA_DBGFS_CHECK_MTPEX)
 	unsigned short value;
 #endif
@@ -3020,16 +3157,19 @@ tfa98xx_container_loaded(const struct firmware *cont,	void *context)
 		tfa_reset();
 	}
 
+#if !defined(TFA_ACTIVATED_ASYNCHRONOUSLY)
 	if (tfa98xx->handle == 0) {
 		mutex_lock(&tfa98xx->dsp_lock);
-		ret = tfa98xx_tfa_start
+		tfa_err = tfa98xx_tfa_start
 			(tfa98xx, tfa98xx_profile, tfa98xx_vsteps);
-		if (ret == TFA98XX_ERROR_OK)
+		if ((int)tfa_err == TFA98XX_ERROR_OK)
 			tfa98xx->dsp_init = TFA98XX_DSP_INIT_DONE;
-		else if (ret == TFA98XX_ERROR_NOT_SUPPORTED)
+		else if ((int)tfa_err == TFA98XX_ERROR_NOT_SUPPORTED)
 			tfa98xx->dsp_fw_state = TFA98XX_DSP_FW_FAIL;
 		mutex_unlock(&tfa98xx->dsp_lock);
 	}
+#endif
+
 	tfa98xx_interrupt_enable(tfa98xx, true);
 
 	mutex_unlock(&probe_lock);
@@ -3267,8 +3407,8 @@ static void tfa98xx_dsp_init_work(struct work_struct *work)
 	struct tfa98xx *tfa98xx =
 		container_of(work, struct tfa98xx, init_work.work);
 
-	/* Only do dsp init for master device */
-	if (tfa98xx->handle != 0)
+	/* Only do dsp init for last device */
+	if (tfa98xx->handle != tfa98xx_cnt_max_device() - 1)
 		return;
 
 	tfa98xx_dsp_init(tfa98xx);
@@ -3509,23 +3649,26 @@ static int tfa98xx_startup(struct snd_pcm_substream *substream,
 			}
 		}
 	}
+
+#if !defined(TFADSP_DSP_BUFFER_POOL)
+	kfree(basename);
+#endif
+
+	return snd_pcm_hw_constraint_list(substream->runtime, 0,
+				   SNDRV_PCM_HW_PARAM_RATE,
+				   &tfa98xx->rate_constraint);
 #else
 	pr_info("%s: add all the rates in the list\n", __func__);
 	for (idx = 0; idx < ARRAY_SIZE(rate_to_fssel); idx++) {
 		tfa98xx->rate_constraint_list[idx] = rate_to_fssel[idx].rate;
 		tfa98xx->rate_constraint.count += 1;
 	}
+
+	pr_info("%s: skip setting constraint, assuming fixed format\n",
+		__func__);
+
+	return 0;
 #endif /* TFA_FULL_RATE_SUPPORT_WITH_POST_CONVERSION */
-
-#if !defined(TFA_FULL_RATE_SUPPORT_WITH_POST_CONVERSION)
-#if !defined(TFADSP_DSP_BUFFER_POOL)
-	kfree(basename);
-#endif
-#endif
-
-	return snd_pcm_hw_constraint_list(substream->runtime, 0,
-				   SNDRV_PCM_HW_PARAM_RATE,
-				   &tfa98xx->rate_constraint);
 }
 
 static int tfa98xx_set_dai_sysclk(struct snd_soc_dai *codec_dai,
@@ -3645,6 +3788,15 @@ static int tfa98xx_mute(struct snd_soc_dai *dai, int mute, int stream)
 
 static int _tfa98xx_mute(struct tfa98xx *tfa98xx, int mute, int stream)
 {
+#if defined(TFA_USE_PSTREAM_ONLY)
+	if (handles_local[0].ext_dsp == 0) /* master device only */
+		if (stream == SNDRV_PCM_STREAM_CAPTURE) {
+			pr_info("%s: skip cstream if running without ext_dsp\n",
+				__func__);
+			return 0;
+		}
+#endif
+
 	if (mute) {
 		/* stop DSP only when both playback and capture streams
 		 * are deactivated
@@ -3721,9 +3873,27 @@ static int _tfa98xx_mute(struct tfa98xx *tfa98xx, int mute, int stream)
 		mutex_lock(&tfa98xx->dsp_lock);
 		pr_info("%s: stop tfa amp\n", __func__);
 		tfa_stop();
+#if defined(TFA_ACTIVATED_ASYNCHRONOUSLY)
+		pr_info("%s: [0x%x] reset pending stream (%d)\n",
+			__func__, tfa98xx->i2c->addr, stream);
+		if (stream == SNDRV_PCM_STREAM_PLAYBACK)
+			pending_pstream[tfa98xx->handle] = 0;
+#endif
 		tfa98xx->dsp_init = TFA98XX_DSP_INIT_STOPPED;
 		mutex_unlock(&tfa98xx->dsp_lock);
 	} else {
+#if defined(TFA_ACTIVATED_ASYNCHRONOUSLY)
+		if (ready_to_activate == 0) {
+			pr_info("%s: [0x%x] skip if ready_to_active is not set (%d)\n",
+				__func__, tfa98xx->i2c->addr, stream);
+			if (stream == SNDRV_PCM_STREAM_PLAYBACK)
+				pending_pstream[tfa98xx->handle] = 1;
+			return 0;
+		}
+		pr_info("%s: [0x%x] unmute as ready_to_active is set (%d)\n",
+			__func__, tfa98xx->i2c->addr, stream);
+		pending_pstream[tfa98xx->handle] = 0;
+#endif
 		if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
 			if (tfa98xx->pstream == 1) {
 				pr_debug("mute:%d [pstream duplicated]\n",
@@ -3759,11 +3929,29 @@ static int _tfa98xx_mute(struct tfa98xx *tfa98xx, int mute, int stream)
 			return 0;
 		}
 
+		/* Only do dsp init for last device */
+		if (tfa98xx->handle != tfa98xx_cnt_max_device() - 1)
+			return 0;
+
 		/* Start DSP */
 		pr_info("%s: start tfa amp\n", __func__);
+
+#if defined(USE_TFA9896)
+		if (tfa98xx_get_profile_chsa
+			(tfa98xx->handle, tfa98xx_profile) < 2) {
+			pr_debug("%s: bypass case\n", __func__);
+			tfa98xx_dsp_init(tfa98xx);
+		} else {
+			pr_debug("%s: DSP-enabled case\n", __func__);
+			if (tfa98xx->dsp_init != TFA98XX_DSP_INIT_PENDING)
+				queue_delayed_work(tfa98xx->tfa98xx_wq,
+					&tfa98xx->init_work, 0);
+		}
+#else
 		if (tfa98xx->dsp_init != TFA98XX_DSP_INIT_PENDING)
 			queue_delayed_work(tfa98xx->tfa98xx_wq,
-					   &tfa98xx->init_work, 0);
+				&tfa98xx->init_work, 0);
+#endif
 	}
 
 	return 0;
@@ -3798,9 +3986,11 @@ static struct snd_soc_dai_driver tfa98xx_dai[] = {
 			 .formats = TFA98XX_FORMATS,
 		 },
 		.ops = &tfa98xx_dai_ops,
+#if !defined(TFA_USE_PSTREAM_ONLY)
 		.symmetric_rates = 1,
 		.symmetric_channels = 1,
 		.symmetric_samplebits = 1,
+#endif
 	},
 };
 

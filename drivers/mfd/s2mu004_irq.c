@@ -31,7 +31,7 @@ static const u8 s2mu004_mask_reg[] = {
 	/* TODO: Need to check other INTMASK */
 	[CHG_INT1] = S2MU004_REG_SC_INT1_MASK,
 	[CHG_INT2] = S2MU004_REG_SC_INT2_MASK,
-#if defined(CONFIG_HV_MUIC_S2MU004_AFC)
+#if defined(CONFIG_MUIC_HV)
 	[AFC_INT] = S2MU004_REG_AFC_INT_MASK,
 #endif
 	[MUIC_INT1] = S2MU004_REG_MUIC_INT1_MASK,
@@ -64,7 +64,7 @@ static const struct s2mu004_irq_data s2mu004_irqs[] = {
 	DECLARE_IRQ(S2MU004_CHG2_IRQ_DET_BAT,	CHG_INT2,	1 << 5),
 	DECLARE_IRQ(S2MU004_CHG2_IRQ_BAT,	CHG_INT2,	1 << 6),
 
-#if defined(CONFIG_HV_MUIC_S2MU004_AFC)
+#if defined(CONFIG_MUIC_HV)
 	DECLARE_IRQ(S2MU004_AFC_IRQ_VbADC,	AFC_INT,	1 << 0),
 	DECLARE_IRQ(S2MU004_AFC_IRQ_VDNMon,	AFC_INT,	1 << 1),
 	DECLARE_IRQ(S2MU004_AFC_IRQ_DNRes,	AFC_INT,	1 << 2),
@@ -167,6 +167,19 @@ static irqreturn_t s2mu004_irq_thread(int irq, void *data)
 	pr_debug("%s: irq gpio pre-state(0x%02x)\n", __func__,
 				gpio_get_value(s2mu004->irq_gpio));
 
+	/* CHG_INT1_MASK ~ INT2_MASK, 0x91 */
+	ret = s2mu004_read_reg(s2mu004->i2c, S2MU004_REG_SC_INT1_MASK,
+				&temp);
+	pr_info("%s: SC_INT1_MASK(0x%02x)\n", __func__, temp);
+
+	ret = s2mu004_read_reg(s2mu004->i2c, S2MU004_REG_SC_INT2_MASK,
+				&temp);
+	pr_info("%s: SC_INT2_MASK(0x%02x)\n", __func__, temp);
+
+	ret = s2mu004_read_reg(s2mu004->i2c, 0x91,
+				&temp);
+	pr_info("%s: 0x91(0x%02x)\n", __func__, temp);
+
 	/* CHG_INT1 ~ INT2 */
 	ret = s2mu004_read_reg(s2mu004->i2c, S2MU004_REG_SC_INT1,
 				&irq_reg[CHG_INT1]);
@@ -179,7 +192,7 @@ static irqreturn_t s2mu004_irq_thread(int irq, void *data)
 			__func__, irq_reg[CHG_INT2]);
 
 	/* AFC_INT */
-#if defined(CONFIG_HV_MUIC_S2MU004_AFC)
+#if defined(CONFIG_MUIC_HV)
 	ret = s2mu004_read_reg(s2mu004->i2c, S2MU004_REG_AFC_INT,
 				&irq_reg[AFC_INT]);
 	pr_info("%s: AFC interrupt(0x%02x)\n",

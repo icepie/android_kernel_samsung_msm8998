@@ -122,6 +122,12 @@ config MSM_ISPIF_V2
           of any CID of CSID can be routed to of pixel
           or raw data interface in VFE.
 
+config CAMERA_IRIS
+        bool "To enable IR LED Through FPGA"
+        depends on MSMB_CAMERA
+        ---help---
+        To enable IR LED Through FPGA
+
 config IMX134
 	bool "Sensor IMX134 (BAYER 8M)"
 	depends on MSMB_CAMERA
@@ -281,6 +287,12 @@ config CAMERA_SYSFS_V2
 	---help---
 		CAMERA SYS.
 
+config CONFIG_CAMERA_SYSFS_CAMFW_ALL
+	bool "CAMERA SYS"
+	depends on MSMB_CAMERA
+	---help---
+		CAMERA SYS.
+
 config USE_CAMERA_HW_BIG_DATA
 	bool "CAMERA HW SYS"
 	depends on MSMB_CAMERA
@@ -348,3 +360,10 @@ config SAMSUNG_MULTI_CAMERA
 	default n
 	---help---
 	Enables support for multi camera.
+
+config SAMSUNG_APERTURE
+        bool "External aperture support"
+	depends on MSMB_CAMERA
+	default n
+	---help---
+	Enables support for external aperture module.

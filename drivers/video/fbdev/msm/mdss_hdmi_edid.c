@@ -19,6 +19,7 @@
 #include "mdss_hdmi_edid.h"
 #ifdef CONFIG_SEC_DISPLAYPORT
 #include <linux/dp_logger.h>
+#include "mdss_dp.h"
 #endif
 
 #define DBC_START_OFFSET 4
@@ -167,56 +168,166 @@ struct hdmi_edid_ctrl {
 };
 
 #if defined(CONFIG_SEC_DISPLAYPORT)
-struct secdp_display_timing {
-	uint32_t index; /* Resolution priority */
-	uint32_t active_h;
-	uint32_t active_v;
-	uint32_t refresh_rate;
-	uint32_t interlaced;
-	bool dex_support; /* true if it's dex supported resolution */
-};
 
 /* Index of max resolution which supported by sink */
-static uint32_t g_max_res_index;
+static int g_max_res_index;
 
 /* Index of max resolution which supported by dex station */
-static uint32_t g_dex_max_res_index;
+static int g_dex_max_res_index;
+static bool g_ignore_ratio;
+static enum mon_aspect_ratio_t g_aspect_ratio;
 
 static struct secdp_display_timing secdp_supported_resolution[] = {
-	{0, 640, 480, 60, 0, true},
-	{1, 720, 480, 60, 0, true},
-	{2, 720, 576, 50, 0, true},
+	{ 0,   640,    480,  60, false, DEX_RES_1920X1080},
+	{ 1,   720,    480,  60, false, DEX_RES_1920X1080},
+	{ 2,   720,    576,  50, false, DEX_RES_1920X1080},
 
-	{3, 1280, 720, 50, 0, true},
-	{4, 1280, 720, 60, 0, true},
+	{ 3,   1280,   720,  50, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{ 4,   1280,   720,  60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	{ 5,   1280,   768,  60, false, DEX_RES_1920X1080},                    /* CTS 4.4.1.3 */
+#endif
+	{ 6,   1280,   800,  60, false, DEX_RES_1920X1080,   MON_RATIO_16_10}, /* CTS 18bpp */
+	{ 7,   1280,  1024,  60, false, DEX_RES_1920X1080},                    /* CTS 18bpp */
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	{ 8,   1360,   768,  60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},   /* CTS 4.4.1.3 */
+#endif
 
-	{5, 1280, 800, 60, 0, true}, /* CTS 18bpp */
-	{6, 1280, 1024, 60, 0, true}, /* CTS 18bpp */
+	{ 9,   1366,  768,   60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{10,   1600,  900,   60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
 
-	{7, 1600, 900, 60, 0, true},
+	{20,   1920,  1080,  24, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{21,   1920,  1080,  25, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{22,   1920,  1080,  30, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{23,   1920,  1080,  50, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{24,   1920,  1080,  60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
 
-	{8, 1920, 1080, 24, 0, true},
-	{9, 1920, 1080, 25, 0, true},
-	{10, 1920, 1080, 30, 0, true},
-	{11, 1920, 1080, 50, 0, true},
-	{12, 1920, 1080, 60, 0, true},
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	{25,   1920,  1200,  60, false, DEX_RES_1920X1200,   MON_RATIO_16_10},
+#endif
 
-	{13, 1920, 1440, 60, 0, true}, /* CTS 400.3.3.1 */
-	{14, 2048, 1536, 60, 0, true}, /* CTS 18bpp */
-	{15, 2560, 1440, 60, 0, true},
+	{30,   1920,  1440,  60, false, DEX_RES_NOT_SUPPORT},                  /* CTS 400.3.3.1 */
+	{40,   2048,  1536,  60, false, DEX_RES_NOT_SUPPORT},                  /* CTS 18bpp */
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	/* {45,   2400,  1200,  90, false, DEX_RES_NOT_SUPPORT}, */                 /* relumino */
+#endif
 
-	{16, 3840, 2160, 24, 0},
-	{17, 3840, 2160, 25, 0},
-	{18, 3840, 2160, 30, 0},
-	{19, 3840, 2160, 50, 0},
-	{20, 3840, 2160, 60, 0},
+#ifdef SECDP_WIDE_21_9_SUPPORT
+	{60,   2560,  1080,  60, false, DEX_RES_2560X1080,   MON_RATIO_21_9},
+#endif
 
-	{21, 4096, 2160, 24, 0},
-	{22, 4096, 2160, 25, 0},
-	{23, 4096, 2160, 30, 0},
-	{24, 4096, 2160, 50, 0},
-	{25, 4096, 2160, 60, 0},
+	{61,   2560,  1440,  60, false, DEX_RES_2560X1440,   MON_RATIO_16_9},
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	{62,   2560,  1600,  60, false, DEX_RES_2560X1600,   MON_RATIO_16_10},
+#endif
+
+	{70,   1440,  2560,  60, false, DEX_RES_NOT_SUPPORT},                  /* TVR test */
+	{71,   1440,  2560,  75, false, DEX_RES_NOT_SUPPORT},                  /* TVR test */
+
+#ifdef SECDP_WIDE_21_9_SUPPORT
+	{80,   3440,  1440,  50, false, DEX_RES_3440X1440,   MON_RATIO_21_9},
+	{81,   3440,  1440,  60, false, DEX_RES_3440X1440,   MON_RATIO_21_9},
+#ifdef SECDP_HIGH_REFRESH_SUPPORT
+	{82,   3440,  1440,	100, false, DEX_RES_NOT_SUPPORT, MON_RATIO_21_9},
+#endif
+#endif
+
+#ifdef SECDP_WIDE_32_9_SUPPORT
+	{100,  3840, 1080,   60, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_9},
+#ifdef SECDP_HIGH_REFRESH_SUPPORT
+	{101,  3840,  1080, 100, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_9},
+	{102,  3840,  1080, 120, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_9},
+	{104,  3840,  1080, 144, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_9},
+#endif
+#endif
+
+#ifdef SECDP_WIDE_32_10_SUPPORT
+	{110,  3840,  1200,	 60, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_10},
+#ifdef SECDP_HIGH_REFRESH_SUPPORT
+	{111,  3840,  1200, 100, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_10},
+	{112,  3840,  1200, 120, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_10},
+#endif
+#endif
+
+	{150,  3840,  2160,  24, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+	{151,  3840,  2160,  25, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+	{152,  3840,  2160,  30, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+	{153,  3840,  2160,  50, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+	{154,  3840,  2160,  60, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+
+	{200,  4096,  2160,  24, false, DEX_RES_NOT_SUPPORT},
+	{201,  4096,  2160,  25, false, DEX_RES_NOT_SUPPORT},
+	{202,  4096,  2160,  30, false, DEX_RES_NOT_SUPPORT},
+	{203,  4096,  2160,  50, false, DEX_RES_NOT_SUPPORT},
+	{204,  4096,  2160,  60, false, DEX_RES_NOT_SUPPORT},
 };
+
+void secdp_init_resolution_config(void)
+{
+	int i;
+	int res_cnt = ARRAY_SIZE(secdp_supported_resolution);
+
+	pr_info("%s\n", __func__);
+
+	g_max_res_index = g_dex_max_res_index = -1;
+#if defined(CONFIG_SEC_CHECK_RATIO)
+	g_ignore_ratio = false;
+#else
+	g_ignore_ratio = true;
+#endif
+
+	for (i = 0; i < res_cnt; i++)
+		secdp_supported_resolution[i].checked = false;
+}
+
+static inline char *secdp_aspect_ratio_to_string(enum mon_aspect_ratio_t ratio)
+{
+	switch (ratio) {
+	case MON_RATIO_16_9:    return DP_ENUM_STR(MON_RATIO_16_9);
+	case MON_RATIO_16_10:   return DP_ENUM_STR(MON_RATIO_16_10);
+	case MON_RATIO_21_9:    return DP_ENUM_STR(MON_RATIO_21_9);
+	case MON_RATIO_32_9:    return DP_ENUM_STR(MON_RATIO_32_9);
+	case MON_RATIO_32_10:   return DP_ENUM_STR(MON_RATIO_32_10);
+	case MON_RATIO_NA:      return DP_ENUM_STR(MON_RATIO_NA);
+	default:                return "unknown";
+	}
+}
+
+void secdp_set_preferred_resolution_ratio(int hdisplay, int vdisplay)
+{
+	enum mon_aspect_ratio_t aspect_ratio = MON_RATIO_NA;
+
+	if ((hdisplay == 3840 && vdisplay == 2160) ||
+		(hdisplay == 2560 && vdisplay == 1440) ||
+		(hdisplay == 1920 && vdisplay == 1080) ||
+		(hdisplay == 1600 && vdisplay == 900) ||
+		(hdisplay == 1366 && vdisplay == 768)  ||
+		(hdisplay == 1280 && vdisplay == 720))
+		aspect_ratio = MON_RATIO_16_9;
+	else if ((hdisplay == 2560 && vdisplay == 1600) ||
+		(hdisplay == 1920 && vdisplay == 1200) ||
+		(hdisplay == 1680 && vdisplay == 1050) ||
+		(hdisplay == 1440 && vdisplay == 900)  ||
+		(hdisplay == 1280 && vdisplay == 800))
+		aspect_ratio = MON_RATIO_16_10;
+	else if ((hdisplay == 3440 && vdisplay == 1440) ||
+		(hdisplay == 2560 && vdisplay == 1080))
+		aspect_ratio = MON_RATIO_21_9;
+	else if (hdisplay == 3840 && vdisplay == 1080)
+		aspect_ratio = MON_RATIO_32_9;
+	else if (hdisplay == 3840 && vdisplay == 1200)
+		aspect_ratio = MON_RATIO_32_10;
+
+	g_aspect_ratio = aspect_ratio;
+	pr_info("preferred_timing! %dx%d, %s\n",
+			hdisplay, vdisplay, secdp_aspect_ratio_to_string(g_aspect_ratio));
+}
+
+static enum mon_aspect_ratio_t secdp_get_aspect_ratio(void)
+{
+	pr_info("%s, %s\n",__func__, secdp_aspect_ratio_to_string(g_aspect_ratio));
+	return g_aspect_ratio; 
+}
 
 bool secdp_check_dex_reconnect(void)
 {
@@ -227,24 +338,15 @@ bool secdp_check_dex_reconnect(void)
 	return true;
 }
 
-static void secdp_set_max_resolution(struct secdp_display_timing *timing)
-{
-	/* find max resolution which supported by sink */
-	if (g_max_res_index < timing->index)
-		g_max_res_index = timing->index;
-
-	/* find max resolution which supported by dex station*/
-	if (timing->dex_support && (g_dex_max_res_index < timing->index))
-		g_dex_max_res_index = timing->index;
-}
-
 extern bool secdp_check_dex_mode(void);
+extern enum dex_support_res_t secdp_get_dex_res(void);
 
 static int secdp_check_supported_resolution(struct msm_hdmi_mode_timing_info *info)
 {
-	int i;
+	int i, ret = 0;
 	int res_cnt = ARRAY_SIZE(secdp_supported_resolution);
 	struct secdp_display_timing *support = secdp_supported_resolution;
+	enum mon_aspect_ratio_t prefer_ratio = secdp_get_aspect_ratio();
 
 	for (i=0; i < res_cnt; i++) {
 		if (support[i].active_h == info->active_h &&
@@ -255,20 +357,43 @@ static int secdp_check_supported_resolution(struct msm_hdmi_mode_timing_info *in
 			diff *= diff;
 			if (diff < 2) {
 				pr_info("diff is less than 2\n");
-				secdp_set_max_resolution(&support[i]);
-
-				if (secdp_check_dex_mode()) {
-					if (support[i].dex_support)
-						return 1;
-					else
-						return 0;
+				if (support[i].checked) {
+					pr_info("%s, this resolution is already checked, skip\n", __func__);
+					goto exit;
 				}
 
-				return 1;
+				/* find max resolution which supported by sink */
+				if (g_max_res_index < support[i].index)
+					g_max_res_index = support[i].index;
+
+				if (support[i].dex_res != DEX_RES_NOT_SUPPORT &&
+						support[i].dex_res <= secdp_get_dex_res()) {
+					if (g_ignore_ratio)
+						ret = 1;
+					else if (support[i].mon_ratio == prefer_ratio)
+						ret = 1;
+					else
+						ret = 0;
+				} else
+					ret = 0;
+
+				/* find max resolution which supported by dex station */
+				if (ret && g_dex_max_res_index < support[i].index)
+					g_dex_max_res_index = support[i].index;
+
+				if (secdp_check_dex_mode())
+					goto exit;
+
+				ret = 1;
+				goto exit;
 			}
 		}
 	}
-	return 0;
+exit:
+	if (ret && !support[i].checked)
+		support[i].checked = true;
+
+	return ret;
 }
 #endif
 
@@ -284,6 +409,10 @@ static bool hdmi_edid_is_mode_supported(struct hdmi_edid_ctrl *edid_ctrl,
 
 	if (!timing->supported ||
 		pclk > edid_ctrl->init_data.max_pclk_khz)
+		return false;
+
+	if ((out_format == MDP_Y_CBCR_H2V2) &&
+			!edid_ctrl->init_data.yc420_support)
 		return false;
 
 #if defined(CONFIG_SEC_DISPLAYPORT)
@@ -329,9 +458,7 @@ static int hdmi_edid_reset_parser(struct hdmi_edid_ctrl *edid_ctrl)
 		sizeof(edid_ctrl->spkr_alloc_data_block));
 	edid_ctrl->adb_size = 0;
 	edid_ctrl->sadb_size = 0;
-#ifdef CONFIG_SEC_DISPLAYPORT
 	edid_ctrl->basic_audio_supp = false;
-#endif
 
 	hdmi_edid_set_video_resolution(edid_ctrl, edid_ctrl->default_vic, true);
 
@@ -2501,6 +2628,11 @@ int hdmi_edid_parser(void *input)
 
 	edid_buf = edid_ctrl->edid_buf;
 
+#ifdef CONFIG_SEC_DISPLAYPORT
+	edid_ctrl->audio_channel_info = 1<<26;
+	secdp_init_resolution_config();
+#endif
+
 	DEV_DBG("%s: === HDMI EDID BLOCK 0 ===\n", __func__);
 	print_hex_dump(KERN_DEBUG, "HDMI EDID: ", DUMP_PREFIX_NONE, 16, 1,
 		edid_buf, EDID_BLOCK_SIZE, false);
@@ -2550,11 +2682,6 @@ int hdmi_edid_parser(void *input)
 	else
 		edid_ctrl->sink_mode = SINK_MODE_DVI;
 
-#ifdef CONFIG_SEC_DISPLAYPORT
-	edid_ctrl->audio_channel_info = 1<<26;
-	g_max_res_index = 0;
-	g_dex_max_res_index = 0;
-#endif
 	hdmi_edid_extract_sink_caps(edid_ctrl, edid_buf);
 	hdmi_edid_extract_latency_fields(edid_ctrl, edid_buf);
 	hdmi_edid_extract_dc(edid_ctrl, edid_buf);
@@ -2578,11 +2705,28 @@ bail:
 
 	edid_ctrl->cea_blks = num_of_cea_blocks;
 
+#if defined(CONFIG_SEC_DISPLAYPORT) && defined(CONFIG_SEC_CHECK_RATIO)
+check_again:
+#endif
 	hdmi_edid_get_display_mode(edid_ctrl);
 
 	if (edid_ctrl->keep_resv_timings)
 		hdmi_edid_add_resv_timings(edid_ctrl);
 
+#if defined(CONFIG_SEC_DISPLAYPORT) && defined(CONFIG_SEC_CHECK_RATIO)
+	pr_info("%s, dex_res:%d, mirror_res:%d, g_ignore_ratio:%d\n", __func__, g_dex_max_res_index, g_max_res_index, g_ignore_ratio);
+	if (g_dex_max_res_index < 10 && !g_ignore_ratio) {
+
+		secdp_init_resolution_config();
+
+		g_ignore_ratio = true;
+		memset(&edid_ctrl->sink_data, 0, sizeof(edid_ctrl->sink_data));
+		hdmi_edid_set_video_resolution(edid_ctrl, edid_ctrl->default_vic, true);
+
+		pr_info("%s, edid parsing, again!\n", __func__);
+		goto check_again;
+	}
+#endif
 	return 0;
 
 err_invalid_header:

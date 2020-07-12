@@ -433,6 +433,10 @@ struct msm_hdmi_mode_timing_info {
 	{HDMI_VFRMT_640x480p59_4_3, 640, 16, 96, 48, true,       \
 	 480, 10, 2, 33, true, 25170, 59928, false, true, \
 		HDMI_RES_AR_4_3, 1}
+#define HDMI_VFRMT_2560x1080p60_64_27_TIMING                             \
+        {HDMI_VFRMT_2560x1080p60_64_27, 2560, 248, 44, 148, false,       \
+         1080, 4, 5, 11, false, 198000, 60000, false, true, \
+                HDMI_RES_AR_64_27, 0}
 
 
 #define MSM_HDMI_MODES_SET_TIMING(LUT, MODE) do {		\
@@ -487,6 +491,8 @@ do {	\
 			HDMI_VFRMT_1920x1080p25_16_9);	\
 		MSM_HDMI_MODES_SET_TIMING(__lut,	\
 			HDMI_VFRMT_1920x1080p30_16_9);	\
+		MSM_HDMI_MODES_SET_TIMING(__lut,	\
+			HDMI_VFRMT_2560x1080p60_64_27);  \
 		MSM_HDMI_MODES_SET_TIMING(__lut,	\
 			HDMI_VFRMT_3840x2160p24_16_9);  \
 		MSM_HDMI_MODES_SET_TIMING(__lut,	\

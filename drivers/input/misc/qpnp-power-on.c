@@ -162,6 +162,10 @@ extern int poff_status;
 
 #define QPNP_POFF_REASON_UVLO			13
 
+#ifdef CONFIG_SEC_PM
+#define QPNP_PON_CBLPWR_ON				BIT(2)
+#endif
+
 enum qpnp_pon_version {
 	QPNP_PON_GEN1_V1,
 	QPNP_PON_GEN1_V2,
@@ -382,6 +386,25 @@ int qpnp_pon_set_restart_reason(enum pon_restart_reason reason)
 	return rc;
 }
 EXPORT_SYMBOL(qpnp_pon_set_restart_reason);
+
+#ifdef CONFIG_SEC_PM
+int qpnp_pon_check_chg_det(void)
+{
+	struct qpnp_pon *pon = sys_reset_dev;
+	int rc = 0;
+	unsigned int val;
+
+	rc = regmap_read(pon->regmap, QPNP_PON_RT_STS(pon), &val);
+
+	if (rc) {
+		pr_err("Unable to read pon_rt_sts rc=%d\n", rc);
+		return rc;
+	}
+	
+	return (val & QPNP_PON_CBLPWR_ON) ? 1 : 0;
+}
+
+#endif
 
 /*
  * qpnp_pon_check_hard_reset_stored - Checks if the PMIC need to

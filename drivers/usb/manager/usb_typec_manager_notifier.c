@@ -38,6 +38,10 @@ typedef enum
 	MUIC_NOTIFIER
 }notifier_register;
 
+#if defined(CONFIG_HICCUP_CHARGER)
+extern unsigned int lpcharge;
+#endif
+
 static int manager_notifier_init_done = 0;
 static int confirm_manager_notifier_register = 0;
 static int manager_notifier_init(void);
@@ -59,7 +63,7 @@ static int manager_notifier_notify(void *data)
 		"sub1:%02x sub2:%02x sub3:%02x\n", __func__,
 		(manager_noti.src<9)? CCIC_NOTI_DEST_Print[manager_noti.src]:"Unknown",
 		(manager_noti.dest<9)? CCIC_NOTI_DEST_Print[manager_noti.dest]:"Unknown",
-		(manager_noti.id<13)? CCIC_NOTI_ID_Print[manager_noti.id]:"Unknown",
+		(manager_noti.id<CCIC_NOTI_ID_NUM)? CCIC_NOTI_ID_Print[manager_noti.id]:"Unknown",
 		manager_noti.sub1, manager_noti.sub2, manager_noti.sub3);	
 
 	if (manager_noti.dest == CCIC_NOTIFY_DEV_DP) {
@@ -81,7 +85,11 @@ static int manager_notifier_notify(void *data)
 	}
 
 	if (manager_noti.dest == CCIC_NOTIFY_DEV_BATTERY
+#if defined(CONFIG_HICCUP_CHARGER)
+		&& manager_noti.sub3 == typec_manager.water_cable_type) {
+#else
 		&& manager_noti.sub3 == ATTACHED_DEV_UNDEFINED_RANGE_MUIC) {
+#endif
 		if (manager_noti.sub1 != typec_manager.wVbus_det) {
 			typec_manager.wVbus_det = manager_noti.sub1;
 			typec_manager.waterChg_count += manager_noti.sub1;
@@ -454,9 +462,13 @@ static void muic_fake_event_work(struct work_struct *work)
 	typec_manager.muic_fake_event_wq_processing = 0;
 
 	if( typec_manager.ccic_rid_state == RID_523K ||  typec_manager.ccic_rid_state == RID_619K
+		|| typec_manager.cable_type == MANAGER_NOTIFY_MUIC_UART
 		|| typec_manager.ccic_drp_state == USB_STATUS_NOTIFY_ATTACH_DFP
-		|| typec_manager.muic_action == MUIC_NOTIFY_CMD_DETACH
 		|| typec_manager.vbus_state == STATUS_VBUS_HIGH) {
+		return;
+	} else if (typec_manager.muic_action == MUIC_NOTIFY_CMD_DETACH) {
+		typec_manager.muic_attach_state_without_ccic = 1;
+		schedule_delayed_work(&typec_manager.muic_noti_work, msecs_to_jiffies(0));
 		return;
 	}
 
@@ -483,7 +495,7 @@ static int manager_handle_ccic_notification(struct notifier_block *nb,
 	pr_info("usb: [M] %s: src:%s dest:%s id:%s attach/rid:%d\n", __func__,
 		(noti.src<9)? CCIC_NOTI_DEST_Print[noti.src]:"unknown",
 		(noti.dest<9)? CCIC_NOTI_DEST_Print[noti.dest]:"unknown",
-		(noti.id<13)? CCIC_NOTI_ID_Print[noti.id]:"unknown",
+		(noti.id<CCIC_NOTI_ID_NUM)? CCIC_NOTI_ID_Print[noti.id]:"unknown",
 		noti.sub1);
 
 #if defined(CONFIG_VBUS_NOTIFIER)
@@ -559,14 +571,27 @@ static int manager_handle_ccic_notification(struct notifier_block *nb,
 					/*update water time */
 					water_dry_time_update((int)((CC_NOTI_ATTACH_TYPEDEF *)&noti)->attach);
 
+#if defined(CONFIG_HICCUP_CHARGER)
+					if (noti.sub1 
+						&& (noti.dest == CCIC_NOTIFY_DEV_BATTERY)
+						&& (typec_manager.vbus_state == STATUS_VBUS_HIGH)
+						)
+					{
+						noti.sub3 = typec_manager.water_cable_type;
+					} else if (!noti.sub1 && typec_manager.wVbus_det) {
+						noti.dest = CCIC_NOTIFY_DEV_BATTERY;
+						noti.sub3 = typec_manager.water_cable_type;
+#else
 					if (typec_manager.muic_action == MUIC_NOTIFY_CMD_ATTACH) {
 						noti.sub3 = ATTACHED_DEV_UNDEFINED_RANGE_MUIC; /* cable_type */
+#endif
 					} else {
 						/* If the cable is not connected, skip the battery event. */
 						return 0;
 					}
 			} else {
 				/* Ignore duplicate events */
+				pr_info("usb: [M] %s: Ignore duplicate events\n", __func__);
 				return 0;
 			}
 		} else {
@@ -579,6 +604,17 @@ static int manager_handle_ccic_notification(struct notifier_block *nb,
 			if (typec_manager.wVbus_det) {
 				noti.sub3 = ATTACHED_DEV_UNDEFINED_RANGE_MUIC;
 			} else {
+				pr_info("usb: [M] %s: DRY detected case\n", __func__);
+
+				muic_noti.src = CCIC_NOTIFY_DEV_CCIC;
+				muic_noti.dest = CCIC_NOTIFY_DEV_MUIC;
+				muic_noti.id = CCIC_NOTIFY_ID_DRY;
+				muic_noti.attach = CCIC_NOTIFY_DETACH;
+				muic_noti.rprd = 0;
+				muic_noti.cable_type = 0;
+				muic_noti.pd = NULL;
+				manager_notifier_notify(&muic_noti);
+
 				return 0;
 			}
 		}
@@ -641,6 +677,16 @@ static int manager_handle_muic_notification(struct notifier_block *nb,
 				schedule_delayed_work(&typec_manager.muic_noti_work, 0);
 			}
 		}
+		break;
+
+	case ATTACHED_DEV_JIG_UART_OFF_MUIC:
+	case ATTACHED_DEV_JIG_UART_OFF_VB_MUIC:
+	case ATTACHED_DEV_JIG_UART_OFF_VB_OTG_MUIC:
+	case ATTACHED_DEV_JIG_UART_OFF_VB_FG_MUIC:
+	case ATTACHED_DEV_JIG_UART_ON_MUIC:
+	case ATTACHED_DEV_JIG_UART_ON_VB_MUIC:
+		if (typec_manager.muic_action)
+			typec_manager.cable_type = MANAGER_NOTIFY_MUIC_UART;
 		break;
 
 	case ATTACHED_DEV_TA_MUIC:
@@ -726,7 +772,11 @@ static int manager_handle_vbus_notification(struct notifier_block *nb,
 			bat_noti.id = CCIC_NOTIFY_ID_WATER;
 			bat_noti.attach = CCIC_NOTIFY_ATTACH;
 			bat_noti.rprd = 0;
+#if defined(CONFIG_HICCUP_CHARGER)
+			bat_noti.cable_type = typec_manager.water_cable_type;
+#else
 			bat_noti.cable_type = ATTACHED_DEV_UNDEFINED_RANGE_MUIC;
+#endif
 			bat_noti.pd = NULL;
 			manager_notifier_notify(&bat_noti);
 		}
@@ -738,7 +788,11 @@ static int manager_handle_vbus_notification(struct notifier_block *nb,
 			bat_noti.id = CCIC_NOTIFY_ID_ATTACH;
 			bat_noti.attach = CCIC_NOTIFY_DETACH;
 			bat_noti.rprd = 0;
+#if defined(CONFIG_HICCUP_CHARGER)
+			bat_noti.cable_type = typec_manager.water_cable_type;
+#else
 			bat_noti.cable_type = ATTACHED_DEV_UNDEFINED_RANGE_MUIC;
+#endif
 			bat_noti.pd = NULL;
 			manager_notifier_notify(&bat_noti);
 		}
@@ -795,7 +849,11 @@ int manager_notifier_register(struct notifier_block *nb, notifier_fn_t notifier,
 		m_noti.pd = typec_manager.pd;
 		if(typec_manager.water_det && m_noti.sub1) {
 			m_noti.id = CCIC_NOTIFY_ID_WATER;
+#if defined(CONFIG_HICCUP_CHARGER)
+			m_noti.sub3 = typec_manager.water_cable_type;
+#else
 			m_noti.sub3 = ATTACHED_DEV_UNDEFINED_RANGE_MUIC;
+#endif
 		} else {
 			m_noti.id = CCIC_NOTIFY_ID_ATTACH;
 			if(typec_manager.pd_con_state) {
@@ -820,7 +878,13 @@ int manager_notifier_register(struct notifier_block *nb, notifier_fn_t notifier,
 		pr_info("usb: [M] %s BATTERY: cable_type=%d (%s) \n", __func__, m_noti.sub3,
 			typec_manager.muic_cable_type? "MUIC" : "CCIC");
 		nb->notifier_call(nb, m_noti.id, &(m_noti));
-
+		alternate_mode_start_wait |= 0x100;
+#if defined(CONFIG_SEC_DISPLAYPORT)
+		if (alternate_mode_start_wait == 0x111) {
+			pr_info("usb: [M] %s USB & DP & BATTERY driver is registered! Alternate mode Start!\n", __func__);
+			set_enable_alternate_mode(ALTERNATE_MODE_READY | ALTERNATE_MODE_START);
+		}
+#endif		
 	} else if(listener == MANAGER_NOTIFY_CCIC_USB) {
 		/* CC_NOTI_USB_STATUS_TYPEDEF */
 		m_noti.src = CCIC_NOTIFY_DEV_MANAGER;
@@ -850,10 +914,12 @@ int manager_notifier_register(struct notifier_block *nb, notifier_fn_t notifier,
 			CCIC_NOTI_USB_STATUS_Print[m_noti.sub2]);
 		nb->notifier_call(nb, m_noti.id, &(m_noti));
 		alternate_mode_start_wait |= 0x1;
-		if(alternate_mode_start_wait == 0x11) {
-			pr_info("usb: [M] %s USB & DP driver is registered! Alternate mode Start!\n", __func__);
+#if defined(CONFIG_SEC_DISPLAYPORT)
+		if (alternate_mode_start_wait == 0x111) {
+			pr_info("usb: [M] %s USB & DP & BATTERY driver is registered! Alternate mode Start!\n", __func__);
 			set_enable_alternate_mode(ALTERNATE_MODE_READY | ALTERNATE_MODE_START);
 		}
+#endif
 	} else if(listener == MANAGER_NOTIFY_CCIC_DP) {
 		m_noti.src = CCIC_NOTIFY_DEV_MANAGER;
 		m_noti.dest = CCIC_NOTIFY_DEV_DP;
@@ -875,10 +941,12 @@ int manager_notifier_register(struct notifier_block *nb, notifier_fn_t notifier,
 			} 
 		}
 		alternate_mode_start_wait |= 0x10;
-		if(alternate_mode_start_wait == 0x11) {
-			pr_info("usb: [M] %s USB & DP driver is registered! Alternate mode Start!\n", __func__);
+#if defined(CONFIG_SEC_DISPLAYPORT)
+		if (alternate_mode_start_wait == 0x111) {
+			pr_info("usb: [M] %s USB & DP & BATTERY driver is registered! Alternate mode Start!\n", __func__);
 			set_enable_alternate_mode(ALTERNATE_MODE_READY | ALTERNATE_MODE_START);
 		}
+#endif		
 	}		
 	return ret;
 }
@@ -998,6 +1066,14 @@ static int manager_notifier_init(void)
 	typec_manager.is_UFPS = 0;
 	typec_manager.ccic_rid_state = RID_UNDEFINED;
 	typec_manager.pd = NULL;
+
+#if IS_ENABLED(CONFIG_HICCUP_CHARGER)
+		typec_manager.water_cable_type = lpcharge ?
+			ATTACHED_DEV_UNDEFINED_RANGE_MUIC :
+			ATTACHED_DEV_HICCUP_MUIC;
+#else
+		typec_manager.water_cable_type = ATTACHED_DEV_UNDEFINED_RANGE_MUIC;
+#endif
 
 	BLOCKING_INIT_NOTIFIER_HEAD(&(typec_manager.manager_ccic_notifier));
 	BLOCKING_INIT_NOTIFIER_HEAD(&(typec_manager.manager_muic_notifier));

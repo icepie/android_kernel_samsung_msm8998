@@ -148,6 +148,7 @@ config USB_MSM_OTG
 	tristate "Qualcomm on-chip USB OTG controller support"
 	depends on (USB || USB_GADGET) && (ARCH_QCOM || COMPILE_TEST)
 	depends on RESET_CONTROLLER
+	depends on REGULATOR
 	depends on EXTCON
 	select USB_PHY
 	help
@@ -263,7 +264,7 @@ config USB_ULPI_VIEWPORT
 
 config DUAL_ROLE_USB_INTF
 	bool "Generic DUAL ROLE sysfs interface"
-	depends on SYSFS && USB_PHY
+	depends on SYSFS && USB_PHY && !TYPEC
 	help
 	  A generic sysfs interface to track and change the state of
 	  dual role usb phys. The usb phy drivers can register to

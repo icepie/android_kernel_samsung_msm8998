@@ -33,6 +33,8 @@ struct device *flash_dev;
 #endif
 struct ktd2692_platform_data *global_ktd2692data;
 struct device *ktd2692_dev;
+static int torchlevel[] = {0x00,0x01,0x02,0x02,0x04,0x04,0x06,0x07,0x06,0x09};
+
 void ktd2692_setGpio(int onoff)
 {
 	if (onoff) {
@@ -41,20 +43,44 @@ void ktd2692_setGpio(int onoff)
 		__gpio_set_value(global_ktd2692data->flash_control, 0);
 	}
 }
+void ktd2692_setGpio_iris(int onoff)
+{
+        if (onoff) {
+                __gpio_set_value(global_ktd2692data->flash_control_iris, 1);
+        } else {
+                __gpio_set_value(global_ktd2692data->flash_control_iris, 0);
+        }
+}
 void ktd2692_set_low_bit(void)
 {
 	__gpio_set_value(global_ktd2692data->flash_control, 0);
-	ndelay(T_L_LB*1000);	/* 12ms */
+	udelay(T_L_LB);
 	__gpio_set_value(global_ktd2692data->flash_control, 1);
-	ndelay(T_H_LB*1000);	/* 4ms */
+	ndelay(T_H_LB*1000);	
 }
+void ktd2692_set_low_bit_iris(void)
+{
+        __gpio_set_value(global_ktd2692data->flash_control_iris, 0);
+        udelay(T_L_LB);    
+        __gpio_set_value(global_ktd2692data->flash_control_iris, 1);
+        ndelay(T_H_LB*1000);    
+}
+
 void ktd2692_set_high_bit(void)
 {
 	__gpio_set_value(global_ktd2692data->flash_control, 0);
-	ndelay(T_L_HB*1000);	/* 4ms */
+	ndelay(T_L_HB*1000);	
 	__gpio_set_value(global_ktd2692data->flash_control, 1);
-	ndelay(T_H_HB*1000);	/* 12ms */
+	udelay(T_H_HB);
 }
+void ktd2692_set_high_bit_iris(void)
+{
+        __gpio_set_value(global_ktd2692data->flash_control_iris, 0);
+        ndelay(T_L_HB*1000);
+        __gpio_set_value(global_ktd2692data->flash_control_iris, 1);
+        udelay(T_H_HB);
+}
+
 static int ktd2692_set_bit(unsigned int bit)
 {
 	if (bit) {
@@ -63,6 +89,15 @@ static int ktd2692_set_bit(unsigned int bit)
 		ktd2692_set_low_bit();
 	}
 	return 0;
+}
+static int ktd2692_set_bit_iris(unsigned int bit)
+{
+        if (bit) {
+                ktd2692_set_high_bit_iris();
+        } else {
+                ktd2692_set_low_bit_iris();
+        }
+        return 0;
 }
 int ktd2692_write_data(unsigned data)
 {
@@ -103,6 +138,45 @@ int ktd2692_write_data(unsigned data)
 
 	return err;
 }
+int ktd2692_write_data_iris(unsigned data)
+{
+        int err = 0;
+        unsigned int bit = 0;
+        /* Data Start Condition */
+        __gpio_set_value(global_ktd2692data->flash_control_iris, 1);
+        ndelay(T_SOD*1000); //15us
+        /* BIT 7*/
+        bit = ((data>> 7) & 0x01);
+        ktd2692_set_bit_iris(bit);
+        /* BIT 6 */
+        bit = ((data>> 6) & 0x01);
+        ktd2692_set_bit_iris(bit);
+        /* BIT 5*/
+        bit = ((data>> 5) & 0x01);
+        ktd2692_set_bit_iris(bit);
+        /* BIT 4 */
+        bit = ((data>> 4) & 0x01);
+        ktd2692_set_bit_iris(bit);
+        /* BIT 3*/
+        bit = ((data>> 3) & 0x01);
+        ktd2692_set_bit_iris(bit);
+        /* BIT 2 */
+        bit = ((data>> 2) & 0x01);
+        ktd2692_set_bit_iris(bit);
+        /* BIT 1*/
+        bit = ((data>> 1) & 0x01);
+        ktd2692_set_bit_iris(bit);
+        /* BIT 0 */
+        bit = ((data>> 0) & 0x01);
+        ktd2692_set_bit_iris(bit);
+         __gpio_set_value(global_ktd2692data->flash_control_iris, 0);
+        ndelay(T_EOD_L*1000); //4us
+        /* Data End Condition */
+        __gpio_set_value(global_ktd2692data->flash_control_iris, 1);
+        udelay(T_EOD_H);
+
+        return err;
+}
 
 EXPORT_SYMBOL_GPL(ktd2692_write_data);
 void ktd2692_flash_on(unsigned data)
@@ -110,7 +184,7 @@ void ktd2692_flash_on(unsigned data)
 	int ret;
 	unsigned long flags = 0;
 	struct pinctrl *pinctrl;
-	if(data == 0){
+	if(data == FLASH_OFF){
 		ret = gpio_request(global_ktd2692data->flash_control, "ktd2692_led_control");
 		if (ret) {
 			printk("Failed to requeset ktd2692_led_control\n");
@@ -127,7 +201,7 @@ void ktd2692_flash_on(unsigned data)
 			if (IS_ERR(pinctrl))
 				pr_err("%s: flash %s pins are not configured\n", __func__, "fled_sleep");
 		}
-   }else{
+        }else if(data == TORCH_ON){
 		pinctrl = devm_pinctrl_get_select(ktd2692_dev, "fled_default");
 		if (IS_ERR(pinctrl))
 			pr_err("%s: flash %s pins are not configured\n", __func__, "front_fled_default");
@@ -149,12 +223,36 @@ void ktd2692_flash_on(unsigned data)
 			gpio_free(global_ktd2692data->flash_control);
 			printk("<ktd2692_flash_on> KTD2692-TORCH ON. : X(%d)\n", data);
 		}
-	}
+	}else if(data == FLASH_ON){
+                pinctrl = devm_pinctrl_get_select(ktd2692_dev, "fled_default");
+                if (IS_ERR(pinctrl))
+                        pr_err("%s: flash %s pins are not configured\n", __func__, "front_fled_default");
+
+                ret = gpio_request(global_ktd2692data->flash_control, "ktd2692_led_control");
+                if (ret) {
+                        printk("Failed to requeset ktd2692_led_control\n");
+                } else {
+                        printk("<ktd2692_flash_on> KTD2692-FLASH ON. : E(%d)\n", data);
+                        global_ktd2692data->mode_status = KTD2692_ENABLE_FLASH_MODE;
+                        spin_lock_irqsave(&global_ktd2692data->int_lock, flags);
+                        ktd2692_write_data(global_ktd2692data->LVP_Voltage|KTD2692_ADDR_LVP_SETTING);
+                        #if 0   /* use the internel defualt setting */
+                                ktd2692_write_data(global_ktd2692data->flash_timeout|KTD2692_ADDR_FLASH_TIMEOUT_SETTING);
+                        #endif
+                        //ktd2692_write_data(global_ktd2692data->movie_current_value|KTD2692_ADDR_MOVIE_CURRENT_SETTING);
+                        ktd2692_write_data(global_ktd2692data->mode_status|KTD2692_ADDR_MOVIE_FLASHMODE_CONTROL);
+                        spin_unlock_irqrestore(&global_ktd2692data->int_lock, flags);
+                        gpio_free(global_ktd2692data->flash_control);
+                        printk("<ktd2692_flash_on> KTD2692-FALSH ON. : X(%d)\n", data);
+                }
+ 
+        }
 }
 ssize_t ktd2692_store(struct device *dev,
 			struct device_attribute *attr, const char *buf,
 			size_t count)
 {
+	int sel = 0;
 	int value = 0;
 	int ret = 0;
 	unsigned long flags = 0;
@@ -180,7 +278,20 @@ ssize_t ktd2692_store(struct device *dev,
 		pinctrl = devm_pinctrl_get_select(ktd2692_dev, "fled_sleep");
 		if (IS_ERR(pinctrl))
 			pr_err("%s: flash %s pins are not configured\n", __func__, "is");
-	} else if(value == 100){
+	} else if (value == 10) {
+                ret = gpio_request(global_ktd2692data->flash_control_iris, "ktd2692_led_control");
+                if (ret) {
+                        printk("Failed to requeset ktd2692_led_control\n");
+                } else {
+                        printk("KTD2692-TORCH OFF. : E(%d)\n", value);
+                        ktd2692_setGpio_iris(0);
+                        gpio_free(global_ktd2692data->flash_control_iris);
+                        printk("KTD2692-TORCH OFF. : X(%d)\n", value);
+                }
+                pinctrl = devm_pinctrl_get_select(ktd2692_dev, "fled_iris_sleep");
+                if (IS_ERR(pinctrl))
+                        pr_err("%s: flash %s pins are not configured\n", __func__, "is");
+        } else if(value == 1 || value == 100){
 		pinctrl = devm_pinctrl_get_select(ktd2692_dev, "fled_default");
 		if (IS_ERR(pinctrl))
 			pr_err("%s: flash %s pins are not configured\n", __func__, "host");
@@ -201,11 +312,47 @@ ssize_t ktd2692_store(struct device *dev,
 			gpio_free(global_ktd2692data->flash_control);
 			printk("KTD2692-TORCH FACTORY ON. : X(%d)\n", value);
 		}
-	}
-	else{
+        } else if(value == 200){
+                pinctrl = devm_pinctrl_get_select(ktd2692_dev, "fled_iris_default");
+                if (IS_ERR(pinctrl))
+                        pr_err("%s: flash %s pins are not configured\n", __func__, "host");
+                ret = gpio_request(global_ktd2692data->flash_control_iris, "ktd2692_led_control");
+                if (ret) {
+                        printk("Failed to requeset ktd2692_led_control\n");
+                } else {
+                        printk("KTD2692-TORCH ON. : E(%d)\n", value);
+                        spin_lock_irqsave(&global_ktd2692data->int_lock, flags);
+                        ktd2692_write_data_iris(global_ktd2692data->LVP_Voltage|KTD2692_ADDR_LVP_SETTING);
+                        ktd2692_setGpio_iris(1);                        
+                        spin_unlock_irqrestore(&global_ktd2692data->int_lock, flags);
+                        gpio_free(global_ktd2692data->flash_control_iris);
+                        printk("KTD2692-TORCH FACTORY ON. : X(%d)\n", value);
+                }
+        } else if (value>1000 && value<=1010) {
+		pinctrl = devm_pinctrl_get_select(ktd2692_dev, "fled_default");
+		if (IS_ERR(pinctrl))
+			pr_err("%s: flash %s pins are not configured\n", __func__, "host");
+		ret = gpio_request(global_ktd2692data->flash_control, "ktd2692_led_control");
+		if (ret) {
+			printk("Failed to requeset ktd2692_led_control\n");
+		} else {
+			printk("Torch ON-F active\n");
+			printk("KTD2692-TORCH ON. : E(%d)\n", value);
+			global_ktd2692data->mode_status = KTD2692_ENABLE_MOVIE_MODE;
+			spin_lock_irqsave(&global_ktd2692data->int_lock, flags);
+			ktd2692_write_data(global_ktd2692data->LVP_Voltage|KTD2692_ADDR_LVP_SETTING);
+			sel = torchlevel[value - 1001];
+			global_ktd2692data->factory_movie_current_value = sel;
+			ktd2692_write_data(global_ktd2692data->factory_movie_current_value|KTD2692_ADDR_MOVIE_CURRENT_SETTING);
+			ktd2692_write_data(global_ktd2692data->mode_status|KTD2692_ADDR_MOVIE_FLASHMODE_CONTROL);
+			spin_unlock_irqrestore(&global_ktd2692data->int_lock, flags);
+			gpio_free(global_ktd2692data->flash_control);
+			printk("KTD2692-TORCH ON. : X(%d)\n", value);
+		}
+	} else{
 		printk("KTD2692-TORCH ON. : X(%d)\n", value);
 	}
-	if ((value <= 0 || value == 100) && !IS_ERR(pinctrl))
+	if ((value <= 0 || value == 1 || value == 100 || value == 200 || (value>1000 && value<=1010)) && !IS_ERR(pinctrl))
 		devm_pinctrl_put(pinctrl);
 
 	return count;
@@ -247,6 +394,13 @@ static int ktd2692_parse_dt(struct device *dev,
 		dev_err(dev, "failed to get flash_control\n");
 		return -1;
 	}
+        /*Iris LED gpio */
+        pdata->flash_control_iris = of_get_named_gpio(dnode, "flash-en-gpio-iris", 0);
+        if (!gpio_is_valid(pdata->flash_control_iris)) {
+                dev_err(dev, "failed to get flash_control\n");
+                return -1;
+        }
+
 	return ret;
 }
 static int ktd2692_probe(struct platform_device *pdev)

@@ -143,6 +143,7 @@ endif
 comment "Samsung Rooting Restriction Feature"
 config SEC_RESTRICT_ROOTING
 	bool "Samsung Rooting Restriction Feature"
+	depends on SAMSUNG_PRODUCT_SHIP
 	default n
 	help
 	  Restrict unauthorized executions with root permission.

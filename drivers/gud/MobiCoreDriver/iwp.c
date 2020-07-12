@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 TRUSTONIC LIMITED
+ * Copyright (c) 2013-2018 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -670,6 +670,7 @@ int iwp_init(void)
 				      GFP_KERNEL);
 	if (!l_ctx.iws_list_pool)
 		return -ENOMEM;
+
 #ifndef TA2TA_READY
 	for (i = 0; i < MAX_IW_SESSION; i++) {
 		l_ctx.iws_list_pool[i].offset =

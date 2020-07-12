@@ -99,7 +99,6 @@ static int send_uvdm_message(void *data, int size)
 
 	pr_info("%s - size : %d\n", __func__, size);
 	ret = samsung_uvdm_out_request_message(data, size);
-//		send_samsung_unstructured__uvdm_message(data, size);
 	return ret;
 }
 
@@ -116,16 +115,12 @@ static long
 ccic_misc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int ret = 0;
-	void *buf;
-/* Temporary code for debug */
-#if 1
-	uint8_t *p_buf;
-	int i;
-#endif
+	void *buf = NULL;
 
 	if (_lock(&c_dev->ioctl_excl)) {
 		pr_err("%s - error : ioctl busy - cmd : %d\n", __func__, cmd);
-		return  -EBUSY;
+		ret = -EBUSY;
+		goto err2;
 	}
 
 	switch (cmd) {
@@ -135,16 +130,16 @@ ccic_misc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 				sizeof(struct uvdm_data))) {
 			ret = -EIO;
 			pr_err("%s - copy_from_user error\n", __func__);
-			goto err;
+			goto err1;
 		}
-		pr_info("%s - pid : 0x%X\n", __func__, c_dev->u_data.pid);
-		pr_info("%s - type : %d\n", __func__, c_dev->u_data.type);
-		pr_info("%s - dir : %d\n", __func__, c_dev->u_data.dir);
-		pr_info("%s - size : %d\n", __func__, c_dev->u_data.size);
 
 		buf = kzalloc(MAX_BUF, GFP_KERNEL);
-		if (!buf)
-			return -EINVAL;
+		if (!buf) {
+			ret = -EINVAL;
+			pr_err("%s - kzalloc error\n", __func__);
+			goto err1;
+		}
+
 		if (c_dev->u_data.size > MAX_BUF) {
 			ret = -ENOMEM;
 			pr_err("%s - user data size is %d error\n", __func__, c_dev->u_data.size);
@@ -158,13 +153,6 @@ ccic_misc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 				pr_err("%s - copy_from_user error\n", __func__);
 				goto err;
 			}
-/* Temporary code for debug */
-#if 1
-			p_buf = buf;
-			for (i = 0 ; i < c_dev->u_data.size ; i++)
-				printk("%x ", (uint32_t)p_buf[i]);
-			printk("\n");
-#endif
 			ret = send_uvdm_message(buf, c_dev->u_data.size);
 			if (ret <= 0) {
 				pr_err("%s - send_uvdm_message error\n", __func__);
@@ -176,14 +164,6 @@ ccic_misc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 				pr_err("%s - receive_uvdm_message error\n", __func__);
 				goto err;
 			}
-/* Temporary code for debug */
-#if 1
-			p_buf = buf;
-			pr_info("%s received_uvdm_message done %d\n", __func__, ret);
-			for (i = 0; i < ret ; i++)
-				printk("%x ", (uint32_t)p_buf[i]);
-			printk("\n");
-#endif
 			if (copy_to_user((void __user *)c_dev->u_data.pData,
 					 buf, ret)) {
 				ret = -EIO;
@@ -200,7 +180,9 @@ ccic_misc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	}
 err:
 	kfree(buf);
+err1:
 	_unlock(&c_dev->ioctl_excl);
+err2:
 	return ret;
 }
 

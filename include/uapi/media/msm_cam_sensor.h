@@ -34,6 +34,11 @@
 #define MAX_NUMBER_OF_STEPS 47
 #define MAX_REGULATOR 5
 
+#define MAX_REAR_SENSOR_FW_INFO  (48)
+#define MAX_COMPANION_FW_INFO    (64)
+#define MAX_OIS_FW_INFO	         (48)
+#define MAX_REAR_CAMFW_ALL	 (1024)
+
 /*msm_flash_query_data_t query types*/
 #define FLASH_QUERY_CURRENT 1
 
@@ -43,6 +48,8 @@
 
 #define MSM_V4L2_PIX_FMT_META v4l2_fourcc('M', 'E', 'T', 'A') /* META */
 #define MSM_V4L2_PIX_FMT_META10 v4l2_fourcc('M', 'E', '1', '0') /* META10 */
+#define MSM_V4L2_PIX_FMT_META12 v4l2_fourcc('M', 'E', '1', '2') /* META12 */
+
 #define MSM_V4L2_PIX_FMT_EMETA v4l2_fourcc('E', 'M', 'E', 'T') /* META */
 #define MSM_V4L2_PIX_FMT_SBGGR14 v4l2_fourcc('B', 'G', '1', '4')
 	/* 14  BGBG.. GRGR.. */
@@ -91,6 +98,7 @@ enum sensor_sub_module_t {
 	SUB_MODULE_CSIPHY_3D,
 	SUB_MODULE_OIS,
 	SUB_MODULE_COMPANION,
+	SUB_MODULE_APERTURE,	
 	SUB_MODULE_EXT,
 	SUB_MODULE_IR_LED,
 	SUB_MODULE_IR_CUT,
@@ -417,6 +425,15 @@ struct msm_ir_cut_cfg_data_t {
 	enum msm_ir_cut_cfg_type_t cfg_type;
 };
 
+struct msm_phone_fw_data_t {
+        uint16_t *valid_sensor_fw_info;
+        uint16_t *valid_companion_fw_info;
+        uint16_t *valid_ois_fw_info;
+        char *rear_sensor_fw_all;
+        char *companion_fw_all;
+        char *ois_fw_all;
+};
+
 struct msm_eeprom_cfg_data {
 	enum eeprom_cfg_type_t cfgtype;
 	uint16_t is_supported;
@@ -474,6 +491,8 @@ enum msm_sensor_cfg_type_t {
 	CFG_SET_SENSOR_SOF_FREEZE_NOTI,
 	CFG_SET_SENSOR_STREAM_ON_NOTI,
 	CFG_SET_SENSOR_STREAM_OFF_NOTI,
+        CFG_SET_IR_LED,
+        CFG_RESET_IR_LED,
 	CFG_MATCH_ID,
 };
 
@@ -488,6 +507,13 @@ enum msm_actuator_cfg_type_t {
 	CFG_ACTUATOR_INIT,
 	CFG_ACTUATOR_SLEEP,
 	CFG_ACTUATOR_ACTIVE,
+};
+
+enum msm_aperture_cfg_type_t {
+	CFG_APERTURE_POWERDOWN,
+	CFG_APERTURE_POWERUP,
+	CFG_APERTURE_INIT,
+	CFG_APERTURE_SET_VALUE,
 };
 
 struct msm_ois_opcode {
@@ -513,6 +539,7 @@ enum msm_ois_cfg_type_t {
 	CFG_OIS_FW_UPDATE,
 	CFG_OIS_SET_GGFADE,
 	CFG_OIS_SET_IMAGE_SHIFT_CAL,
+	CFG_OIS_GET_MODE,
 };
 
 enum msm_ois_cfg_download_type_t {
@@ -630,6 +657,7 @@ struct msm_ois_cfg_data {
 	uint8_t *version;
 	uint8_t *image_shift_cal;
 	struct msm_ois_cal_info_t *ois_cal_info;
+	uint16_t *ois_mode;
 	union {
 		struct msm_ois_set_info_t set_info;
 		struct msm_camera_i2c_seq_reg_setting *settings;
@@ -658,6 +686,11 @@ struct msm_actuator_cfg_data {
 		struct msm_actuator_set_position_t setpos;
 		enum af_camera_name cam_name;
 	} cfg;
+};
+
+struct msm_aperture_cfg_data {
+	int cfgtype;
+	uint16_t f_number;
 };
 
 enum msm_camera_led_config_t {
@@ -769,5 +802,11 @@ struct sensor_init_cfg_data {
 
 #define VIDIOC_MSM_IR_CUT_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 15, struct msm_ir_cut_cfg_data_t)
+
+#define VIDIOC_MSM_PHONE_FW_INFO \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 17, struct msm_phone_fw_data_t)
+
+#define VIDIOC_MSM_APERTURE_CFG \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 18, struct msm_aperture_cfg_data)
 
 #endif

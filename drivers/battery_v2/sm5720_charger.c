@@ -454,7 +454,6 @@ static int psy_chg_set_cable_online(struct sm5720_charger_data *charger, int cab
 {
 	int prev_cable_type = charger->cable_type;
 
-	charger->slow_late_chg_mode = false;
 	charger->cable_type = cable_type;
 
 
@@ -511,7 +510,6 @@ static int psy_chg_set_cable_online(struct sm5720_charger_data *charger, int cab
 				cancel_delayed_work_sync(&charger->aicl_work);
 				sm5720_read_reg(charger->i2c, SM5720_CHG_REG_INTMSK2, &reg_data);
 				pr_info("%s: disable aicl : 0x%x\n", __func__, reg_data);
-				charger->slow_late_chg_mode = false;
 			}
 		}
 	}
@@ -618,24 +616,6 @@ static int psy_chg_get_battery_present(struct sm5720_charger_data *charger)
 	return 1;
 }
 
-static int psy_chg_get_charge_type(struct sm5720_charger_data *charger)
-{
-	int charge_type;
-
-	if (charger->is_charging) {
-		if (charger->slow_late_chg_mode) {
-			dev_info(charger->dev, "%s: slow late charge mode\n", __func__);
-			charge_type = POWER_SUPPLY_CHARGE_TYPE_SLOW;
-		} else {
-			charge_type = POWER_SUPPLY_CHARGE_TYPE_FAST;
-		}
-	} else {
-		charge_type = POWER_SUPPLY_CHARGE_TYPE_NONE;
-	}
-
-	return charge_type;
-}
-
 static int psy_chg_get_charging_health(struct sm5720_charger_data *charger)
 {
 	u8 reg = 0;
@@ -692,7 +672,6 @@ static int sm5720_chg_get_property(struct power_supply *psy,
 			val->intval = psy_chg_get_battery_present(charger);
 			break;
 		case POWER_SUPPLY_PROP_CHARGE_TYPE:
-			val->intval = psy_chg_get_charge_type(charger);
 			break;
 		case POWER_SUPPLY_PROP_HEALTH:
 			val->intval = psy_chg_get_charging_health(charger);
@@ -908,6 +887,39 @@ static bool sm5720_charger_check_oper_otg_mode_on(void)
 	return ret;
 }
 
+static int sm5720_check_wcin_before_otg_on(struct sm5720_charger_data *charger)
+{
+    union power_supply_propval value = {0,};
+    struct power_supply *psy;
+    u8 reg_data;
+
+    psy = get_power_supply_by_name("wireless");
+    if (!psy)
+        return -ENODEV;
+    if ((psy->desc->get_property != NULL) &&
+        (psy->desc->get_property(psy, POWER_SUPPLY_PROP_ONLINE, &value) >= 0)) {
+        if (value.intval)
+            return 0;
+    } else
+        return -ENODEV;
+    power_supply_put(psy);
+
+	sm5720_read_reg(charger->i2c, SM5720_CHG_REG_STATUS1, &reg_data);
+	reg_data = reg_data & (0x1 << 4);
+	if (!(reg_data & (0x1 << 4)) || (charger->wireless_charger_name == NULL))
+		return 0;
+
+	psy_do_property(charger->wireless_charger_name, get,
+		POWER_SUPPLY_PROP_ENERGY_NOW, value);
+	if (value.intval <= 0)
+		return -ENODEV;
+
+	value.intval = WIRELESS_VOUT_5V;
+	psy_do_property(charger->wireless_charger_name, set,
+		POWER_SUPPLY_PROP_INPUT_VOLTAGE_REGULATION, value);
+	return 0;
+}
+
 static int sm5720_otg_get_property(struct power_supply *psy,
 		enum power_supply_property psp,
 		union power_supply_propval *val)
@@ -938,6 +950,11 @@ static int sm5720_otg_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_ONLINE:
 		dev_info(charger->dev, "OTG:POWER_SUPPLY_PROP_ONLINE - %s\n", val->intval > 0 ? "ON" : "OFF");
 		if (sm5720_charger_check_oper_otg_mode_on() == val->intval || lpcharge)
+			goto err_otg;
+
+		ret = sm5720_check_wcin_before_otg_on(charger);
+		pr_info("%s: wc_state = %d\n", __func__, ret);
+		if (ret < 0)
 			goto err_otg;
 
 		value.intval = val->intval;
@@ -1203,22 +1220,6 @@ static inline int _reduce_input_limit_current(struct sm5720_charger_data *charge
 	return charger->input_current;
 }
 
-static inline void _check_slow_rate_charging(struct sm5720_charger_data *charger)
-{
-	union power_supply_propval value;
-	/* under 400mA considered as slow charging concept for VZW */
-	if (charger->input_current <= SLOW_CHARGING_CURRENT_STANDARD &&
-			charger->cable_type != SEC_BATTERY_CABLE_NONE) {
-
-		dev_info(charger->dev, "slow-rate charging on : input current(%dmA), cable-type(%d)\n",
-				charger->input_current, charger->cable_type);
-
-		charger->slow_late_chg_mode = 1;
-		value.intval = POWER_SUPPLY_CHARGE_TYPE_SLOW;
-		psy_do_property("battery", set, POWER_SUPPLY_PROP_CHARGE_TYPE, value);
-	}
-}
-
 static void aicl_work(struct work_struct *work)
 {
 	struct sm5720_charger_data *charger =
@@ -1251,9 +1252,6 @@ static void aicl_work(struct work_struct *work)
 		value.intval = input_limit;
 		psy_do_property("battery", set,
 			POWER_SUPPLY_EXT_PROP_AICL_CURRENT, value);
-
-		if (!is_wireless_type(charger->cable_type))
-			_check_slow_rate_charging(charger);
 	}
 
 	mutex_unlock(&charger->charger_mutex);
@@ -1400,8 +1398,6 @@ static inline int _init_sm5720_charger_drv_info(struct sm5720_charger_data *char
 		dev_err(charger->dev, "%s: fail to create workqueue\n", __func__);
 		return -ENOMEM;
 	}
-
-	charger->slow_late_chg_mode = false;
 
 	/* setup Work-queue control handlers */
 	INIT_DELAYED_WORK(&charger->aicl_work, aicl_work);

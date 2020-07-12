@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 TRUSTONIC LIMITED
+ * Copyright (c) 2013-2018 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -15,18 +15,26 @@
 #ifndef __DCITUI_H__
 #define __DCITUI_H__
 
-/**< Responses have bit 31 set */
-
 /* Linux checkpatch suggests to use the BIT macro */
 #ifndef BIT
 #define BIT(n) (1U << (n))
 #endif
 
+#ifndef u32
+#define u32 uint32_t
+#endif
+
+#ifndef u64
+#define u64 uint64_t
+#endif
+
+/**< Responses have bit 31 set */
 #define RSP_ID_MASK BIT(31)
-#define RSP_ID(cmd_id) (((uint32_t)(cmd_id)) | RSP_ID_MASK)
-#define IS_CMD(cmd_id) ((((uint32_t)(cmd_id)) & RSP_ID_MASK) == 0)
-#define IS_RSP(cmd_id) ((((uint32_t)(cmd_id)) & RSP_ID_MASK) == RSP_ID_MASK)
-#define CMD_ID_FROM_RSP(rsp_id) (rsp_id & (~RSP_ID_MASK))
+
+#define RSP_ID(cmd_id) (((u32)(cmd_id)) | RSP_ID_MASK)
+#define IS_CMD(cmd_id) ((((u32)(cmd_id)) & RSP_ID_MASK) == 0)
+#define IS_RSP(cmd_id) ((((u32)(cmd_id)) & RSP_ID_MASK) == RSP_ID_MASK)
+#define CMD_ID_FROM_RSP(rsp_id) ((rsp_id) & (~RSP_ID_MASK))
 
 /**
  * Return codes of driver commands.
@@ -84,32 +92,32 @@
 #define TUI_DCI_VERSION_MINOR   (1u)
 
 #define TUI_DCI_VERSION(major, minor) \
-	(((major & 0x0000ffff) << 16) | (minor & 0x0000ffff))
-#define TUI_DCI_VERSION_GET_MAJOR(version) ((version >> 16) & 0x0000ffff)
-#define TUI_DCI_VERSION_GET_MINOR(version) (version & 0x0000ffff)
+	((((major) & 0x0000ffff) << 16) | ((minor) & 0x0000ffff))
+#define TUI_DCI_VERSION_GET_MAJOR(version) (((version) >> 16) & 0x0000ffff)
+#define TUI_DCI_VERSION_GET_MINOR(version) ((version) & 0x0000ffff)
 
 /* Command payload */
 
 struct tui_disp_data_t {
-	uint32_t buff_id;
+	u32 buff_id;
 };
 
 struct tui_hal_cmd_t {
-	uint32_t id;    /* Id of the HAL command */
-	uint32_t size;  /* Size of the data associated to the HAL command */
-	uint64_t data[2];   /* Data associated to the HAL command */
+	u32 id;    /* Id of the HAL command */
+	u32 size;  /* Size of the data associated to the HAL command */
+	u64 data[2];   /* Data associated to the HAL command */
 };
 
 struct tui_hal_rsp_t {
-	uint32_t id;    /* Id of the HAL response */
-	uint32_t return_code;   /* Return code of the HAL response */
-	uint32_t size;  /* Size of the data associated to the HAL response */
-	uint32_t data[3];   /* Data associated to the HAL response */
+	u32 id;    /* Id of the HAL response */
+	u32 return_code;   /* Return code of the HAL response */
+	u32 size;  /* Size of the data associated to the HAL response */
+	u32 data[3];   /* Data associated to the HAL response */
 };
 
 struct tui_alloc_data_t {
-	uint32_t alloc_size;
-	uint32_t num_of_buff;
+	u32 alloc_size;
+	u32 num_of_buff;
 };
 
 union dci_cmd_payload_t {
@@ -120,21 +128,21 @@ union dci_cmd_payload_t {
 
 /* Command */
 struct dci_command_t {
-	uint32_t id;
+	u32 id;
 	union dci_cmd_payload_t payload;
 };
 
 /* TUI frame buffer (output from NWd) */
 struct tui_alloc_buffer_t {
-	uint64_t    pa;
+	u64    pa;
 };
 
 #define MAX_DCI_BUFFER_NUMBER 4
 
 /* Response */
 struct dci_response_t {
-	uint32_t	id; /* must be command ID | RSP_ID_MASK */
-	uint32_t		return_code;
+	u32	id; /* must be command ID | RSP_ID_MASK */
+	u32		return_code;
 	union {
 		struct tui_alloc_buffer_t alloc_buffer[MAX_DCI_BUFFER_NUMBER];
 		struct tui_hal_rsp_t hal_rsp;
@@ -143,17 +151,17 @@ struct dci_response_t {
 
 /* DCI buffer */
 struct tui_dci_msg_t {
-	uint32_t version;
-	uint32_t     nwd_notif; /* Notification from TlcTui to DrTui */
+	u32 version;
+	u32     nwd_notif; /* Notification from TlcTui to DrTui */
 	struct dci_command_t  cmd_nwd;   /* Command from DrTui to TlcTui */
 	struct dci_response_t nwd_rsp;   /* Response from TlcTui to DrTui */
-	uint32_t     hal_cmd;
-	uint32_t     hal_rsp;
+	u32     hal_cmd;
+	u32     hal_rsp;
 };
 
 /**
  * Driver UUID. Update accordingly after reserving UUID
  */
-#define DR_TUI_UUID { { 0xff, 0xff, 0xff, 0xff, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ,0x00, 0x00 ,0x00, 0x14 } }
+#define DR_TUI_UUID { { 0xff, 0xff, 0xff, 0xff, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14 } }
 
 #endif /* __DCITUI_H__ */

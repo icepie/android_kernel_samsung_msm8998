@@ -91,6 +91,17 @@
 #define DBMDX_VC_OKG_NAME			"okg_amodel.bin"
 #endif
 
+#ifndef DBMDX_VE_GRAM_NAME
+#define DBMDX_VE_GRAM_NAME			"ve_grammar.bin"
+#endif
+
+#ifndef DBMDX_VE_NET_NAME
+#define DBMDX_VE_NET_NAME			"ve_net.bin"
+#endif
+
+#ifndef DBMDX_VE_AMODEL_NAME
+#define DBMDX_VE_AMODEL_NAME			"ve_amodel.bin"
+#endif
 
 #define MAX_REQ_SIZE				8192
 
@@ -110,6 +121,7 @@
 #define DBMDX_MSLEEP_BUFFERING_PAUSED		100
 #define DBMDX_MSLEEP_AFTER_MIC_ENABLED		100
 #define DBMDX_MSLEEP_IS_ALIVE			20
+#define DBMDX_MSLEEP_IF_AUDIO_BUFFER_EMPTY	90
 #define DBMDX_MSLEEP_AFTER_LOAD_ASRP		50
 
 #define DBMDX_USLEEP_AFTER_ECHO_CANCELLER	5000
@@ -139,13 +151,18 @@
 #define DBMDX_MSLEEP_SPI_VQE_SYS_CFG_CMD	60
 #define DBMDX_MSLEEP_SPI_FINISH_BOOT_1		10
 #define DBMDX_MSLEEP_SPI_FINISH_BOOT_2		10
+#ifdef DBMDX_VA_NS_SUPPORT
+#define DBMDX_MSLEEP_SPI_WAKEUP			100
+#else
 #define DBMDX_MSLEEP_SPI_WAKEUP			50
+#endif
 #define DBMDX_MSLEEP_SPI_D2_AFTER_RESET_32K	300
 #define DBMDX_MSLEEP_SPI_D2_AFTER_SBL		20
 #define DBMDX_MSLEEP_SPI_D2_BEFORE_FW_CHECKSUM	20
 #define DBMDX_MSLEEP_SPI_D4_AFTER_RESET_32K	85
 #define DBMDX_MSLEEP_SPI_D4_AFTER_PLL_CHANGE	80
 #define DBMDX_MSLEEP_SPI_D2_AFTER_PLL_CHANGE	5
+
 
 #define DBMDX_USLEEP_SPI_VQE_CMD_AFTER_SEND	20000
 #define DBMDX_USLEEP_SPI_VA_CMD_AFTER_SEND	500
@@ -194,11 +211,14 @@
 #define DBMDX_BOOT_OPT_DONT_VERIFY_CRC		0x0080
 #define DBMDX_BOOT_OPT_DONT_SEND_START_BOOT	0x0100
 #define DBMDX_BOOT_OPT_VERIFY_CHIP_ID		0x0200
+#define DBMDX_BOOT_OPT_SET_GPIO_8_IN		0x0400
 
 #define DBMDX_AMODEL_DEFAULT_OPTIONS		0x0000
 #define DBMDX_AMODEL_INCLUDES_HEADERS		0x0001
 #define DBMDX_AMODEL_SVT_ENCODING		0x0002
 #define DBMDX_AMODEL_SINGLE_FILE_NO_HEADER	0x0004
+#define DBMDX_LOAD_AMODEL_FOR_VE		0x0008
+#define DBMDX_VE_SEND_DUMMY_AMODEL_4B		0x0010
 
 #define DBMDX_AMODEL_TYPE_PRIMARY		0x0001
 #define DBMDX_AMODEL_TYPE_SECONDARY		0x0002
@@ -279,6 +299,7 @@ struct va_flags {
 #endif
 #ifdef DBMDX_VA_NS_SUPPORT
 	const char	*va_last_loaded_asrp_params_file_name;
+	bool	va_ns_active;
 #endif
 	int	buffering;
 	int	buffering_paused;
@@ -464,6 +485,8 @@ struct dbmdx_private {
 
 #ifdef DBMDX_VA_NS_SUPPORT
 	bool				va_ns_enabled;
+	int				va_ns_cfg_index;
+	bool				va_ns_pcm_streaming_enabled;
 #endif
 	int				va_cur_digital_mic_digital_gain;
 	int				va_cur_analog_mic_analog_gain;
@@ -503,6 +526,7 @@ struct dbmdx_private {
 	void (*reset_sequence)(struct dbmdx_private *p);
 	void (*wakeup_set)(struct dbmdx_private *p);
 	void (*wakeup_release)(struct dbmdx_private *p);
+	void (*wakeup_toggle)(struct dbmdx_private *p);
 	void (*lock)(struct dbmdx_private *p);
 	void (*unlock)(struct dbmdx_private *p);
 	int (*verify_checksum)(struct dbmdx_private *p,

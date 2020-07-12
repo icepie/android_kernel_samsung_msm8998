@@ -2,10 +2,12 @@
 # Makefile for muic devices
 #
 
+obj-$(CONFIG_MUIC_KEYBOARD)		+= keyboard_notifier.o
+
 ifeq ($(CONFIG_MUIC_S2MU004),y)
 	obj-y					+= muic_core.o s2mu004-muic.o s2mu004-muic-sysfs.o
 	obj-$(CONFIG_CCIC_NOTIFIER)		+= muic_manager.o
-	obj-$(CONFIG_HV_MUIC_S2MU004_AFC)	+= s2mu004-muic-afc.o
+	obj-$(CONFIG_USB_EXTERNAL_NOTIFY)	+= muic_usb_notification_manager.o
 else
 	obj-y				+= muic-core.o
 	obj-$(CONFIG_MUIC_SUPPORT_CCIC)	+= universal/muic_ccic.o
@@ -45,10 +47,9 @@ obj-$(CONFIG_MUIC_UNIVERSAL_SM5703)	+= universal/muic_regmap_sm5703.o
 obj-$(CONFIG_MUIC_UNIVERSAL_SM5703_AFC)	+= universal/muic_sm5703_afc.o
 obj-$(CONFIG_MUIC_UNIVERSAL_SM5720)	+= universal/muic_regmap_sm5720.o
 
-obj-$(CONFIG_MUIC_HV)	+= universal/muic_hv.o
-ifeq ($(CONFIG_MUIC_UNIVERSAL_MAX77854), y)
-	obj-$(CONFIG_MUIC_HV)	+= universal/muic_hv_max77854.o
-endif
-ifeq ($(CONFIG_MUIC_UNIVERSAL_SM5720), y)
-	obj-$(CONFIG_MUIC_HV)	+= universal/muic_sm5720_afc.o
+ifeq ($(CONFIG_MUIC_HV),y)
+obj-$(CONFIG_MUIC_UNIVERSAL)		+= universal/muic_hv.o
+obj-$(CONFIG_MUIC_UNIVERSAL_MAX77854)	+= universal/muic_hv_max77854.o
+obj-$(CONFIG_MUIC_UNIVERSAL_SM5720)	+= universal/muic_sm5720_afc.o
+obj-$(CONFIG_MUIC_S2MU004)	+= s2mu004-muic-afc.o
 endif

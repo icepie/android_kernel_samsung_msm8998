@@ -96,6 +96,7 @@ skip_blr=set([
     'secondary_startup', 
     'el0_svc_naked',
     '__sys_trace',
+    '__enable_mmu',
     ])
 
 skip_magic=set([

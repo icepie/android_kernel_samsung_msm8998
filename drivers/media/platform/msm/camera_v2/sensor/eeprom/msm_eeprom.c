@@ -613,9 +613,9 @@ static int msm_eeprom_match_id(struct msm_eeprom_ctrl_t *e_ctrl, bool bShowLog)
 	uint8_t id[2];
 	uint8_t read_data[4] = {0,};
 
-	CDBG("%s: subdev_id %d\n", __func__, e_ctrl->subdev_id);
-	if (e_ctrl->subdev_id == 1) {
-		CDBG("%s: front eeprom\n", __func__);
+	CDBG("%s: subdev_id[%d], eeprom_device_type[%d]\n", __func__, e_ctrl->subdev_id, e_ctrl->eeprom_device_type);
+	if (e_ctrl->eeprom_device_type == MSM_CAMERA_I2C_DEVICE ||
+	    e_ctrl->eeprom_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(client, 0, read_data, sizeof(read_data));
 		if (rc < 0)
 			return rc;
@@ -626,7 +626,6 @@ static int msm_eeprom_match_id(struct msm_eeprom_ctrl_t *e_ctrl, bool bShowLog)
 				__func__, read_data[0], read_data[1], read_data[2], read_data[3]);
 		}
 	} else {
-		CDBG("%s: rear eeprom\n", __func__);
 		rc = msm_camera_spi_query_id(client, 0, &id[0], 2);
 		if (rc < 0)
 			return rc;
@@ -1107,9 +1106,14 @@ FREE:
 static int eeprom_config_erase(struct msm_eeprom_ctrl_t *e_ctrl,
 			       struct msm_eeprom_cfg_data *cdata)
 {
-	int rc;
+	int rc = 0;
 	bool down;
 	bool bShowLog = FALSE;
+
+	if ((e_ctrl->eeprom_device_type != MSM_CAMERA_SPI_DEVICE) ||
+		(e_ctrl->i2c_client.spi_client == NULL)) {
+		return rc;
+	}
 
 	pr_info("%s: erasing addr 0x%x, size %u\n", __func__,
 		cdata->cfg.erase_data.addr, cdata->cfg.erase_data.num_bytes);
@@ -1164,10 +1168,41 @@ static int32_t msm_eeprom_read_eeprom_data(struct msm_eeprom_ctrl_t *e_ctrl)
 			pr_err("%s : All CRC values are matched.\n", __func__);
 		}
 
-		if (e_ctrl->subdev_id == 1) { /* read front sensor id */
+		if(e_ctrl->subdev_id == 0) {
+#if  defined(FROM_REAR_AF_CAL_MACRO_ADDR)
+			memcpy(&rear_af_cal[0], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_MACRO_ADDR], 4);
+#endif
+#if  defined(FROM_REAR_AF_CAL_PAN_ADDR)
+			memcpy(&rear_af_cal[9], &e_ctrl->cal_data.mapdata[FROM_REAR_AF_CAL_PAN_ADDR], 4);
+#endif
+#if defined(FROM_REAR_SENSOR_ID_ADDR)
+			/* read rear sensor id */
+			memcpy(rear_sensor_id, &e_ctrl->cal_data.mapdata[FROM_REAR_SENSOR_ID_ADDR], FROM_SENSOR_ID_SIZE);
+			rear_sensor_id[FROM_SENSOR_ID_SIZE] = '\0';
+
+			CDBG("%s : %d rear id = %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+				__func__, e_ctrl->subdev_id, rear_sensor_id[0], rear_sensor_id[1], rear_sensor_id[2], rear_sensor_id[3],
+				rear_sensor_id[4], rear_sensor_id[5], rear_sensor_id[6], rear_sensor_id[7], rear_sensor_id[8], rear_sensor_id[9],
+				rear_sensor_id[10], rear_sensor_id[11], rear_sensor_id[12], rear_sensor_id[13], rear_sensor_id[14], rear_sensor_id[15]);
+#endif
+#if defined(FROM_MODULE_ID_ADDR)
+			/* read module id */
+			memcpy(rear_module_id, &e_ctrl->cal_data.mapdata[FROM_MODULE_ID_ADDR], FROM_MODULE_ID_SIZE);
+			rear_module_id[FROM_MODULE_ID_SIZE] = '\0';
+
+			CDBG("%s : %d rear_module_id= %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+				__func__, e_ctrl->subdev_id, rear_module_id[0], rear_module_id[1], rear_module_id[2], rear_module_id[3],
+				rear_module_id[4], rear_module_id[5], rear_module_id[6], rear_module_id[7], rear_module_id[8], rear_module_id[9]);
+				//rear_module_id[10], rear_module_id[11], rear_module_id[12], rear_module_id[13], rear_module_id[14], rear_module_id[15]);
+#endif
+
+		} else if (e_ctrl->subdev_id == 1) { /* read front sensor id */
 			memcpy(front_sensor_id, &e_ctrl->cal_data.mapdata[FROM_FRONT_SENSOR_ID_ADDR], FROM_SENSOR_ID_SIZE);
 			front_sensor_id[FROM_SENSOR_ID_SIZE] = '\0';
-			CDBG("%s : %d sensor id = %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", __func__, e_ctrl->subdev_id, front_sensor_id[0], front_sensor_id[1], front_sensor_id[2], front_sensor_id[3], front_sensor_id[4], front_sensor_id[5], front_sensor_id[6], front_sensor_id[7], front_sensor_id[8], front_sensor_id[9], front_sensor_id[10], front_sensor_id[11], front_sensor_id[12], front_sensor_id[13], front_sensor_id[14], front_sensor_id[15]);
+			CDBG("%s : %d sensor id = %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", __func__,
+				e_ctrl->subdev_id, front_sensor_id[0], front_sensor_id[1], front_sensor_id[2], front_sensor_id[3], front_sensor_id[4],
+				front_sensor_id[5], front_sensor_id[6], front_sensor_id[7], front_sensor_id[8], front_sensor_id[9], front_sensor_id[10],
+				front_sensor_id[11], front_sensor_id[12], front_sensor_id[13], front_sensor_id[14], front_sensor_id[15]);
 
 			/* front module id */
 			memcpy(front_module_id, &e_ctrl->cal_data.mapdata[FROM_MODULE_ID_ADDR], FROM_MODULE_ID_SIZE);
@@ -1480,6 +1515,7 @@ static int msm_eeprom_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 	struct msm_eeprom_cfg_data cdata;
 	int rc = 0;
 	size_t length = 0;
+	uint32_t num_bytes = 0;
 
 	CDBG("%s:%d E: subdevid: %d\n",__func__,__LINE__,e_ctrl->subdev_id);
 	cdata.cfgtype = cdata32->cfgtype;
@@ -1570,9 +1606,13 @@ static int msm_eeprom_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 			pr_err("%s:%d failed rc %d\n", __func__, __LINE__,  rc);
 			break;
 		}
+
+		num_bytes = cdata.cfg.read_data.num_bytes;
+		if (num_bytes > e_ctrl->cal_data.num_data)
+			num_bytes = e_ctrl->cal_data.num_data;
 		rc = copy_to_user(cdata.cfg.read_data.dbuffer,
 			e_ctrl->cal_data.mapdata,
-			cdata.cfg.read_data.num_bytes);
+			num_bytes);
 		break;
 	case CFG_EEPROM_GET_ERASESIZE:
 		CDBG("%s E CFG_EEPROM_GET_ERASESIZE: %d\n",
@@ -1842,7 +1882,10 @@ static int msm_eeprom_spi_setup(struct spi_device *spi)
 			/* read rear sensor id */
 			memcpy(rear_sensor_id, &e_ctrl->cal_data.mapdata[FROM_REAR_SENSOR_ID_ADDR], FROM_SENSOR_ID_SIZE);
 			rear_sensor_id[FROM_SENSOR_ID_SIZE] = '\0';
-			CDBG("%s : %d rear id = %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", __func__, e_ctrl->subdev_id, rear_sensor_id[0], rear_sensor_id[1], rear_sensor_id[2], rear_sensor_id[3], rear_sensor_id[4], rear_sensor_id[5], rear_sensor_id[6], rear_sensor_id[7], rear_sensor_id[8], rear_sensor_id[9], rear_sensor_id[10], rear_sensor_id[11], rear_sensor_id[12], rear_sensor_id[13], rear_sensor_id[14], rear_sensor_id[15]);
+			CDBG("%s : %d rear id = %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+				__func__, e_ctrl->subdev_id, rear_sensor_id[0], rear_sensor_id[1], rear_sensor_id[2], rear_sensor_id[3],
+				rear_sensor_id[4], rear_sensor_id[5], rear_sensor_id[6], rear_sensor_id[7], rear_sensor_id[8], rear_sensor_id[9],
+				rear_sensor_id[10], rear_sensor_id[11], rear_sensor_id[12], rear_sensor_id[13], rear_sensor_id[14], rear_sensor_id[15]);
 
 #if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
 			/* read rear2 sensor id */
@@ -2227,7 +2270,7 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	}
 
 #if 1 // To reduce booting time.
-	pr_info("%s: Skip front read eeprom in probe func\n", __func__);
+	pr_info("%s: Skip read eeprom-%d in probe func\n", __func__, e_ctrl->subdev_id);
 #else
 	rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
 	if (rc < 0) {
@@ -2458,7 +2501,7 @@ static int msm_eeprom_i2c_probe(struct i2c_client *client,
 	e_ctrl->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_EEPROM;
 	msm_sd_register(&e_ctrl->msm_sd);
 	e_ctrl->is_supported = (e_ctrl->is_supported << 1) | 1;
-	CDBG("%s Front Cam e_ctrl->is_supported rc %x\n", __func__, e_ctrl->is_supported);
+	CDBG("%s EEPROM-%d e_ctrl->is_supported rc %x\n", __func__, e_ctrl->subdev_id, e_ctrl->is_supported);
 	pr_err("%s success result=%d is_supported = 0x%04X\n", __func__, rc, e_ctrl->is_supported);
 
 #ifdef CONFIG_COMPAT

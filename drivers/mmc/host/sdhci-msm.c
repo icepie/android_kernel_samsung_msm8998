@@ -2,7 +2,7 @@
  * drivers/mmc/host/sdhci-msm.c - Qualcomm Technologies, Inc. MSM SDHCI Platform
  * driver source file
  *
- * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -39,6 +39,7 @@
 #include <linux/msm-bus.h>
 #include <linux/pm_runtime.h>
 #include <trace/events/mmc.h>
+#include <soc/qcom/boot_stats.h>
 
 #include "sdhci-msm.h"
 #include "sdhci-msm-ice.h"
@@ -801,19 +802,23 @@ static int msm_init_cm_dll(struct sdhci_host *host)
 			| CORE_CK_OUT_EN), host->ioaddr +
 			msm_host_offset->CORE_DLL_CONFIG);
 
-	wait_cnt = 50;
-	/* Wait until DLL_LOCK bit of DLL_STATUS register becomes '1' */
-	while (!(readl_relaxed(host->ioaddr +
-		msm_host_offset->CORE_DLL_STATUS) & CORE_DLL_LOCK)) {
-		/* max. wait for 50us sec for LOCK bit to be set */
-		if (--wait_cnt == 0) {
-			pr_err("%s: %s: DLL failed to LOCK\n",
-				mmc_hostname(mmc), __func__);
-			rc = -ETIMEDOUT;
-			goto out;
+	/* For hs400es mode, no need to wait for core dll lock */
+	if (!(msm_host->enhanced_strobe &&
+				mmc_card_strobe(msm_host->mmc->card))) {
+		wait_cnt = 50;
+		/* Wait until DLL_LOCK bit of DLL_STATUS register becomes '1' */
+		while (!(readl_relaxed(host->ioaddr +
+			msm_host_offset->CORE_DLL_STATUS) & CORE_DLL_LOCK)) {
+			/* max. wait for 50us sec for LOCK bit to be set */
+			if (--wait_cnt == 0) {
+				pr_err("%s: %s: DLL failed to LOCK\n",
+					mmc_hostname(mmc), __func__);
+				rc = -ETIMEDOUT;
+				goto out;
+			}
+			/* wait for 1us before polling again */
+			udelay(1);
 		}
-		/* wait for 1us before polling again */
-		udelay(1);
 	}
 
 out:
@@ -1206,6 +1211,7 @@ retry:
 		struct scatterlist sg;
 		struct mmc_command sts_cmd = {0};
 
+		msm_host->phase_on_tuning = phase;
 		/* set the phase in delay line hw block */
 		rc = msm_config_cm_dll_phase(host, phase);
 		if (rc)
@@ -1332,9 +1338,19 @@ retry:
 		rc = msm_config_cm_dll_phase(host, phase);
 		if (rc)
 			goto kfree;
-		msm_host->saved_tuning_phase = phase;
-		pr_info("%s: %s: finally setting the tuning phase to %d\n",
-				mmc_hostname(mmc), __func__, phase);
+		if (msm_host->saved_tuning_phase != phase) {
+			int i = 0;
+			char phase_result[17] = { 0, };
+
+			pr_info("%s: %s: finally setting the tuning phase from %d to %d\n",
+					mmc_hostname(mmc), __func__,
+					msm_host->saved_tuning_phase, phase);
+			for (i = 0; i < tuned_phase_cnt; i++)
+				snprintf(phase_result + i, sizeof(phase_result) - i, "%1x", tuned_phases[i]);
+			pr_err("%s\n", phase_result);
+
+			msm_host->saved_tuning_phase = phase;
+		}
 	} else {
 		if (--tuning_seq_cnt)
 			goto retry;
@@ -3176,7 +3192,10 @@ static void sdhci_msm_set_clock(struct sdhci_host *host, unsigned int clock)
 					| CORE_HC_SELECT_IN_EN), host->ioaddr +
 					msm_host_offset->CORE_VENDOR_SPEC);
 		}
-		if (!host->mmc->ios.old_rate && !msm_host->use_cdclp533) {
+		/* No need to check for DLL lock for HS400es mode */
+		if (!host->mmc->ios.old_rate && !msm_host->use_cdclp533 &&
+				!((card && mmc_card_strobe(card) &&
+				 msm_host->enhanced_strobe))) {
 			/*
 			 * Poll on DLL_LOCK and DDR_DLL_LOCK bits in
 			 * CORE_DLL_STATUS to be set.  This should get set
@@ -3436,6 +3455,7 @@ void sdhci_msm_dump_vendor_regs(struct sdhci_host *host)
 		pr_info("%s: ICE status %x\n", mmc_hostname(host->mmc), sts);
 		sdhci_msm_ice_print_regs(host);
 	}
+	pr_info("Phase_on_tuning : 0x%x.\n", msm_host->phase_on_tuning);
 }
 
 void sdhci_msm_reset(struct sdhci_host *host, u8 mask)
@@ -3956,11 +3976,10 @@ void sdhci_msm_pm_qos_cpu_init(struct sdhci_host *host,
 		group->latency = PM_QOS_DEFAULT_VALUE;
 		pm_qos_add_request(&group->req, PM_QOS_CPU_DMA_LATENCY,
 			group->latency);
-		pr_info("%s (): voted for group #%d (mask=0x%lx) latency=%d (0x%p)\n",
+		pr_info("%s (): voted for group #%d (mask=0x%lx) latency=%d\n",
 			__func__, i,
 			group->req.cpus_affine.bits[0],
-			group->latency,
-			&latency[i].latency[SDHCI_PERFORMANCE_MODE]);
+			group->latency);
 	}
 	msm_host->pm_qos_prev_cpu = -1;
 	msm_host->pm_qos_group_enable = true;
@@ -4060,6 +4079,15 @@ static unsigned int sdhci_msm_get_current_limit(struct sdhci_host *host)
 	return max_curr;
 }
 
+static void sdhci_msm_card_event(struct sdhci_host *host)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_msm_host *msm_host = pltfm_host->priv;
+
+	if (!mmc_gpio_get_cd(msm_host->mmc))
+		msm_host->saved_tuning_phase = INVALID_TUNING_PHASE;
+}
+
 static struct sdhci_ops sdhci_msm_ops = {
 	.crypto_engine_cfg = sdhci_msm_ice_cfg,
 	.crypto_engine_cmdq_cfg = sdhci_msm_ice_cmdq_cfg,
@@ -4088,6 +4116,7 @@ static struct sdhci_ops sdhci_msm_ops = {
 	.pre_req = sdhci_msm_pre_req,
 	.post_req = sdhci_msm_post_req,
 	.get_current_limit = sdhci_msm_get_current_limit,
+	.card_event = sdhci_msm_card_event,
 };
 
 static void sdhci_set_default_hw_caps(struct sdhci_msm_host *msm_host,
@@ -4352,6 +4381,19 @@ static ssize_t sd_detect_curmode_show(struct device *dev,
 	return sprintf(buf, "%s\n", uhs_bus_speed_mode);
 }
 
+static ssize_t sd_detect_curphase_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct sdhci_msm_host *msm_host = dev_get_drvdata(dev);
+	struct mmc_host *host = msm_host->mmc;
+
+	if (host && host->card)
+		if (host->card->sd_bus_speed == UHS_SDR104_BUS_SPEED)
+			return sprintf(buf, "%d\n", (int)msm_host->saved_tuning_phase);
+
+	return sprintf(buf, "%d\n", -1);
+}
+
 static ssize_t sdcard_summary_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -4403,16 +4445,19 @@ static ssize_t sdcard_summary_show(struct device *dev,
 			uhs_bus_speed_mode = "DS";
 
 		/* SUMMARY */
-		dev_info(dev, "MANID : 0x%02X, SERIAL : %04X, SIZE : %s, SPEEDMODE : %s\n",
-				card->cid.manfid, serial, ret_size, uhs_bus_speed_mode);
-		return sprintf(buf, "\"MANID\":\"0x%02X\",\"SERIAL\":\"%04X\""\
-				",\"SIZE\":\"%s\",\"SPEEDMODE\":\"%s\"\n",
-				card->cid.manfid, serial, ret_size, uhs_bus_speed_mode);
+		sprintf(buf, "\"MANID\":\"0x%02X\",\"SERIAL\":\"%04X\""\
+				",\"SIZE\":\"%s\",\"SPEEDMODE\":\"%s\""\
+				",\"NOTI\":\"%d\"\n",
+				card->cid.manfid, serial, ret_size,
+				uhs_bus_speed_mode, card->err_log[0].noti_cnt);
+		dev_info(dev, "%s", buf);
+		return sprintf(buf, "%s", buf);
 	} else {
 		/* SUMMARY : No SD Card Case */
 		dev_info(dev, "%s : No SD Card\n", __func__);
 		return sprintf(buf, "\"MANID\":\"NoCard\",\"SERIAL\":\"NoCard\""\
-				",\"SIZE\":\"NoCard\",\"SPEEDMODE\":\"NoCard\"\n");
+				",\"SIZE\":\"NoCard\",\"SPEEDMODE\":\"NoCard\""\
+				",\"NOTI\":\"NoCard\"\n");
 	}
 }
 
@@ -4441,6 +4486,26 @@ static ssize_t sd_count_show(struct device *dev,
 	}
 	len = snprintf(buf, PAGE_SIZE, "%lld\n", total_cnt);
 
+out:
+	return len;
+}
+
+static ssize_t sd_cid_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct mmc_host *host = dev_get_drvdata(dev);
+	struct mmc_card *card = host->card;
+	int len = 0;
+
+	if (!card) {
+		len = snprintf(buf, PAGE_SIZE, "no card\n");
+		goto out;
+	}
+
+	len = snprintf(buf, PAGE_SIZE,
+			"%08x%08x%08x%08x\n",
+			card->raw_cid[0], card->raw_cid[1],
+			card->raw_cid[2], card->raw_cid[3]);
 out:
 	return len;
 }
@@ -4487,9 +4552,49 @@ static DEVICE_ATTR(status, S_IRUGO, t_flash_detect_show, NULL);
 static DEVICE_ATTR(cd_cnt, S_IRUGO, sd_detect_cnt_show, NULL);
 static DEVICE_ATTR(max_mode, S_IRUGO, sd_detect_maxmode_show, NULL);
 static DEVICE_ATTR(current_mode, S_IRUGO, sd_detect_curmode_show, NULL);
+static DEVICE_ATTR(current_phase, S_IRUGO, sd_detect_curphase_show, NULL);
 static DEVICE_ATTR(sdcard_summary, S_IRUGO, sdcard_summary_show, NULL);
 static DEVICE_ATTR(sd_count, S_IRUGO, sd_count_show, NULL);
+static DEVICE_ATTR(data, S_IRUGO, sd_cid_show, NULL);
 static DEVICE_ATTR(sd_data, S_IRUGO, sd_data_show, NULL);
+
+/* Callback function for SD Card IO Error */
+static int sdcard_uevent(struct mmc_card *card)
+{
+	pr_info("%s: Send Notification about SD Card IO Error\n",
+			mmc_hostname(card->host));
+	return kobject_uevent(&t_flash_detect_dev->kobj, KOBJ_CHANGE);
+}
+
+static int sdhci_msm_sdcard_uevent(struct device *dev,
+		struct kobj_uevent_env *env)
+{
+	struct sdhci_msm_host *msm_host = dev_get_drvdata(dev);
+	struct mmc_host *host = msm_host->mmc;
+	struct mmc_card *card = host->card;
+	int retval = 0;
+	bool card_exist;
+
+	add_uevent_var(env, "DEVNAME=%s", dev->kobj.name);
+
+	if (card)
+		card_exist = true;
+	else
+		card_exist = false;
+#if 0   /* Disable this feature for MASS Project. It's possible to enable after review */
+	retval = add_uevent_var(env, "IOERROR=%s", card_exist ? (
+		((card->err_log[0].ge_cnt && !(card->err_log[0].ge_cnt % 1000)) ||
+		 (card->err_log[0].ecc_cnt && !(card->err_log[0].ecc_cnt % 1000)) ||
+		 (card->err_log[0].wp_cnt && !(card->err_log[0].wp_cnt % 100)) ||
+		 (card->err_log[0].oor_cnt && !(card->err_log[0].oor_cnt % 100)))
+		? "YES" : "NO") : "NoCard");
+#endif
+	return retval;
+}
+
+static struct device_type sdcard_type = {
+	.uevent = sdhci_msm_sdcard_uevent,
+};
 
 #ifdef CONFIG_SEC_FACTORY
 static ssize_t vector_screen(struct device *dev,  struct device_attribute *attr, char *buf)
@@ -4698,6 +4803,8 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	struct resource *tlmm_memres = NULL;
 	void __iomem *tlmm_mem;
 	unsigned long flags;
+	bool force_probe;
+	char boot_marker[40];
 
 	pr_debug("%s: Enter %s\n", dev_name(&pdev->dev), __func__);
 	msm_host = devm_kzalloc(&pdev->dev, sizeof(struct sdhci_msm_host),
@@ -4721,6 +4828,10 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 		ret = PTR_ERR(host);
 		goto out_host_free;
 	}
+
+	snprintf(boot_marker, sizeof(boot_marker),
+			"M - DRIVER %s Init", mmc_hostname(host->mmc));
+	place_marker(boot_marker);
 
 	pltfm_host = sdhci_priv(host);
 	pltfm_host->priv = msm_host;
@@ -4761,8 +4872,13 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 			goto pltfm_free;
 		}
 
+		/* Read property to determine if the probe is forced */
+		force_probe = of_find_property(pdev->dev.of_node,
+			"qcom,force-sdhc1-probe", NULL);
+
 		/* skip the probe if eMMC isn't a boot device */
-		if ((ret == 1) && !sdhci_msm_is_bootdevice(&pdev->dev)) {
+		if ((ret == 1) && !sdhci_msm_is_bootdevice(&pdev->dev)
+		    && !force_probe) {
 			ret = -ENODEV;
 			goto pltfm_free;
 		}
@@ -4917,8 +5033,6 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 			goto vreg_deinit;
 		}
 		writel_relaxed(readl_relaxed(tlmm_mem) | 0x2, tlmm_mem);
-		dev_dbg(&pdev->dev, "tlmm reg %pa value 0x%08x\n",
-				&tlmm_memres->start, readl_relaxed(tlmm_mem));
 	}
 
 	/*
@@ -5118,6 +5232,9 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 		if (IS_ERR(t_flash_detect_dev))
 			pr_err("%s : Failed to create device!\n", __func__);
 
+		t_flash_detect_dev->type = &sdcard_type;
+		msm_host->mmc->sdcard_uevent = sdcard_uevent;
+
 		if (device_create_file(t_flash_detect_dev,
 					&dev_attr_status) < 0)
 			pr_err("%s : Failed to create device file(%s)!\n",
@@ -5137,6 +5254,11 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 					&dev_attr_current_mode) < 0)
 			pr_err("%s : Failed to create device file(%s)!\n",
 					__func__, dev_attr_current_mode.attr.name);
+
+		if (device_create_file(t_flash_detect_dev,
+					&dev_attr_current_phase) < 0)
+			pr_err("%s : Failed to create device file(%s)!\n",
+					__func__, dev_attr_current_phase.attr.name);
 
 		if (device_create_file(t_flash_detect_dev,
 					&dev_attr_sdcard_summary) < 0)
@@ -5161,6 +5283,11 @@ static int sdhci_msm_probe(struct platform_device *pdev)
                         &dev_attr_sd_count) < 0)
                         pr_err("%s : Failed to create device file(%s)!\n",
                                         __func__, dev_attr_sd_count.attr.name);
+
+		if (device_create_file(sd_info_dev,
+					&dev_attr_data) < 0)
+                        pr_err("%s : Failed to create device file(%s)!\n",
+                                        __func__, dev_attr_data.attr.name);
 
                 dev_set_drvdata(sd_info_dev, msm_host->mmc);
 	}
@@ -5282,6 +5409,10 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 #endif
 	if (sdhci_msm_is_bootdevice(&pdev->dev))
 		mmc_flush_detect_work(host->mmc);
+
+	snprintf(boot_marker, sizeof(boot_marker),
+			"M - DRIVER %s Ready", mmc_hostname(host->mmc));
+	place_marker(boot_marker);
 
 	/* Successful initialization */
 	goto out;

@@ -621,8 +621,11 @@ static int __init populate_rootfs(void)
 {
 	char *err;
 
-	if (do_skip_initramfs)
+	if (do_skip_initramfs) {
+		if (initrd_start)
+			free_initrd();
 		return default_rootfs();
+	}
 
 	err = unpack_to_rootfs(__initramfs_start, __initramfs_size);
 	if (err)
@@ -630,7 +633,7 @@ static int __init populate_rootfs(void)
 	if (initrd_start) {
 #ifdef CONFIG_BLK_DEV_RAM
 		int fd;
-		printk(KERN_INFO "Trying to unpack rootfs image as initramfs...\n");
+		printk(KERN_INFO "Trying to unpack rootfs image as initramfs... %lx, %lx \n",(unsigned long)initrd_start, (unsigned long)initrd_end);
 		err = unpack_to_rootfs((char *)initrd_start,
 			initrd_end - initrd_start);
 		if (!err) {

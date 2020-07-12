@@ -135,7 +135,6 @@ static int ecryptfs_readdir(struct file *file, struct dir_context *ctx)
 		.sb = inode->i_sb,
 	};
 	lower_file = ecryptfs_file_to_lower(file);
-	lower_file->f_pos = ctx->pos;
 	rc = iterate_dir(lower_file, &buf.ctx);
 	ctx->pos = buf.ctx.pos;
 	if (rc < 0)
@@ -289,9 +288,8 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 	struct ecryptfs_crypt_stat *crypt_stat = NULL;
 	struct dentry *ecryptfs_dentry = file->f_path.dentry;
 	int ret;
-#if defined(CONFIG_SDP) || defined(CONFIG_FMP_ECRYPT_FS)
-	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
-#endif
+
+
 	/* Private value of ecryptfs_dentry allocated in
 	 * ecryptfs_lookup() */
 	struct ecryptfs_file_info *file_info;
@@ -302,9 +300,12 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 	struct knox_dlp_data dlp_data;
 	struct timespec ts;
 #endif
-#if defined(CONFIG_SDP)
+#ifdef CONFIG_SDP
+	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
+
 	mount_crypt_stat = &ecryptfs_superblock_to_private(
-	    inode->i_sb)->mount_crypt_stat;
+		ecryptfs_dentry->d_sb)->mount_crypt_stat;
+
 #endif
 
 	/* Released in ecryptfs_release or end of function if failure */
@@ -342,25 +343,9 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 	}
 	ecryptfs_set_file_lower(
 		file, ecryptfs_inode_to_private(inode)->lower_file);
-	if (d_is_dir(ecryptfs_dentry)) {
-#ifdef CONFIG_SDP
-		/*
-		 * it's possible to have a sensitive directory. (vault)
-		 */
-		if (mount_crypt_stat->flags & ECRYPTFS_MOUNT_SDP_ENABLED)
-			crypt_stat->flags |= ECRYPTFS_DEK_SDP_ENABLED;
-#endif
-		ecryptfs_printk(KERN_DEBUG, "This is a directory\n");
-		mutex_lock(&crypt_stat->cs_mutex);
-		crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
-		mutex_unlock(&crypt_stat->cs_mutex);
-		rc = 0;
-		goto out;
-	}
-
 	rc = read_or_initialize_metadata(ecryptfs_dentry);
-#ifdef CONFIG_SDP
 	if (rc) {
+#ifdef CONFIG_SDP
 		if(file->f_flags & O_SDP){
 			printk("Failed to initialize metadata, "
 					"but let it continue cause current call is from SDP API\n");
@@ -377,12 +362,9 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 			 */
 			goto out;
 		}
+#endif
 		goto out_put;
 	}
-#else
-	if (rc)
-		goto out_put;
-#endif
 
 #ifdef CONFIG_SDP
 	if (crypt_stat->flags & ECRYPTFS_DEK_IS_SENSITIVE) {
@@ -561,6 +543,61 @@ out:
 	return rc;
 }
 
+/**
+ * ecryptfs_dir_open
+ * @inode: inode speciying file to open
+ * @file: Structure to return filled in
+ *
+ * Opens the file specified by inode.
+ *
+ * Returns zero on success; non-zero otherwise
+ */
+static int ecryptfs_dir_open(struct inode *inode, struct file *file)
+{
+	struct dentry *ecryptfs_dentry = file->f_path.dentry;
+	/* Private value of ecryptfs_dentry allocated in
+	 * ecryptfs_lookup() */
+	struct ecryptfs_file_info *file_info;
+	struct file *lower_file;
+#ifdef CONFIG_SDP
+	struct ecryptfs_crypt_stat *crypt_stat = NULL;
+	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
+	mount_crypt_stat = &ecryptfs_superblock_to_private(
+		ecryptfs_dentry->d_sb)->mount_crypt_stat;
+#endif
+
+	/* Released in ecryptfs_release or end of function if failure */
+	file_info = kmem_cache_zalloc(ecryptfs_file_info_cache, GFP_KERNEL);
+	ecryptfs_set_file_private(file, file_info);
+	if (unlikely(!file_info)) {
+		ecryptfs_printk(KERN_ERR,
+				"Error attempting to allocate memory\n");
+		return -ENOMEM;
+	}
+	lower_file = dentry_open(ecryptfs_dentry_to_lower_path(ecryptfs_dentry),
+				 file->f_flags, current_cred());
+	if (IS_ERR(lower_file)) {
+		printk(KERN_ERR "%s: Error attempting to initialize "
+			"the lower file for the dentry with name "
+			"[%pd]; rc = [%ld]\n", __func__,
+			ecryptfs_dentry, PTR_ERR(lower_file));
+		kmem_cache_free(ecryptfs_file_info_cache, file_info);
+		return PTR_ERR(lower_file);
+	}
+	ecryptfs_set_file_lower(file, lower_file);
+
+#ifdef CONFIG_SDP
+	/*
+	 * it's possible to have a sensitive directory. (vault)
+	 */
+	crypt_stat = &ecryptfs_inode_to_private(inode)->crypt_stat;
+	if (mount_crypt_stat->flags & ECRYPTFS_MOUNT_SDP_ENABLED)
+		crypt_stat->flags |= ECRYPTFS_DEK_SDP_ENABLED;
+#endif
+
+	return 0;
+}
+
 static int ecryptfs_flush(struct file *file, fl_owner_t td)
 {
 	struct file *lower_file = ecryptfs_file_to_lower(file);
@@ -589,6 +626,19 @@ static int ecryptfs_release(struct inode *inode, struct file *file)
 			ecryptfs_file_to_private(file));
 
 	return 0;
+}
+
+static int ecryptfs_dir_release(struct inode *inode, struct file *file)
+{
+	fput(ecryptfs_file_to_lower(file));
+	kmem_cache_free(ecryptfs_file_info_cache,
+			ecryptfs_file_to_private(file));
+	return 0;
+}
+
+static loff_t ecryptfs_dir_llseek(struct file *file, loff_t offset, int whence)
+{
+	return vfs_llseek(ecryptfs_file_to_lower(file), offset, whence);
 }
 
 static int
@@ -845,20 +895,16 @@ const struct file_operations ecryptfs_dir_fops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = ecryptfs_compat_ioctl,
 #endif
-	.open = ecryptfs_open,
-	.flush = ecryptfs_flush,
-	.release = ecryptfs_release,
+	.open = ecryptfs_dir_open,
+	.release = ecryptfs_dir_release,
 	.fsync = ecryptfs_fsync,
-	.fasync = ecryptfs_fasync,
-	.splice_read = generic_file_splice_read,
-	.llseek = default_llseek,
+	.llseek = ecryptfs_dir_llseek,
 };
 
 const struct file_operations ecryptfs_main_fops = {
 	.llseek = generic_file_llseek,
 	.read_iter = ecryptfs_read_update_atime,
 	.write_iter = generic_file_write_iter,
-	.iterate = ecryptfs_readdir,
 	.unlocked_ioctl = ecryptfs_unlocked_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = ecryptfs_compat_ioctl,

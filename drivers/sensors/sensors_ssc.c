@@ -81,6 +81,7 @@ static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 	defined(CONFIG_SEC_GREATQLTE_PROJECT) || \
 	defined(CONFIG_SEC_CRUISERLTE_PROJECT) ||\
 	defined(CONFIG_SEC_GTS4LLTE_PROJECT) || \
+	defined(CONFIG_SEC_GTS4LWIFI_PROJECT) || \
 	defined(CONFIG_SEC_KELLYLTE_PROJECT)
 	uint32_t msm_version;
 #endif
@@ -116,6 +117,7 @@ static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 	defined(CONFIG_SEC_GREATQLTE_PROJECT) || \
 	defined(CONFIG_SEC_CRUISERLTE_PROJECT) || \
 	defined(CONFIG_SEC_GTS4LLTE_PROJECT) || \
+	defined(CONFIG_SEC_GTS4LWIFI_PROJECT) || \
 	defined(CONFIG_SEC_KELLYLTE_PROJECT)
 	msm_version = socinfo_get_version();
 	pr_info("%s: msm version(0x%x) for SLPI image\n",

@@ -44,9 +44,10 @@ int main(int argc, char *argv[]){
 	va_to_file = atol(argv[10]);
 	rela_va_to_file = atol(argv[11]); 
 
-	if( !file || !rs_offset || !re_offset || !ds_offset )
+	if( !file || !rs_offset || !re_offset )
 	{
-		printf ("kaslr_fips  vmlinux_file reloc_start_addr reloc_end_addr dynsym_add\n");
+		printf ("kaslr_fips  vmlinux_file reloc_start_addr reloc_end_addr\n");
+		printf ("kaslr_fips  %s, %llx, %llx \n",file,rs_offset, re_offset);
 		printf ("kaslr_fips index %d\n", index); 
 		return -1;
 	}
@@ -82,16 +83,20 @@ int patch_rela(char *file, uint64 rela_start, uint64 rela_end, uint64 dynsym_sta
 	Elf64_Rela rela_entry;
 	Elf64_Sym  sym_entry;
 	uint64 addr = 0, value = 0;
-	
+	size_t read_size = 0;
 	/* Hint in case of FIPS failures: 
 	 * rs_offset should exactly match the offset of .rela section in the vmlinux file
 	 */
 	printf("rs_offset %llx re_offset %llx ds_offset %llx\n", rs_offset, re_offset, ds_offset);
 	for (; rs_offset < re_offset; rs_offset += sizeof(Elf64_Rela)){
 		//seek and read the rela entry
-		if(0 != fseek(fp, rs_offset, SEEK_SET)) return -1;
+		if(0 != fseek(fp, rs_offset, SEEK_SET)){
+			fclose(fp);
+			return -1;
+		}
 
-		fread((void*) &rela_entry, sizeof(rela_entry), 1, fp);
+		read_size = fread((void*) &rela_entry, sizeof(rela_entry), 1, fp);
+		if(0 == read_size) continue;
 		//printf("%llx, %llx\n", ELF64_R_TYPE(rela_entry.r_info), R_AARCH64_RELATIVE);
 		addr = rela_entry.r_offset;
 		if (0x0 == addr) continue;
@@ -112,8 +117,12 @@ int patch_rela(char *file, uint64 rela_start, uint64 rela_end, uint64 dynsym_sta
 			uint64 sym_offset = ds_offset + sym_index * (sizeof(Elf64_Sym));
 
 			//seek to the start of the symbol table entry
-			if (0 !=fseek(fp, sym_offset, SEEK_SET)) return -1;
-			fread((void*) &sym_entry, sizeof(sym_entry), 1, fp);
+			if (0 !=fseek(fp, sym_offset, SEEK_SET)){
+				fclose(fp);
+				return -1;
+			}
+			read_size = fread((void*) &sym_entry, sizeof(sym_entry), 1, fp);
+			if(0 == read_size) continue;
 			value = sym_entry.st_value + rela_entry.r_addend + offset;
 		} 
 #endif
@@ -124,9 +133,11 @@ int patch_rela(char *file, uint64 rela_start, uint64 rela_end, uint64 dynsym_sta
 		//printf("---rela_entry.r_offset %llx, rela_entry.r_addend %llx, rela_entry.r_info %llx addr-va_to_file %llx, value %llx\n", (uint64) rela_entry.r_offset, (uint64)rela_entry.r_addend, (uint64)rela_entry.r_info, addr-va_to_file, value);
 		if (0 != fseek(fp, addr - va_to_file, SEEK_SET)) {
 			printf("could not seek\n");
+			fclose(fp);
 			return -1;
 		}
 		if (fwrite((const void *) &value, sizeof(uint64), 1, fp) != 1) {
+			fclose(fp);
 			printf("could not write\n");
 			return -1;
 		}

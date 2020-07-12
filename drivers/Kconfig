@@ -222,6 +222,10 @@ source "drivers/gud/Kconfig"
 
 source "drivers/sensors/Kconfig"
 
+source "drivers/tee/Kconfig"
+
+source "drivers/optics/Kconfig"
+
 source "drivers/motor/Kconfig"
 
 source "drivers/ccic/Kconfig"
@@ -231,4 +235,9 @@ source "drivers/adsp_factory/Kconfig"
 source "drivers/fingerprint/Kconfig"
 
 source "drivers/redriver/Kconfig"
+
+source "drivers/five/Kconfig"
+
+source "drivers/debug/Kconfig"
+
 endmenu

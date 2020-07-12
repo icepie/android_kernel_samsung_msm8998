@@ -34,6 +34,8 @@
 static const u8 clr_crc_cmd[] = {0x5A, 0x0F};
 static const u8 chng_pll_cmd_32k[] = {0x5A, 0x10, 0x00, 0xEC, 0x0B, 0x00};
 static const u8 chng_pll_cmd_24m[] = {0x5A, 0x10, 0x00, 0x04, 0x00, 0x00};
+static const u8 set_gpio_8_in[] = {0x5A, 0x04, 0x4C, 0x00, 0x00,
+					0x03, 0x14, 0x55, 0x00, 0x88};
 
 
 
@@ -65,6 +67,20 @@ static int dbmd4_spi_boot(const void *fw_data, size_t fw_size,
 					break;
 				}
 			}
+
+			/* Disable GPIO 8 */
+			if (p->cur_boot_options &
+				DBMDX_BOOT_OPT_SET_GPIO_8_IN) {
+				ret = send_spi_data(p, set_gpio_8_in,
+						sizeof(set_gpio_8_in));
+				if (ret != sizeof(set_gpio_8_in)) {
+					dev_err(p->dev,
+					"%s: failed to set gpio 8 to input\n",
+						__func__);
+					continue;
+				}
+			}
+
 
 			/* delay before sending commands */
 			if (p->clk_get_rate(p, DBMDX_CLK_MASTER) <= 32768)
@@ -121,6 +137,7 @@ static int dbmd4_spi_boot(const void *fw_data, size_t fw_size,
 					continue;
 				}
 			}
+
 			/* verify chip id */
 			if (p->cur_boot_options &
 				DBMDX_BOOT_OPT_VERIFY_CHIP_ID) {

@@ -548,6 +548,11 @@ void mdss_samsung_panel_init(struct device_node *np,
 	mutex_init(&vdd_data.vdd_panel_lpm_lock);
 	/* To guarantee ALPM ON or OFF mode change operation*/
 	mutex_init(&vdd_data.vdd_act_clock_lock);
+
+	/* To guarantee POC READ operation*/
+	mutex_init(&vdd_data.vdd_poc_read_lock);
+	/* To guarantee POC WRITE operation*/
+	mutex_init(&vdd_data.vdd_poc_write_lock);
 	/*
 		To guarantee POC operation.
 		Any dsi tx or rx operation is not permitted while poc operation.
@@ -648,6 +653,8 @@ void mdss_samsung_panel_init(struct device_node *np,
 	mutex_init(&vdd_data.vdd_cpufreq_lock);
 	vdd_data.exclusive_tx.enable = 0;
 	init_waitqueue_head(&vdd_data.exclusive_tx.ex_tx_waitq);
+
+	vdd_data.samsung_first_blank = true;
 
 #if defined(CONFIG_SEC_FACTORY)
 	vdd_data.is_factory_mode = true;
@@ -1893,6 +1900,9 @@ int mdss_samsung_panel_off_post(struct mdss_panel_data *pdata)
 
 	/* gradual acl on/off */
 	vdd->gradual_pre_acl_on = GRADUAL_ACL_UNSTABLE;
+
+	vdd->samsung_first_blank = false;
+
 	SS_XLOG(SS_XLOG_FINISH);
 	return ret;
 }
@@ -4054,6 +4064,16 @@ void mdss_samsung_panel_lpm_ctrl(struct mdss_panel_data *pdata, int enable)
 			vdd->display_status_dsi[ndx].wait_disp_on = true;
 			vdd->display_status_dsi[ndx].wait_actual_disp_on = true;
 			LCD_DEBUG("[Panel LPM] Set wait_disp_on to true\n");
+		}
+
+		/*
+			Update mdnie to disable mdnie operation by scenario at AOD display status.
+		*/
+		if (vdd->support_mdnie_lite) {
+			vdd->mdnie_lcd_on_notifiy = true;
+			update_dsi_tcon_mdnie_register(vdd);
+			if(vdd->support_mdnie_trans_dimming)
+				vdd->mdnie_disable_trans_dimming = false;
 		}
 	} else { /* AOD OFF(Exit) */
 		/* Active Clock Disable */

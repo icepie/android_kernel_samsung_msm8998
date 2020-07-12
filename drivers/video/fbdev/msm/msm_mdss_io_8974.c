@@ -22,6 +22,9 @@
 #include "mdss_dsi.h"
 #include "mdss_dp.h"
 #include "mdss_dsi_phy.h"
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#include "samsung/ss_dsi_panel_common.h"
+#endif
 
 #define MDSS_DSI_DSIPHY_REGULATOR_CTRL_0	0x00
 #define MDSS_DSI_DSIPHY_REGULATOR_CTRL_1	0x04
@@ -2451,12 +2454,41 @@ int mdss_dsi_pre_clkoff_cb(void *priv,
 	int rc = 0;
 	struct mdss_dsi_ctrl_pdata *ctrl = priv;
 	struct mdss_panel_data *pdata = NULL;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = check_valid_ctrl(ctrl);
+	struct mdss_dsi_ctrl_pdata *mctrl = NULL;
+#endif
 
 	pdata = &ctrl->panel_data;
 
 	if ((clk & MDSS_DSI_LINK_CLK) && (new_state == MDSS_DSI_CLK_OFF)) {
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		if (pdata->panel_info.mipi.force_clk_lane_hs) {
+			mdss_dsi_cfg_lane_ctrl(ctrl, BIT(28), 0);
+			/*
+			 * Generate LP11 before disable the clock
+			 */
+			if (vdd->dtsi_data[ctrl->ndx].samsung_tcon_clk_on_support) {
+				if (mdss_dsi_is_ctrl_clk_slave(ctrl)) {
+					mctrl = mdss_dsi_get_ctrl_clk_master();
+
+					/* Disable force clock lane hs for master */
+					mdss_dsi_cfg_lane_ctrl(mctrl, BIT(28), 0);
+
+					/* Generate stop state on dsi lane */
+					mdss_dsi_cfg_lane_ctrl(ctrl, 0x1F << 16, 1);
+					mdss_dsi_cfg_lane_ctrl(mctrl, 0x1F << 16, 1);
+					/* Restore the register for dsi lane */
+					mdss_dsi_cfg_lane_ctrl(ctrl, 0x1F << 16, 0);
+					mdss_dsi_cfg_lane_ctrl(mctrl, 0x1F << 16, 0);
+
+				}
+			}
+		}
+#else
 		if (pdata->panel_info.mipi.force_clk_lane_hs)
 			mdss_dsi_cfg_lane_ctrl(ctrl, BIT(28), 0);
+#endif
 		/*
 		 * If ULPS feature is enabled, enter ULPS first.
 		 * However, when blanking the panel, we should enter ULPS
@@ -2535,6 +2567,9 @@ int mdss_dsi_post_clkon_cb(void *priv,
 	struct mdss_panel_data *pdata = NULL;
 	struct mdss_dsi_ctrl_pdata *ctrl = priv;
 	bool mmss_clamp;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = check_valid_ctrl(ctrl);
+#endif
 
 	pdata = &ctrl->panel_data;
 
@@ -2599,8 +2634,16 @@ int mdss_dsi_post_clkon_cb(void *priv,
 				goto error;
 			}
 		}
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		if (vdd->samsung_first_blank &&
+				vdd->dtsi_data[ctrl->ndx].samsung_tcon_clk_on_support &&
+				pdata->panel_info.mipi.force_clk_lane_hs)
+			mdss_dsi_cfg_lane_ctrl(ctrl, BIT(28), 1);
+		else if (!vdd->dtsi_data[ctrl->ndx].samsung_tcon_clk_on_support)
+#else
 		if (pdata->panel_info.mipi.force_clk_lane_hs)
 			mdss_dsi_cfg_lane_ctrl(ctrl, BIT(28), 1);
+#endif
 
 		/* enable split link for cmn clk cfg1 */
 		mdss_dsi_split_link_clk_cfg(ctrl, 1);

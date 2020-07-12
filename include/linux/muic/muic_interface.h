@@ -17,8 +17,8 @@
  *
  */
 
-#ifndef __MUIC_INTERNAL_H__
-#define __MUIC_INTERNAL_H__
+#ifndef __MUIC_INTERFACE_H__
+#define __MUIC_INTERFACE_H__
 
 #include <linux/muic/muic.h>
 
@@ -29,6 +29,11 @@
 enum muic_op_mode {
 	OPMODE_MUIC = 0<<0,
 	OPMODE_CCIC = 1<<0,
+};
+
+enum {
+	CCIC_RPRD_STATE	= 1,
+	CCIC_POWERROLE_STATE	=2,
 };
 
 /* Slave addr = 0x4A: MUIC */
@@ -123,7 +128,7 @@ typedef union _muic_vps_t {
 	char vps_data[120];
 } vps_data_t;
 
-/* muic chip specific internal data structure
+/* muic chip specific interface data structure
  * that setted at muic-xxxx.c file
  */
 struct regmap_desc;
@@ -163,6 +168,7 @@ struct muic_interface_t {
 	struct device *dev;
 	struct i2c_client *i2c; /* i2c addr: 0x4A; MUIC */
 	struct mutex muic_mutex;
+	struct mutex cable_priority_mutex;
 	struct notifier_block nb;
 
 	/* model dependent muic platform data */
@@ -196,6 +202,9 @@ struct muic_interface_t {
 	bool			is_factory_start;
 	bool			is_rustproof;
 	bool			is_otg_test;
+#if defined(CONFIG_MUIC_KEYBOARD)
+	bool			rid_detection;
+#endif
 	struct delayed_work	init_work;
 	struct delayed_work	usb_work;
 
@@ -205,11 +214,12 @@ struct muic_interface_t {
 	bool			is_dcdtmr_intr;
 	bool			is_dcp_charger;
 	bool			is_afc_reset;
+	bool			is_ccic_rp56_enable;
 	bool			is_afc_pdic_ready;
 	bool			is_ccic_otg;
 
 	int				ccic_rp;
-
+	int			powerrole_state;
 	struct hv_data		*phv;
 
 #if defined(CONFIG_USB_EXTERNAL_NOTIFY)
@@ -246,7 +256,9 @@ struct muic_interface_t {
 	void (*set_afc_ready)(void *, bool en);
 	int (*bcd_rescan)(void *);
 	int (*control_rid_adc)(void *, bool enable);
-#if defined(CONFIG_HV_MUIC_S2MU004_AFC)
+	void (*refresh_dev)(void *, int dev);
+	void (*muic_detect_dev)(void *);
+#if defined(CONFIG_MUIC_HV)
 	int (*set_afc_reset)(void *);
 	muic_attached_dev_t (*check_id_err)(void *, muic_attached_dev_t new_dev);
 	int (*reset_hvcontrol_reg)(void *);
@@ -271,4 +283,4 @@ void muic_manager_set_legacy_dev(struct muic_interface_t *muic_if, int new_dev);
 void muic_manager_handle_ccic_detach(struct muic_interface_t *muic_if);
 int muic_manager_dcd_rescan(struct muic_interface_t *muic_if);
 
-#endif /* __MUIC_INTERNAL_H__ */
+#endif /* __MUIC_INTERFACE_H__ */

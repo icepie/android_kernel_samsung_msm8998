@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -388,6 +388,8 @@ struct hfi_buffer_info {
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x033)
 #define  HFI_PROPERTY_PARAM_VENC_IFRAMESIZE			\
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x034)
+#define  HFI_PROPERTY_PARAM_VENC_SEND_OUTPUT_FOR_SKIPPED_FRAMES    \
+	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x035)
 
 #define HFI_PROPERTY_CONFIG_VENC_COMMON_START				\
 	(HFI_DOMAIN_BASE_VENC + HFI_ARCH_COMMON_OFFSET + 0x6000)
@@ -972,6 +974,11 @@ struct vidc_hal_session_cmd_pkt {
 	u32 size;
 	u32 packet_type;
 	u32 session_id;
+};
+
+struct hfi_packet_header {
+	u32 size;
+	u32 packet_type;
 };
 
 struct hfi_cmd_sys_init_packet {

@@ -24,6 +24,7 @@
 #include <linux/magic.h>
 #include <linux/bootmem.h>
 #include <linux/task_work.h>
+#include <linux/fslog.h>
 #ifdef CONFIG_RKP_NS_PROT
 #include <linux/slub_def.h>
 #endif
@@ -32,6 +33,8 @@
 
 /* Maximum number of mounts in a mount namespace */
 unsigned int sysctl_mount_max __read_mostly = 100000;
+
+static unsigned int sys_umount_trace_status;
 
 static unsigned int m_hash_mask __read_mostly;
 static unsigned int m_hash_shift __read_mostly;
@@ -75,6 +78,9 @@ static struct kmem_cache *mnt_cache __read_mostly;
 static struct kmem_cache *vfsmnt_cache __read_mostly;
 RKP_RO_AREA struct super_block *sys_sb;
 RKP_RO_AREA struct super_block *rootfs_sb;
+RKP_RO_AREA struct super_block *vendor_sb;
+RKP_RO_AREA struct super_block *odm_sb;
+RKP_RO_AREA struct super_block *product_sb;
 #endif
 
 static DECLARE_RWSEM(namespace_sem);
@@ -101,6 +107,55 @@ static inline struct hlist_head *m_hash(struct vfsmount *mnt, struct dentry *den
 	return &mount_hashtable[tmp & m_hash_mask];
 }
 
+static inline int sys_umount_trace_start(struct mount *mnt, int flags)
+{
+#ifdef CONFIG_RKP_NS_PROT
+	struct super_block *sb = mnt->mnt->mnt_sb;
+	int mnt_flags = mnt->mnt->mnt_flags;
+#else
+	struct super_block *sb = mnt->mnt.mnt_sb;
+	int mnt_flags = mnt->mnt.mnt_flags;
+#endif
+	if ((sb->s_magic == SDFAT_SUPER_MAGIC) ||
+			(sb->s_magic == MSDOS_SUPER_MAGIC)) {
+		struct block_device *bdev = sb->s_bdev;
+		dev_t bd_dev = bdev ? bdev->bd_dev : 0;
+
+		ST_LOG("[SYSCALL](%s[%d:%d]): "
+			"enter umount(mf:0x%x, f:0x%x, %s)\n",
+			sb->s_id, MAJOR(bd_dev), MINOR(bd_dev), mnt_flags,
+			flags, mnt->mnt_mountpoint->d_name.name);
+		return 1;
+	}
+	return 0;
+}
+
+#define UMOUNT_END_ADD_TASK		(0x00)
+#define UMOUNT_END_REMAIN_NS		(0x01)
+#define UMOUNT_END_REMAIN_MNT_COUNT	(0x02)
+#define UMOUNT_END_ADD_DELAYED_WORK	(0x03)
+
+static inline void sys_umount_trace_set_status(unsigned int status)
+{
+	sys_umount_trace_status = status;
+}
+
+static inline void sys_umount_trace_end(struct mount *mnt, unsigned int stlog)
+{
+#ifdef CONFIG_RKP_NS_PROT
+	struct super_block *sb = mnt->mnt->mnt_sb;
+#else
+	struct super_block *sb = mnt->mnt.mnt_sb;
+#endif
+	if (stlog) {
+		struct block_device *bdev = sb->s_bdev;
+		dev_t bd_dev = bdev ? bdev->bd_dev : 0;
+
+		ST_LOG("[SYSCALL](%s[%d:%d]): exit umount(%d)\n",
+			sb->s_id, MAJOR(bd_dev), MINOR(bd_dev),
+			sys_umount_trace_status);
+	}
+}
 
 #ifdef CONFIG_RKP_NS_PROT
 extern u8 ns_prot;
@@ -296,6 +351,11 @@ static struct mount *alloc_vfsmnt(const char *name)
 		mnt->mnt_writers = 0;
 #endif
 
+#ifdef CONFIG_RKP_NS_PROT
+		rkp_call(RKP_CMDID(0x56), (u64)(mnt->mnt), 0, 0, 0, 0);
+#else
+		mnt->mnt.data = NULL;
+#endif
 		INIT_HLIST_NODE(&mnt->mnt_hash);
 		INIT_LIST_HEAD(&mnt->mnt_child);
 		INIT_LIST_HEAD(&mnt->mnt_mounts);
@@ -737,12 +797,21 @@ int __legitimize_mnt(struct vfsmount *bastard, unsigned seq)
 		return 0;
 	mnt = real_mount(bastard);
 	mnt_add_count(mnt, 1);
+	smp_mb();			// see mntput_no_expire()
 	if (likely(!read_seqretry(&mount_lock, seq)))
 		return 0;
 	if (bastard->mnt_flags & MNT_SYNC_UMOUNT) {
 		mnt_add_count(mnt, -1);
 		return 1;
 	}
+	lock_mount_hash();
+	if (unlikely(bastard->mnt_flags & MNT_DOOMED)) {
+		mnt_add_count(mnt, -1);
+		unlock_mount_hash();
+		return 1;
+	}
+	unlock_mount_hash();
+	/* caller will mntput() */
 	return -1;
 }
 
@@ -1129,11 +1198,6 @@ vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void 
 	if (!mnt)
 		return ERR_PTR(-ENOMEM);
 
-#ifdef CONFIG_RKP_NS_PROT
-	rkp_call(RKP_CMDID(0x56), (u64)(mnt->mnt), (u64)NULL, 0, 0, 0);
-#else
-	mnt->mnt.data = NULL;
-#endif
 	if (type->alloc_mnt_data) {
 #ifdef CONFIG_RKP_NS_PROT
 		u64 *mnt_data = (u64 *)(type->alloc_mnt_data());
@@ -1235,7 +1299,7 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 	}
 
 #ifdef CONFIG_RKP_NS_PROT
-	nsflags = old->mnt->mnt_flags & ~(MNT_WRITE_HOLD|MNT_MARKED);
+	nsflags = old->mnt->mnt_flags & ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);
 	/* Don't allow unprivileged users to change mount flags */
 	if (flag & CL_UNPRIVILEGED) {
 		nsflags |= MNT_LOCK_ATIME;
@@ -1257,7 +1321,7 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 		nsflags |= MNT_LOCKED;
 	rkp_assign_mnt_flags(mnt->mnt,nsflags);
 #else
-	mnt->mnt.mnt_flags = old->mnt.mnt_flags & ~(MNT_WRITE_HOLD|MNT_MARKED);
+	mnt->mnt.mnt_flags = old->mnt.mnt_flags & ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);
 	/* Don't allow unprivileged users to change mount flags */
 	if (flag & CL_UNPRIVILEGED) {
 		mnt->mnt.mnt_flags |= MNT_LOCK_ATIME;
@@ -1374,15 +1438,32 @@ static DECLARE_DELAYED_WORK(delayed_mntput_work, delayed_mntput);
 static void mntput_no_expire(struct mount *mnt)
 {
 	rcu_read_lock();
-	mnt_add_count(mnt, -1);
-	if (likely(mnt->mnt_ns)) { /* shouldn't be the last one */
+	if (likely(READ_ONCE(mnt->mnt_ns))) {
+		/*
+		 * Since we don't do lock_mount_hash() here,
+		 * ->mnt_ns can change under us.  However, if it's
+		 * non-NULL, then there's a reference that won't
+		 * be dropped until after an RCU delay done after
+		 * turning ->mnt_ns NULL.  So if we observe it
+		 * non-NULL under rcu_read_lock(), the reference
+		 * we are dropping is not the final one.
+		 */
+		mnt_add_count(mnt, -1);
 		rcu_read_unlock();
+		sys_umount_trace_set_status(UMOUNT_END_REMAIN_NS);
 		return;
 	}
 	lock_mount_hash();
+	/*
+	 * make sure that if __legitimize_mnt() has not seen us grab
+	 * mount_lock, we'll see their refcount increment here.
+	 */
+	smp_mb();
+	mnt_add_count(mnt, -1);
 	if (mnt_get_count(mnt)) {
 		rcu_read_unlock();
 		unlock_mount_hash();
+		sys_umount_trace_set_status(UMOUNT_END_REMAIN_MNT_COUNT);
 		return;
 	}
 
@@ -1420,11 +1501,15 @@ static void mntput_no_expire(struct mount *mnt)
 		struct task_struct *task = current;
 		if (likely(!(task->flags & PF_KTHREAD))) {
 			init_task_work(&mnt->mnt_rcu, __cleanup_mnt);
-			if (!task_work_add(task, &mnt->mnt_rcu, true))
+			if (!task_work_add(task, &mnt->mnt_rcu, true)) {
+				sys_umount_trace_set_status(UMOUNT_END_ADD_TASK);
 				return;
+			}
 		}
-		if (llist_add(&mnt->mnt_llist, &delayed_mntput_list))
+		if (llist_add(&mnt->mnt_llist, &delayed_mntput_list)) {
 			schedule_delayed_work(&delayed_mntput_work, 1);
+			sys_umount_trace_set_status(UMOUNT_END_ADD_DELAYED_WORK);
+		}
 		return;
 	}
 	cleanup_mnt(mnt);
@@ -1947,7 +2032,7 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 	struct path path;
 	struct mount *mnt;
 	int retval;
-	int lookup_flags = 0;
+	int lookup_flags = 0, stlog = 0;
 
 	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
 		return -EINVAL;
@@ -1978,11 +2063,13 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
 		goto dput_and_out;
 
+	stlog = sys_umount_trace_start(mnt, flags);
 	retval = do_umount(mnt, flags);
 dput_and_out:
 	/* we mustn't call path_put() as that would clear mnt_expiry_mark */
 	dput(path.dentry);
 	mntput_no_expire(mnt);
+	sys_umount_trace_end(mnt, stlog);
 out:
 	return retval;
 }
@@ -2874,7 +2961,10 @@ static int do_new_mount(struct path *path, const char *fstype, int flags,
 	struct user_namespace *user_ns = current->nsproxy->mnt_ns->user_ns;
 	struct vfsmount *mnt;
 	int err;
-
+	
+#ifdef CONFIG_RKP_NS_PROT
+	char *mount_point;
+#endif
 	if (!fstype)
 		return -EINVAL;
 
@@ -2883,10 +2973,6 @@ static int do_new_mount(struct path *path, const char *fstype, int flags,
 		return -ENODEV;
 
 	if (user_ns != &init_user_ns) {
-		if (!(type->fs_flags & FS_USERNS_MOUNT)) {
-			put_filesystem(type);
-			return -EPERM;
-		}
 		/* Only in special cases allow devices from mounts
 		 * created outside the initial user namespace.
 		 */
@@ -2915,16 +3001,17 @@ static int do_new_mount(struct path *path, const char *fstype, int flags,
 	if (err)
 		mntput(mnt);
 #ifdef CONFIG_RKP_NS_PROT
-	if(!sys_sb) 
-	{
-		char *mount_point;
-		mount_point = copy_mount_string(dir_name);
-		if(!strcmp(mount_point,"/system")) {
-			rkp_call(RKP_CMDID(0x55),(u64)&sys_sb,(u64)mnt,0,0,0);
-		}
-		kfree(mount_point);
+	mount_point = copy_mount_string(dir_name);
+	if(!sys_sb && !strcmp(mount_point, "/system")) {
+		rkp_call(RKP_CMDID(0x55),(u64)&sys_sb,(u64)mnt,0,0,0);
+	} else if(!vendor_sb && !strcmp(mount_point, "/vendor")){
+		rkp_call(RKP_CMDID(0x55),(u64)&vendor_sb,(u64)mnt,0,0,0);
+	} else if (!odm_sb && !strcmp(mount_point, "/odm")){
+		rkp_call(RKP_CMDID(0x55),(u64)&odm_sb,(u64)mnt,0,0,0);
+	} else if (!product_sb && !strcmp(mount_point, "/product")){
+		rkp_call(RKP_CMDID(0x55),(u64)&product_sb,(u64)mnt,0,0,0);
 	}
-	
+	kfree(mount_point);
 #endif
 	return err;
 }

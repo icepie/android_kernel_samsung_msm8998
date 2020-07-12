@@ -84,6 +84,7 @@ static irqreturn_t etspi_fingerprint_interrupt(int irq, void *dev_id)
 	etspi->finger_on = 1;
 	disable_irq_nosync(gpio_irq);
 	wake_up_interruptible(&interrupt_waitq);
+	wake_lock_timeout(&etspi->fp_signal_lock, 1 * HZ);
 	pr_info("%s FPS triggered.int_count(%d) On(%d)\n", __func__,
 		etspi->int_count, etspi->finger_on);
 	return IRQ_HANDLED;
@@ -771,6 +772,8 @@ int etspi_platformInit(struct etspi_data *etspi)
 #ifdef ENABLE_SENSORS_FPRINT_SECURE
 	wake_lock_init(&etspi->fp_spi_lock,	WAKE_LOCK_SUSPEND, "etspi_wake_lock");
 #endif
+	wake_lock_init(&etspi->fp_signal_lock,
+				WAKE_LOCK_SUSPEND, "etspi_sigwake_lock");
 
 	pr_info("%s successful status=%d\n", __func__, status);
 	return status;
@@ -804,6 +807,7 @@ void etspi_platformUninit(struct etspi_data *etspi)
 #ifdef ENABLE_SENSORS_FPRINT_SECURE
 		wake_lock_destroy(&etspi->fp_spi_lock);
 #endif
+		wake_lock_destroy(&etspi->fp_signal_lock);
 	}
 }
 
@@ -978,7 +982,19 @@ static ssize_t etspi_type_check_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct etspi_data *data = dev_get_drvdata(dev);
-
+#ifndef ENABLE_SENSORS_FPRINT_SECURE
+		int retry = 0;
+		int status = 0;
+	
+		do {
+			status = etspi_type_check(data);
+			pr_info("%s type (%u), retry (%d)\n"
+				, __func__, data->sensortype, retry);
+		} while (!data->sensortype && ++retry < 3);
+	
+		if (status == -ENODEV)
+			pr_info("%s type check fail\n", __func__);
+#endif
 	return snprintf(buf, PAGE_SIZE, "%d\n", data->sensortype);
 }
 

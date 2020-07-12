@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -242,6 +242,7 @@ static int msm_isp_validate_axi_request(struct vfe_device *vfe_dev,
 	case V4L2_PIX_FMT_META:
 	case V4L2_PIX_FMT_META10:
 	case V4L2_PIX_FMT_GREY:
+	case V4L2_PIX_FMT_Y10:
 		stream_info->num_planes = 1;
 		stream_info->format_factor = ISP_Q2;
 		break;
@@ -351,6 +352,7 @@ static uint32_t msm_isp_axi_get_plane_size(
 	case V4L2_PIX_FMT_QGRBG10:
 	case V4L2_PIX_FMT_QRGGB10:
 	case V4L2_PIX_FMT_META10:
+	case V4L2_PIX_FMT_Y10:
 		/* TODO: fix me */
 		size = plane_cfg[plane_idx].output_height *
 		plane_cfg[plane_idx].output_width;
@@ -2464,15 +2466,12 @@ int msm_isp_ab_ib_update_lpm_mode(struct vfe_device *vfe_dev, void *arg)
 	pr_err("%s: vfe %d lpm %d\n",__func__,
 		vfe_dev->pdev->id,ab_ib_vote->lpm_mode);
 
-#if !defined(CONFIG_SAMSUNG_MULTI_CAMERA)
 	if (ab_ib_vote->num_src >= VFE_AXI_SRC_MAX) {
 		pr_err("%s: ab_ib_vote num_src is exceeding limit\n",
 			__func__);
 		rc = -1;
 		return rc;
 	}
-#endif
-
 	if (ab_ib_vote->lpm_mode) {
 		for (i = 0; i < ab_ib_vote->num_src; i++) {
 			stream_info =

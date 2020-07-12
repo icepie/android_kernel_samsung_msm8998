@@ -112,11 +112,11 @@ struct {
 		{2266, -170, 80, -290, 1000, 1389, 1372, 2300, 1000, 550, 9497}},
 	{170609, ID_BLACK,
 		{2266, -170, 80, -290, 1000, 1389, 1372, 2300, 1000, 550, 9497}},
-#elif defined(CONFIG_SEC_GTS4LLTE_PROJECT)
-	{170609, ID_UTYPE,
-		{2266, -170, 80, -290, 1000, 1389, 1372, 2300, 1000, 550, 9497}},
-	{170609, ID_BLACK,
-		{2266, -170, 80, -290, 1000, 1389, 1372, 2300, 1000, 550, 9497}},
+#elif defined(CONFIG_SEC_GTS4LLTE_PROJECT) || defined(CONFIG_SEC_GTS4LWIFI_PROJECT)
+	{180206, ID_UTYPE,
+		{1055, -260, -450, 250, 1060, 3344, 682, 2100, 1100, 550, 9431}},
+	{180206, ID_BLACK,
+		{1055, -260, -450, 250, 1060, 3344, 682, 2100, 1100, 550, 9431}},
 #else
 	{170427, ID_UTYPE,
 		{2410, -35, -55, -275, 1000, 1198, 1418, 2100, 900, 700, 9361}},
@@ -377,13 +377,13 @@ void hidden_hole_data_read(struct adsp_data *data)
 	}
 
 	win_type = read_window_type();
-	if (win_type >= 0)
-		snprintf(predefine_value_path, WIN_TYPE_LEN,
-			"/efs/FactoryApp/predefine%d", win_type);
-	else {
-		pr_err("[FACTORY] %s: win_type fail\n", __func__);
-		goto err_exit;
+	if (win_type < 0 || win_type >= COEF_MAX) {
+		pr_err("[FACTORY] %s: win_type is invalid value\n", __func__);
+		win_type = ID_UTYPE;
 	}
+
+	snprintf(predefine_value_path, WIN_TYPE_LEN,
+		"/efs/FactoryApp/predefine%d", win_type);
 
 	pr_info("[FACTORY] %s: win_type:%d, %s\n",
 		__func__, win_type, predefine_value_path);
@@ -750,13 +750,13 @@ static ssize_t tmd490x_hh_is_exist_efs_show(struct device *dev,
 	bool is_exist = false;
 
 	win_type = read_window_type();
-	if (win_type >= 0)
-		snprintf(predefine_value_path, WIN_TYPE_LEN,
-			"/efs/FactoryApp/predefine%d", win_type);
-	else {
-		pr_err("[FACTORY] %s: win_type fail\n", __func__);
-		return snprintf(buf, PAGE_SIZE, "%s\n", "FALSE");
-	}
+	if (win_type < 0 || win_type >= COEF_MAX) {
+		pr_err("[FACTORY] %s: win_type is invalid value\n", __func__);
+		win_type = ID_UTYPE;
+	}		
+
+	snprintf(predefine_value_path, WIN_TYPE_LEN,
+		"/efs/FactoryApp/predefine%d", win_type);
 
 	pr_info("[FACTORY] %s: win:%d:%s\n",
 		__func__, win_type, predefine_value_path);
@@ -802,7 +802,7 @@ static ssize_t tmd490x_hh_ext_prox_th_store(struct device *dev,
 	}
 
 	win_type = read_window_type();
-	if (win_type < 0) {
+	if (win_type < 0 || win_type >= COEF_MAX) {
 		pr_err("[FACTORY] %s: win_type read fail\n", __func__);
 		return size;
 	}
@@ -820,9 +820,9 @@ static ssize_t tmd490x_hh_ext_prox_th_show(struct device *dev,
 	int win_type;
 
 	win_type = read_window_type();
-	if (win_type < 0) {
-		pr_err("[FACTORY] %s: win_type read fail\n", __func__);
-		return -EINVAL;
+	if (win_type < 0 || win_type >= COEF_MAX) {
+		pr_err("[FACTORY] %s: win_type is invalid value\n", __func__);
+		win_type = ID_UTYPE;
 	}
 
 	pr_info("[FACTORY] %s: win_type:%d, thd:%d\n", __func__, win_type,

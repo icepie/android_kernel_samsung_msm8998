@@ -2060,8 +2060,8 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 	mdata->hflip_buffer_reused = true;
 	/* prevent disable of prefill calculations */
 	mdata->min_prefill_lines = 0xffff;
-	/* clock gating feature is enabled by default */
-	mdata->enable_gate = true;
+	/* clock gating feature is disabled by default */
+	mdata->enable_gate = false;
 	mdata->pixel_ram_size = 0;
 	mem_protect_sd_ctrl_id = MEM_PROTECT_SD_CTRL_FLAT;
 
@@ -2462,9 +2462,9 @@ static u32 mdss_mdp_scaler_init(struct mdss_data_type *mdata,
 
 		ret = mdss_mdp_ds_addr_setup(mdata);
 	}
-	
+
 	mutex_init(&mdata->scaler_off->scaler_lock);
-	
+
 	return ret;
 }
 

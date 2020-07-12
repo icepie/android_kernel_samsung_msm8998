@@ -142,6 +142,20 @@ void s2mu004_vibtonz_en(bool en)
 	}
 }
 EXPORT_SYMBOL(s2mu004_vibtonz_en);
+
+void s2mu004_set_intensity(int intensity)
+{
+	u8 temp = 0;
+	u8 value = 0;
+
+	if (s2mu004_g_hap_data == NULL)
+		return;
+	value = ((intensity * S2MU004_MAX_INTENSITY) / MAX_INTENSITY);
+	s2mu004_update_reg(s2mu004_g_hap_data->i2c, S2MU004_REG_AMPCOEF1, value, 0x7F);
+	s2mu004_read_reg(s2mu004_g_hap_data->i2c, S2MU004_REG_AMPCOEF1, &temp);
+	pr_info("[VIB] %s, intensity = %d, setting intensity = 0x%2x\n", __func__, intensity, value);
+}
+EXPORT_SYMBOL(s2mu004_set_intensity);
 #endif
 
 #if defined(CONFIG_OF)
@@ -183,8 +197,11 @@ static int s2mu004_haptic_probe(struct i2c_client *client,
 	if (client->dev.of_node) {
 		haptic->pdata = devm_kzalloc(&client->dev,
 			sizeof(*(haptic->pdata)), GFP_KERNEL);
-		if (!haptic->pdata)
+		if (!haptic->pdata) {
+			kfree(haptic);
 			return -ENOMEM;
+		}
+
 		ret = s2mu004_haptic_parse_dt(&client->dev, haptic);
 		if (ret < 0)
 			return -EFAULT;
@@ -236,6 +253,19 @@ static int s2mu004_haptic_remove(struct i2c_client *client)
 	kfree(haptic);
 	return 0;
 }
+
+#if !IS_ENABLED(CONFIG_SEC_FACTORY)
+int s2mu004_haptic_reset(void)
+{
+	u8 temp = 0;
+
+	s2mu004_read_reg(s2mu004_g_hap_data->i2c, 0x9F, &temp);
+	temp |= 0x3;
+	s2mu004_write_reg(s2mu004_g_hap_data->i2c, 0x9F, temp);
+
+	return 0;
+}
+#endif
 
 static int s2mu004_haptic_suspend(struct device *dev)
 {

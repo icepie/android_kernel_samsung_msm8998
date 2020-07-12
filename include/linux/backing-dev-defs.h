@@ -10,6 +10,7 @@
 #include <linux/flex_proportions.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
+#include <linux/kref.h>
 
 struct page;
 struct device;
@@ -141,6 +142,7 @@ struct backing_dev_info {
 	void *congested_data;	/* Pointer to aux data for congested func */
 
 	char *name;
+	struct kref refcnt;	/* Reference counter for the structure */
 
 	/* approximate write throttle statistics - updated at each throttling */
 	unsigned long last_thresh;  /* global/bdi thresh at the last throttle */
@@ -195,6 +197,11 @@ static inline void set_bdi_congested(struct backing_dev_info *bdi, int sync)
 {
 	set_wb_congested(bdi->wb.congested, sync);
 }
+
+struct wb_lock_cookie {
+	bool locked;
+	unsigned long flags;
+};
 
 #ifdef CONFIG_CGROUP_WRITEBACK
 

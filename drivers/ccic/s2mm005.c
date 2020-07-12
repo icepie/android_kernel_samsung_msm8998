@@ -593,7 +593,7 @@ void s2mm005_set_cabletype_as_TA(void)
 
 	pr_info("%s : set_cabletype_as_TA! \n", __func__);
 }
-#if defined(CONFIG_DUAL_ROLE_USB_INTF)
+
 void s2mm005_rprd_mode_change(struct s2mm005_data *usbpd_data, u8 mode)
 {
 	pr_info("%s, mode=0x%x\n",__func__, mode);
@@ -615,7 +615,6 @@ void s2mm005_rprd_mode_change(struct s2mm005_data *usbpd_data, u8 mode)
 		break;	
 	};
 }
-#endif
 
 #if TEMP_CODE
 static irqreturn_t s2mm005_init_detect_irq(struct s2mm005_data *usbpd_data)
@@ -823,7 +822,9 @@ static int s2mm005_usbpd_probe(struct i2c_client *i2c,
 	u8 check[8] = {0,};
 	uint16_t REG_ADD;
 	uint8_t MSG_BUF[32] = {0,};
-	SINK_VAR_SUPPLY_Typedef *pSINK_MSG;
+#if defined(CONFIG_SEC_GTS4LLTE_PROJECT) || defined(CONFIG_SEC_GTS4LWIFI_PROJECT)
+	SINK_VAR_SUPPLY_Typedef *pSINK_VAR_MSG;
+#endif
 	MSG_HEADER_Typedef *pMSG_HEADER;
 #if defined(CONFIG_SEC_FACTORY)
 	LP_STATE_Type Lp_DATA;
@@ -886,7 +887,9 @@ static int s2mm005_usbpd_probe(struct i2c_client *i2c,
 	usbpd_data->water_det = 0;
 	usbpd_data->run_dry = 1;
 	usbpd_data->booting_run_dry = 1;
+#if defined(CONFIG_DUAL_ROLE_USB_INTF)
 	usbpd_data->try_state_change = 0;
+#endif
 #if defined(CONFIG_SEC_FACTORY)
 	usbpd_data->fac_water_enable = 0;
 #endif
@@ -1035,9 +1038,11 @@ static int s2mm005_usbpd_probe(struct i2c_client *i2c,
 	}
 
 	pMSG_HEADER = (MSG_HEADER_Typedef *)&MSG_BUF[0];
-	pMSG_HEADER->BITS.Number_of_obj += 1;
-	pSINK_MSG = (SINK_VAR_SUPPLY_Typedef *)&MSG_BUF[8];
-	pSINK_MSG->DATA = 0x8F019032; // 5V~12V, 500mA
+#if defined(CONFIG_SEC_GTS4LLTE_PROJECT) || defined(CONFIG_SEC_GTS4LWIFI_PROJECT)
+	pMSG_HEADER->BITS.Number_of_obj -= 1;
+	pSINK_VAR_MSG = (SINK_VAR_SUPPLY_Typedef *)&MSG_BUF[12];
+	pSINK_VAR_MSG->DATA = 0x8B4190C8; /* 5~9V, 2A */
+#endif
 
 	dev_info(&i2c->dev, "--- Write DATA\n\r");
 	for (cnt = 0; cnt < 8; cnt++) {
@@ -1045,7 +1050,9 @@ static int s2mm005_usbpd_probe(struct i2c_client *i2c,
 	}
 
 	/* default value is written by CCIC FW. If you need others, overwrite it.*/
-	//s2mm005_write_byte(i2c, REG_ADD, &MSG_BUF[0], 32);
+#if defined(CONFIG_SEC_GTS4LLTE_PROJECT) || defined(CONFIG_SEC_GTS4LWIFI_PROJECT)
+	s2mm005_write_byte(i2c, REG_ADD, &MSG_BUF[0], 32);
+#endif
 
 	for (cnt = 0; cnt < 32; cnt++) {
 		MSG_BUF[cnt] = 0;
@@ -1091,14 +1098,29 @@ static int s2mm005_usbpd_probe(struct i2c_client *i2c,
 	usbpd_data->desc = desc;
 
 	init_completion(&usbpd_data->reverse_completion);
-	init_completion(&usbpd_data->uvdm_out_wait);
-	init_completion(&usbpd_data->uvdm_longpacket_in_wait);
-
 	usbpd_data->power_role = DUAL_ROLE_PROP_PR_NONE;
-	send_otg_notify(o_notify, NOTIFY_EVENT_POWER_SOURCE, 0);
 	INIT_DELAYED_WORK(&usbpd_data->role_swap_work, role_swap_check);
+#elif defined(CONFIG_TYPEC)
+	usbpd_data->typec_cap.revision = USB_TYPEC_REV_1_2;
+	usbpd_data->typec_cap.pd_revision = 0x300;
+	usbpd_data->typec_cap.prefer_role = TYPEC_NO_PREFERRED_ROLE;
+	usbpd_data->typec_cap.port_type_set = s2mm005_port_type_set;
+	usbpd_data->typec_cap.type = TYPEC_PORT_DRP;
+	usbpd_data->port = typec_register_port(usbpd_data->dev, &usbpd_data->typec_cap);
+	if (IS_ERR(usbpd_data->port))
+		pr_err("%s : unable to register typec_register_port\n", __func__);
+	else
+		pr_err("%s : success typec_register_port port=%pK\n", __func__, usbpd_data->port);
+
+	init_completion(&usbpd_data->role_reverse_completion);
+	INIT_DELAYED_WORK(&usbpd_data->typec_role_swap_work, typec_role_swap_check);
+#endif
+#if defined(CONFIG_USB_HOST_NOTIFY)
+	send_otg_notify(o_notify, NOTIFY_EVENT_POWER_SOURCE, 0);
 #endif
 #if defined(CONFIG_CCIC_ALTERNATE_MODE)
+	init_completion(&usbpd_data->uvdm_out_wait);
+	init_completion(&usbpd_data->uvdm_longpacket_in_wait);
 	usbpd_data->alternate_state = 0;
 	usbpd_data->acc_type = 0;
 	usbpd_data->dp_is_connect = 0;
@@ -1201,6 +1223,8 @@ static int s2mm005_usbpd_remove(struct i2c_client *i2c)
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 	devm_dual_role_instance_unregister(usbpd_data->dev, usbpd_data->dual_role);
 	devm_kfree(usbpd_data->dev, usbpd_data->desc);
+#elif defined(CONFIG_TYPEC)
+	typec_unregister_port(usbpd_data->port);	
 #endif
 
 	sysfs_remove_group(&ccic_device->kobj, &ccic_sysfs_group);

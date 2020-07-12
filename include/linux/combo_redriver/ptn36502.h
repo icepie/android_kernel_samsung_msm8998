@@ -50,6 +50,7 @@ enum config_type {
 	USB3_ONLY_MODE,
 	DP4_LANE_MODE,
 	DP2_LANE_USB3_MODE,
+	SAFE_STATE,
 };
 
 enum data_type {
@@ -58,6 +59,7 @@ enum data_type {
 };
 
 extern void ptn36502_config(int config, int is_DFP);
+extern int ptn36502_i2c_read(u8 command);
 
 #endif
 

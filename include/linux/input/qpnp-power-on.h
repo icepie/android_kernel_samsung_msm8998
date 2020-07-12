@@ -51,6 +51,7 @@ enum pon_power_off_type {
 };
 
 enum pon_restart_reason {
+	/* 0 ~ 31 for common defined features */
 	PON_RESTART_REASON_UNKNOWN		= 0x00,
 	PON_RESTART_REASON_RECOVERY		= 0x01,
 	PON_RESTART_REASON_BOOTLOADER		= 0x02,
@@ -58,6 +59,10 @@ enum pon_restart_reason {
 	PON_RESTART_REASON_DMVERITY_CORRUPTED	= 0x04,
 	PON_RESTART_REASON_DMVERITY_ENFORCE	= 0x05,
 	PON_RESTART_REASON_KEYS_CLEAR		= 0x06,
+
+	/* 32 ~ 63 for OEMs/ODMs secific features */
+	PON_RESTART_REASON_OEM_MIN		= 0x12,
+	PON_RESTART_REASON_OEM_MAX		= 0x42,
 #ifdef CONFIG_SEC_BSP
 	PON_RESTART_REASON_MANUAL_RESET = 0x13,
 	PON_RESTART_REASON_NORMALBOOT	= 0x14,
@@ -82,6 +87,7 @@ enum pon_restart_reason {
 	PON_RESTART_REASON_RORY_END	= 0x2A,
 /***********************************************/
 	PON_RESTART_REASON_EM_FORCE_USER = 0x2B,
+	PON_RESTART_REASON_CROSS_FAIL = 0x2C,
 	PON_RESTART_REASON_SLT_COMPLETE	= 0x2F,
 	PON_RESTART_REASON_DBG_LOW	= 0x30,
 	PON_RESTART_REASON_DBG_MID	= 0x31,
@@ -106,6 +112,10 @@ enum pon_restart_reason {
 #endif
 #endif
 };
+
+#ifdef CONFIG_SEC_PM
+int qpnp_pon_check_chg_det(void);
+#endif
 
 #ifdef CONFIG_INPUT_QPNP_POWER_ON
 int qpnp_pon_system_pwr_off(enum pon_power_off_type type);

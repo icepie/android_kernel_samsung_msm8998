@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +23,6 @@
 #endif
 #ifdef CONFIG_USB_QCOM_DIAG_BRIDGE
 #include "diagfwd_hsic.h"
-#include "diagfwd_smux.h"
 #endif
 #ifdef CONFIG_MSM_MHI
 #include "diagfwd_mhi.h"
@@ -52,7 +51,6 @@ static int diag_dbgfs_bridgeinfo_index;
 static int diag_dbgfs_finished;
 static int diag_dbgfs_dci_data_index;
 static int diag_dbgfs_dci_finished;
-
 static struct mutex diag_dci_dbgfs_mutex;
 static ssize_t diag_dbgfs_read_status(struct file *file, char __user *ubuf,
 				      size_t count, loff_t *ppos)
@@ -222,7 +220,6 @@ static ssize_t diag_dbgfs_read_dcistats(struct file *file,
 		}
 		temp_data++;
 	}
-
 	diag_dbgfs_dci_data_index = (i >= DIAG_DCI_DEBUG_CNT) ? 0 : i + 1;
 	mutex_unlock(&diag_dci_dbgfs_mutex);
 	bytes_written = simple_read_from_buffer(ubuf, count, ppos, buf,
@@ -809,6 +806,7 @@ static ssize_t diag_dbgfs_read_glinkinfo(struct file *file, char __user *ubuf,
 	return ret;
 }
 
+#ifdef CONFIG_IPC_LOGGING
 static ssize_t diag_dbgfs_write_debug(struct file *fp, const char __user *buf,
 				      size_t count, loff_t *ppos)
 {
@@ -839,6 +837,7 @@ static ssize_t diag_dbgfs_write_debug(struct file *fp, const char __user *buf,
 	diag_debug_mask = (uint16_t)value;
 	return count;
 }
+#endif
 
 #ifdef CONFIG_DIAGFWD_BRIDGE_CODE
 #ifdef CONFIG_USB_QCOM_DIAG_BRIDGE
@@ -1096,9 +1095,11 @@ const struct file_operations diag_dbgfs_power_ops = {
 	.read = diag_dbgfs_read_power,
 };
 
+#ifdef CONFIG_IPC_LOGGING
 const struct file_operations diag_dbgfs_debug_ops = {
 	.write = diag_dbgfs_write_debug
 };
+#endif
 
 int diag_debugfs_init(void)
 {
@@ -1153,11 +1154,12 @@ int diag_debugfs_init(void)
 	if (!entry)
 		goto err;
 
+#ifdef CONFIG_IPC_LOGGING
 	entry = debugfs_create_file("debug", 0444, diag_dbgfs_dent, 0,
 				    &diag_dbgfs_debug_ops);
 	if (!entry)
 		goto err;
-
+#endif
 #ifdef CONFIG_DIAGFWD_BRIDGE_CODE
 	entry = debugfs_create_file("bridge", 0444, diag_dbgfs_dent, 0,
 				    &diag_dbgfs_bridge_ops);

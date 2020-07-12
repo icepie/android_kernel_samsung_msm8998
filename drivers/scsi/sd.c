@@ -237,11 +237,15 @@ manage_start_stop_store(struct device *dev, struct device_attribute *attr,
 {
 	struct scsi_disk *sdkp = to_scsi_disk(dev);
 	struct scsi_device *sdp = sdkp->device;
+	bool v;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
 
-	sdp->manage_start_stop = simple_strtoul(buf, NULL, 10);
+	if (kstrtobool(buf, &v))
+		return -EINVAL;
+
+	sdp->manage_start_stop = v;
 
 	return count;
 }
@@ -259,6 +263,7 @@ static ssize_t
 allow_restart_store(struct device *dev, struct device_attribute *attr,
 		    const char *buf, size_t count)
 {
+	bool v;
 	struct scsi_disk *sdkp = to_scsi_disk(dev);
 	struct scsi_device *sdp = sdkp->device;
 
@@ -268,7 +273,10 @@ allow_restart_store(struct device *dev, struct device_attribute *attr,
 	if (sdp->type != TYPE_DISK)
 		return -EINVAL;
 
-	sdp->allow_restart = simple_strtoul(buf, NULL, 10);
+	if (kstrtobool(buf, &v))
+		return -EINVAL;
+
+	sdp->allow_restart = v;
 
 	return count;
 }
@@ -1456,6 +1464,10 @@ static unsigned int sd_check_events(struct gendisk *disk, unsigned int clearing)
 
 	SCSI_LOG_HLQUEUE(3, sd_printk(KERN_INFO, sdkp, "sd_check_events\n"));
 
+	/* Simply return for embedded storage media such as UFS */
+	if (!sdp->removable)
+		goto out;
+
 	/*
 	 * If the device is offline, don't send any commands - just pretend as
 	 * if the command failed.  If the device ever comes back online, we
@@ -1981,6 +1993,8 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 				break;	/* standby */
 			if (sshdr.asc == 4 && sshdr.ascq == 0xc)
 				break;	/* unavailable */
+			if (sshdr.asc == 4 && sshdr.ascq == 0x1b)
+				break;	/* sanitize in progress */
 			/*
 			 * Issue command to spin up drive when not ready
 			 */
@@ -2440,6 +2454,7 @@ sd_read_write_protect_flag(struct scsi_disk *sdkp, unsigned char *buffer)
 	int res;
 	struct scsi_device *sdp = sdkp->device;
 	struct scsi_mode_data data;
+	int disk_ro = get_disk_ro(sdkp->disk);
 
 	set_disk_ro(sdkp->disk, 0);
 	if (sdp->skip_ms_page_3f) {
@@ -2479,7 +2494,7 @@ sd_read_write_protect_flag(struct scsi_disk *sdkp, unsigned char *buffer)
 			  "Test WP failed, assume Write Enabled\n");
 	} else {
 		sdkp->write_prot = ((data.device_specific & 0x80) != 0);
-		set_disk_ro(sdkp->disk, sdkp->write_prot);
+		set_disk_ro(sdkp->disk, sdkp->write_prot || disk_ro);
 	}
 }
 
@@ -2924,8 +2939,6 @@ static int sd_revalidate_disk(struct gendisk *disk)
 		sd_read_write_same(sdkp, buffer);
 	}
 
-	sdkp->first_scan = 0;
-
 	/*
 	 * We now have all cache related info, determine how we deal
 	 * with flush requests.
@@ -2940,7 +2953,7 @@ static int sd_revalidate_disk(struct gendisk *disk)
 	q->limits.max_dev_sectors = logical_to_sectors(sdp, dev_max);
 
 	/*
-	 * Use the device's preferred I/O size for reads and writes
+	 * Determine the device's preferred I/O size for reads and writes
 	 * unless the reported value is unreasonably small, large, or
 	 * garbage.
 	 */
@@ -2954,8 +2967,19 @@ static int sd_revalidate_disk(struct gendisk *disk)
 		rw_max = min_not_zero(logical_to_sectors(sdp, dev_max),
 				      (sector_t)BLK_DEF_MAX_SECTORS);
 
-	/* Combine with controller limits */
-	q->limits.max_sectors = min(rw_max, queue_max_hw_sectors(q));
+	/* Do not exceed controller limit */
+	rw_max = min(rw_max, queue_max_hw_sectors(q));
+
+	/*
+	 * Only update max_sectors if previously unset or if the current value
+	 * exceeds the capabilities of the hardware.
+	 */
+	if (sdkp->first_scan ||
+	    q->limits.max_sectors > q->limits.max_dev_sectors ||
+	    q->limits.max_sectors > q->limits.max_hw_sectors)
+		q->limits.max_sectors = rw_max;
+
+	sdkp->first_scan = 0;
 
 	set_capacity(disk, logical_to_sectors(sdp, sdkp->capacity));
 	sd_config_write_same(sdkp);
@@ -3291,13 +3315,34 @@ static int sd_probe(struct device *dev)
 					SD_UFS_TIMEOUT);
 	}
 
-#ifdef CONFIG_LARGE_DIRTY_BUFFER
+#ifdef CONFIG_SCSI_UFSHCD
 	if (!sdp->host->by_ufs) {
-		sdp->request_queue->backing_dev_info.max_ratio = 20;
-		sdp->request_queue->backing_dev_info.min_ratio = 20;
-		sdp->request_queue->backing_dev_info.capabilities |= BDI_CAP_STRICTLIMIT;
-	}
+#else
+	if (1) { /* apply to all SCSI devices on non-UFS system */
 #endif
+		struct request_queue *q = sdp->request_queue;
+
+		/* decrease max # of requests to 32. The goal of this tunning is
+		 * reducing the time for draining elevator when elevator_switch
+		 * function is called. It is effective for slow USB memory.
+		 */
+		q->nr_requests = BLKDEV_MAX_RQ / 8;
+		if (q->nr_requests < 32) q->nr_requests = 32;
+#ifdef CONFIG_LARGE_DIRTY_BUFFER
+		/* apply more throttle on non-ufs scsi device */
+		q->backing_dev_info->capabilities |= BDI_CAP_STRICTLIMIT;
+		bdi_set_min_ratio(q->backing_dev_info, 30);
+		bdi_set_max_ratio(q->backing_dev_info, 60);
+#endif
+		pr_info("Parameters for SCSI-dev(%s): min/max_ratio: %u/%u "
+				"strictlimit: on nr_requests: %lu read_ahead_kb: %lu\n",
+				gd->disk_name,
+				q->backing_dev_info->min_ratio,
+				q->backing_dev_info->max_ratio,
+				q->nr_requests,
+				q->backing_dev_info->ra_pages * 4);
+	}
+
 
 	device_initialize(&sdkp->dev);
 	sdkp->dev.parent = dev;

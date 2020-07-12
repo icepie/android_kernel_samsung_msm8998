@@ -25,7 +25,6 @@
 #include <linux/wakelock.h>
 #include <linux/delay.h>
 #include <linux/qseecom.h>
-#include <linux/regulator/machine.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/err.h>
 #include "mstdrv.h"
@@ -37,9 +36,13 @@
 #include <linux/cpu.h>
 #include <linux/cpumask.h>
 #include <linux/cpufreq.h>
-#include <../../kernel/sched/sched.h>
+#include <linux/sched.h>
+#include <linux/sched/core_ctl.h>
 #include <linux/workqueue.h>
 #include <linux/msm-bus.h>
+#if defined(CONFIG_MST_LPM_DISABLE)
+#include <linux/pm_qos.h>
+#endif
 
 /* defines */
 #define	ON				1	// On state
@@ -54,47 +57,48 @@
 #define CMD_HW_RELIABILITY_TEST_STOP	'5'	// stop HW reliability test
 #define ERROR_VALUE			-1	// Error value
 #define TEST_RESULT_LEN			256	// result array length
-#define MST_LDO_3P0				"VDD_MST" // MST LDO regulator
-#define MST_MODE_ON			1 // ON Message to MFC ic
-#define MST_MODE_OFF		0 // OFF Message to MFC ic
 #define SVC_MST_ID			0x000A0000	// need to check ID
 #define MST_CREATE_CMD(x)		(SVC_MST_ID | x)	// Create MST commands
 #define MST_TA				"mst"
-#define MAX_CLUSTERS 2 
 
+
+#if defined(CONFIG_MFC_CHARGER)
+#define MST_MODE_ON			1	// ON Message to MFC ic
+#define MST_MODE_OFF		0	// OFF Message to MFC ic
 #define psy_do_property(name, function, property, value) \
 {    \
-    struct power_supply *psy;    \
-    int ret;    \
-    psy = get_power_supply_by_name((name));    \
-    if (!psy) {    \
-        pr_err("%s: Fail to "#function" psy (%s)\n",    \
-            __func__, (name));    \
-        value.intval = 0;    \
-    } else {    \
-        if (psy->desc->function##_property != NULL) { \
-            ret = psy->desc->function##_property(psy, (property), &(value)); \
-            if (ret < 0) {    \
-                pr_err("%s: Fail to %s "#function" (%d=>%d)\n", \
-                        __func__, name, (property), ret);    \
-                value.intval = 0;    \
-            }    \
-        }    \
-    }    \
+	struct power_supply *psy;    \
+	int ret;    \
+	psy = get_power_supply_by_name((name));    \
+	if (!psy) {    \
+		pr_err("%s: Fail to "#function" psy (%s)\n",    \
+				__func__, (name));    \
+		value.intval = 0;    \
+	} else {    \
+		if (psy->desc->function##_property != NULL) { \
+			ret = psy->desc->function##_property(psy, (property), &(value)); \
+			if (ret < 0) {    \
+				pr_err("%s: Fail to %s "#function" (%d=>%d)\n", \
+						__func__, name, (property), ret);    \
+				value.intval = 0;    \
+			}    \
+		}    \
+	}    \
 }
+#endif
 
 /* enum definitions */
 typedef enum {
-	MST_CMD_TRACK1_TEST	= MST_CREATE_CMD(0x00000000),
-	MST_CMD_TRACK2_TEST	= MST_CREATE_CMD(0x00000001),
-	MST_CMD_UNKNOWN		= MST_CREATE_CMD(0x7FFFFFFF)
+	MST_CMD_TRACK1_TEST = MST_CREATE_CMD(0x00000000),
+	MST_CMD_TRACK2_TEST = MST_CREATE_CMD(0x00000001),
+	MST_CMD_UNKNOWN = MST_CREATE_CMD(0x7FFFFFFF)
 } mst_cmd_type;
 
 /* struct definitions */
 struct qseecom_handle {
-    void *dev; /* in/out */
-    unsigned char *sbuf; /* in/out */
-    uint32_t sbuf_len; /* in/out */
+	void *dev;		/* in/out */
+	unsigned char *sbuf;	/* in/out */
+	uint32_t sbuf_len;	/* in/out */
 };
 
 typedef struct mst_req_s {
@@ -121,16 +125,16 @@ static struct msm_bus_paths ss_mst_usecases[] = {
     }, 
     { 
 	.vectors = (struct msm_bus_vectors[]){ 
-	    {
-		.src = 1,
-		.dst = 512,
-		.ab = 4068000000,
-		.ib = 4068000000,
-	    },
-	},
-	.num_paths = 1,
-    },
-};
+	    { 
+		.src = 1, 
+		.dst = 512, 
+		.ab = 4068000000, 
+		.ib = 4068000000, 
+	    }, 
+	}, 
+	.num_paths = 1, 
+    }, 
+}; 
 
 static struct msm_bus_scale_pdata ss_mst_bus_client_pdata = { 
     .usecase = ss_mst_usecases, 
@@ -138,18 +142,27 @@ static struct msm_bus_scale_pdata ss_mst_bus_client_pdata = {
     .name = "ss_mst", 
 }; 
 
+#if defined(CONFIG_MST_LPM_DISABLE)
+static struct pm_qos_request mst_pm_qos_request;
+uint32_t mst_lpm_tag;
+#endif
+
 uint32_t ss_mst_bus_hdl;
 
 /* extern function declarations */
-extern int qseecom_start_app(struct qseecom_handle **handle, char *app_name, uint32_t size);
+extern int qseecom_start_app(struct qseecom_handle **handle, char *app_name,
+			     uint32_t size);
 extern int qseecom_shutdown_app(struct qseecom_handle **handle);
-extern int qseecom_send_command(struct qseecom_handle *handle, void *send_buf, uint32_t sbuf_len, void *resp_buf, uint32_t rbuf_len);
+extern int qseecom_send_command(struct qseecom_handle *handle, void *send_buf,
+				uint32_t sbuf_len, void *resp_buf,
+				uint32_t rbuf_len);
 
 /* function declarations */
 static ssize_t show_mst_drv(struct device *dev,
-        struct device_attribute *attr, char *buf);
+			    struct device_attribute *attr, char *buf);
 static ssize_t store_mst_drv(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count);
+			     struct device_attribute *attr, const char *buf,
+			     size_t count);
 static int mst_ldo_device_probe(struct platform_device *pdev);
 static inline struct power_supply *get_power_supply_by_name(char *name)
 {
@@ -158,26 +171,25 @@ static inline struct power_supply *get_power_supply_by_name(char *name)
 	else
 		return power_supply_get_by_name(name);
 }
+
 static void of_mst_hw_onoff(bool on);
 static int boost_enable(void);
 static int boost_disable(void);
 
 /* global variables */
-static int mst_pwr_en = 0;		// MST_PWR_EN pin
-static int escape_loop = 1;		// for HW reliability test
+static int mst_pwr_en;	// MST_PWR_EN pin
+static int escape_loop = 1;	// for HW reliability test
 static struct class *mst_drv_class;	// mst_drv class
-struct device *mst_drv_dev;		// mst_drv driver handle
-static struct wake_lock   mst_wakelock;	// wake_lock used for HW reliability test
+struct device *mst_drv_dev;	// mst_drv driver handle
+static struct wake_lock mst_wakelock;	// wake_lock used for HW reliability test
 static DEVICE_ATTR(transmit, 0770, show_mst_drv, store_mst_drv);	// define device attribute
-static bool mst_power_on = 0;		// to track current level of mst signal
 static struct qseecom_handle *qhandle;
-static int nfc_state = 0;
+static int nfc_state;
+#if defined(CONFIG_MFC_CHARGER)
 static int wpc_det;
+#endif
 
 /* cpu freq control variables */
-extern int num_clusters;
-extern struct sched_cluster *sched_cluster[NR_CPUS];
-unsigned int cluster_freq[MAX_CLUSTERS];
 struct workqueue_struct *cluster_freq_ctrl_wq;
 struct delayed_work dwork;
 
@@ -185,31 +197,32 @@ DEFINE_MUTEX(mst_mutex);
 
 /* device driver structures */
 static struct of_device_id mst_match_ldo_table[] = {
-	{ .compatible = "sec-mst",},
+	{.compatible = "sec-mst",},
 	{},
 };
 
 static int mst_ldo_device_suspend(struct platform_device *dev, pm_message_t state)
 {
-	int ret = 0;
-	/* Boost Disable */
-	printk("%s : boost disable to back to Normal", __func__);
-	ret = boost_disable();
-	if (ret)
-	    printk("%s : boost disable is failed, ret = %d\n"
-		, __func__, ret);
-	/* PCIe LPM Enable */
-	sec_pcie_l1ss_enable(L1SS_MST);
-	
+	uint8_t is_mst_pwr_on;
+
+	is_mst_pwr_on = gpio_get_value(mst_pwr_en);
+	if (is_mst_pwr_on == 1) {
+		pr_info("%s: mst power is on, is_mst_pwr_on = %d\n", __func__, is_mst_pwr_on);
+		pr_info("%s: mst power off\n", __func__);
+		of_mst_hw_onoff(OFF);
+	} else {
+		pr_info("%s: mst power is off, is_mst_pwr_on = %d\n", __func__, is_mst_pwr_on);
+	}
+
 	return 0;
 }
 
 static struct platform_driver sec_mst_ldo_driver = {
 	.driver = {
-		.owner = THIS_MODULE,
-		.name = "mstldo",
-		.of_match_table = mst_match_ldo_table,
-	},
+		   .owner = THIS_MODULE,
+		   .name = "mstldo",
+		   .of_match_table = mst_match_ldo_table,
+		   },
 	.probe = mst_ldo_device_probe,
 	.suspend = mst_ldo_device_suspend,
 };
@@ -222,8 +235,18 @@ EXPORT_SYMBOL_GPL(mst_drv_dev);
  */
 static void mst_cluster_freq_ctrl_worker(struct work_struct *work)
 {
-	//struct delayed_work *dwork = to_delayed_work(work);
-	of_mst_hw_onoff(OFF);
+
+	uint8_t is_mst_pwr_on;
+
+	is_mst_pwr_on = gpio_get_value(mst_pwr_en);
+	if (is_mst_pwr_on == 1) {
+		pr_info("%s: mst power is on, is_mst_pwr_on = %d\n", __func__, is_mst_pwr_on);
+		pr_info("%s: mst power off\n", __func__);
+		of_mst_hw_onoff(OFF);
+	} else {
+		pr_info("%s: mst power is off, is_mst_pwr_on = %d\n", __func__, is_mst_pwr_on);
+	}
+
 	return;
 }
 
@@ -269,24 +292,18 @@ static int boost_disable(void)
  * mst_ctrl_of_mst_hw_onoff - function to disable/enable MST whenever samsung pay app wants
  * @on: on/off value
  */
-extern void mst_ctrl_of_mst_hw_onoff(bool on){
-	union power_supply_propval value; /* power_supply prop */
-	struct regulator *regulator3_0;
+extern void mst_ctrl_of_mst_hw_onoff(bool on)
+{
+#if defined(CONFIG_MFC_CHARGER)
+	union power_supply_propval value;	/* power_supply prop */
+#endif
 	int ret = 0;
 
-	regulator3_0 = regulator_get(NULL, MST_LDO_3P0);
-	if (IS_ERR(regulator3_0)) {
-		printk("[MST] %s : regulator 3.0 is not available\n", __func__);
-		return;
-	}
+	printk("[MST] mst-drv : mst_ctrl : mst_power_onoff : %d\n", on);
 
-	if(regulator3_0 == NULL){
-		printk(KERN_ERR "[MST] %s: regulator3_0 is invalid(NULL)\n", __func__);
-		return ;
-	}
-	
-	if(on) {
-		printk("[MST] %s : nfc_status gets back to 0(unlock)\n", __func__);
+	if (on) {
+		printk("[MST] %s : nfc_status gets back to 0(unlock)\n",
+		       __func__);
 		nfc_state = 0;
 	} else {
 		gpio_set_value(mst_pwr_en, 0);
@@ -295,72 +312,63 @@ extern void mst_ctrl_of_mst_hw_onoff(bool on){
 		usleep_range(800, 1000);
 		printk("%s : msleep(1)\n", __func__);
 
+#if defined(CONFIG_MFC_CHARGER)
 		value.intval = MST_MODE_OFF;
 		psy_do_property("mfc-charger", set,
 				POWER_SUPPLY_PROP_TECHNOLOGY, value);
 		printk("%s : MST_MODE_OFF notify : %d\n", __func__,
 		       value.intval);
-
+#endif
 		/* Boost Disable */
 		printk("%s : boost disable to back to Normal", __func__);
+		mutex_lock(&mst_mutex);
 		ret = boost_disable();
 		if (ret)
 		    printk("%s : boost disable is failed, ret = %d\n"
 			, __func__, ret);
+
 		/* PCIe LPM Enable */
 		sec_pcie_l1ss_enable(L1SS_MST);
 
-		ret = regulator_disable(regulator3_0);
-		if (ret < 0) {
-			printk("%s : regulator 3.0 is not disabled\n",
-			       __func__);
+#if defined(CONFIG_MST_LPM_DISABLE)
+		/* CPU LPM Enable*/
+		if (mst_lpm_tag) {
+			printk("%s : pm_qos remove\n", __func__);
+			pm_qos_remove_request(&mst_pm_qos_request);
+			printk("%s : core online lock disable\n", __func__);
+			core_ctl_set_boost(false);
+			mst_lpm_tag = 0;
 		}
-		printk("%s : regulator 3.0 is disabled\n", __func__);
+#endif
+
+		mutex_unlock(&mst_mutex);
+
 		printk("%s : nfc_status gets 1(lock)\n", __func__);
 		nfc_state = 1;
-		mst_power_on = on;
 	}
-	regulator_put(regulator3_0);
 }
 
 /**
  * of_mst_hw_onoff - Enable/Disable MST LDO GPIO pin (or Regulator)
  * @on: on/off value
  */
-static void of_mst_hw_onoff(bool on){
-	union power_supply_propval value; /* power_supply prop */
-	struct regulator *regulator3_0;
-	int ret;
+static void of_mst_hw_onoff(bool on)
+{
+#if defined(CONFIG_MFC_CHARGER)
+	union power_supply_propval value;	/* power_supply prop */
 	int retry_cnt = 8;
+#endif
+	int ret;
 
-	if(nfc_state == 1){
+	printk("[MST] mst-drv : mst_power_onoff : %d\n", on);
+
+	if (nfc_state == 1) {
 		printk("[MST] %s : nfc_state is on!!!\n", __func__);
 		return;
 	}
 
-	regulator3_0 = regulator_get(NULL, MST_LDO_3P0);
-	if (IS_ERR(regulator3_0)) {
-		printk("[MST] %s : regulator 3.0 is not available\n", __func__);
-		return;
-	}
-	if (mst_power_on == on) {
-		printk("[MST] mst-drv : mst_power_onoff : already %d\n", on);
-		regulator_put(regulator3_0);
-		return;
-	}
-	mst_power_on = on;
-	if(regulator3_0 == NULL){
-		printk(KERN_ERR "[MST] %s: regulator3_0 is invalid(NULL)\n", __func__);
-		return ;
-	}
 	if (on) {
-		ret = regulator_enable(regulator3_0);
-		if (ret < 0) {
-			printk("[MST] %s : regulator 3.0 is not enable\n",
-			       __func__);
-		}
-		printk("%s : regulator 3.0 is enabled\n", __func__);
-
+#if defined(CONFIG_MFC_CHARGER)
 		printk("%s : MST_MODE_ON notify start\n", __func__);
 		value.intval = MST_MODE_ON;
 
@@ -368,6 +376,7 @@ static void of_mst_hw_onoff(bool on){
 				POWER_SUPPLY_PROP_TECHNOLOGY, value);
 		printk("%s : MST_MODE_ON notified : %d\n", __func__,
 		       value.intval);
+#endif
 
 		gpio_set_value(mst_pwr_en, 1);
 		usleep_range(3600, 4000);
@@ -380,31 +389,53 @@ static void of_mst_hw_onoff(bool on){
 		/* Boost Enable */
 		cancel_delayed_work_sync(&dwork);
 		printk("%s : boost enable for performacne", __func__);
+		mutex_lock(&mst_mutex);
 		ret = boost_enable();
 		if (!ret)
 		    printk("%s : boost enable is failed, ret = %d\n",
 			    __func__, ret);
+
 		queue_delayed_work(cluster_freq_ctrl_wq, &dwork, 90 * HZ);
 
 		/* PCIe LPM Disable */
 		sec_pcie_l1ss_disable(L1SS_MST);
 
+#if defined(CONFIG_MST_LPM_DISABLE)
+		/* CPU LPM Disable */
+		if (mst_lpm_tag == 0) {
+			printk("%s : pm_qos add\n", __func__);
+			pm_qos_add_request(&mst_pm_qos_request,
+				PM_QOS_CPU_DMA_LATENCY, PM_QOS_DEFAULT_VALUE);
+			pm_qos_update_request(&mst_pm_qos_request, 1);
+			printk("%s : core online lock enable\n", __func__);
+			core_ctl_set_boost(true);
+			mst_lpm_tag = 1;
+		}
+#endif
+
+		mutex_unlock(&mst_mutex);
+
 		mdelay(40);
 
+#if defined(CONFIG_MFC_CHARGER)
 		while (--retry_cnt) {
-			psy_do_property("mfc-charger", get, POWER_SUPPLY_PROP_TECHNOLOGY, value);
+			psy_do_property("mfc-charger", get,
+					POWER_SUPPLY_PROP_TECHNOLOGY, value);
 			//printk("%s : check mst mode status : %d\n", __func__, value.intval);
-			if(value.intval == 0x02){
-				printk("%s : mst mode set!!! : %d\n", __func__, value.intval);
+			if (value.intval == 0x02) {
+				printk("%s : mst mode set!!! : %d\n", __func__,
+				       value.intval);
 				retry_cnt = 1;
 				break;
 			}
 			usleep_range(3600, 4000);
 		}
 
-		if(!retry_cnt){
-			printk("%s : timeout !!! : %d\n", __func__, value.intval);
+		if (!retry_cnt) {
+			printk("%s : timeout !!! : %d\n", __func__,
+			       value.intval);
 		}
+#endif
 
 	} else {
 		gpio_set_value(mst_pwr_en, 0);
@@ -413,37 +444,46 @@ static void of_mst_hw_onoff(bool on){
 		usleep_range(800, 1000);
 		printk("%s : msleep(1)\n", __func__);
 
+#if defined(CONFIG_MFC_CHARGER)
 		value.intval = MST_MODE_OFF;
 		psy_do_property("mfc-charger", set,
 				POWER_SUPPLY_PROP_TECHNOLOGY, value);
 		printk("%s : MST_MODE_OFF notify : %d\n", __func__,
 		       value.intval);
+#endif
 
 		/* Boost Disable */
 		printk("%s : boost disable to back to Normal", __func__);
+		mutex_lock(&mst_mutex);
 		ret = boost_disable();
 		if (ret)
 		    printk("%s : boost disable is failed, ret = %d\n"
 			, __func__, ret);
+
 		/* PCIe LPM Enable */
 		sec_pcie_l1ss_enable(L1SS_MST);
 
-		ret = regulator_disable(regulator3_0);
-		if (ret < 0) {
-			printk("%s : regulator 3.0 is not disabled\n",
-			       __func__);
+#if defined(CONFIG_MST_LPM_DISABLE)
+		/* CPU LPM Enable*/
+		if (mst_lpm_tag) {
+			printk("%s : pm_qos remove\n", __func__);
+			pm_qos_remove_request(&mst_pm_qos_request);
+			printk("%s : core online lock disable\n", __func__);
+			core_ctl_set_boost(false);
+			mst_lpm_tag = 0;
 		}
-		printk("%s : regulator 3.0 is disabled\n", __func__);
+#endif
+		mutex_unlock(&mst_mutex);
 	}
-	regulator_put(regulator3_0);
 }
+
 /**
  * transmit_mst_data - Transmit test track data
  * @track: 1:track1, 2:track2
  */
 static int transmit_mst_data(int track)
 {
-	int ret=0;
+	int ret = 0;
 	int qsee_ret = 0;
 	char app_name[MAX_APP_NAME_SIZE];
 	mst_req_t *kreq = NULL;
@@ -452,151 +492,181 @@ static int transmit_mst_data(int track)
 
 	mutex_lock(&mst_mutex);
 	snprintf(app_name, MAX_APP_NAME_SIZE, "%s", MST_TA);
-	if ( NULL == qhandle ) {
+	if (NULL == qhandle) {
 		/* start the mst tzapp only when it is not loaded. */
 		qsee_ret = qseecom_start_app(&qhandle, app_name, 1024);
 	}
 
-	if ( NULL == qhandle ) {
+	if (NULL == qhandle) {
 		/* qhandle is still NULL. It seems we couldn't start mst tzapp. */
 		printk("[MST] cannot get tzapp handle from kernel.\n");
-		ret=ERROR_VALUE;
-		goto exit; /* leave the function now. */
+		ret = ERROR_VALUE;
+		goto exit;	/* leave the function now. */
 	}
 
 	kreq = (struct mst_req_s *)qhandle->sbuf;
 
-	switch(track)
-	{
-		case TRACK1: kreq->cmd_id = MST_CMD_TRACK1_TEST;
-			     break;
+	switch (track) {
+	case TRACK1:
+		kreq->cmd_id = MST_CMD_TRACK1_TEST;
+		break;
 
-		case TRACK2: kreq->cmd_id = MST_CMD_TRACK2_TEST;
-			     break;
+	case TRACK2:
+		kreq->cmd_id = MST_CMD_TRACK2_TEST;
+		break;
 
-		default:ret=ERROR_VALUE;
-			goto exit;
-			break;
-		}
+	default:
+		ret = ERROR_VALUE;
+		goto exit;
+		break;
+	}
 
 	req_len = sizeof(mst_req_t);
-	krsp =(struct mst_rsp_s *)(qhandle->sbuf + req_len);
+	krsp = (struct mst_rsp_s *)(qhandle->sbuf + req_len);
 	rsp_len = sizeof(mst_rsp_t);
 
-	printk("[MST] cmd_id = %x, req_len = %d, rsp_len = %d\n", kreq->cmd_id, req_len, rsp_len);
+	printk("[MST] cmd_id = %x, req_len = %d, rsp_len = %d\n", kreq->cmd_id,
+	       req_len, rsp_len);
 
-	//of_mst_hw_onoff(ON);
+	trace_printk("tracing mark write: MST transmission Start\n");
 	qsee_ret = qseecom_send_command(qhandle, kreq, req_len, krsp, rsp_len);
-	//of_mst_hw_onoff(OFF);
+	trace_printk("tracing mark write: MST transmission End\n");
 
 	if (qsee_ret) {
-		ret=ERROR_VALUE;
-		printk("[MST] failed to send cmd to qseecom; qsee_ret = %d.\n", qsee_ret);
-		printk("[MST] shutting down the tzapp.\n");
-		qsee_ret = qseecom_shutdown_app(&qhandle);
-		if ( qsee_ret ) {
-			printk("[MST] failed to shut down the tzapp.\n");
-		} else{
-			qhandle = NULL;
-	}
+		ret = ERROR_VALUE;
+		printk("[MST] failed to send cmd to qseecom; qsee_ret = %d.\n",
+		       qsee_ret);
 	}
 
 	if (krsp->status) {
-		ret=ERROR_VALUE;
-		printk("[MST] generate sample track data from TZ -- failed. %d\n", krsp->status);
+		ret = ERROR_VALUE;
+		printk
+		    ("[MST] generate sample track data from TZ -- failed. %d\n",
+		     krsp->status);
+	}
+
+	printk("[MST] shutting down the tzapp.\n");
+	qsee_ret = qseecom_shutdown_app(&qhandle);
+	if (qsee_ret) {
+		printk("[MST] failed to shut down the tzapp.\n");
+	} else {
+		qhandle = NULL;
 	}
 exit:
 	mutex_unlock(&mst_mutex);
 	return ret;
 }
+
 /**
  * show_mst_drv - device attribute show sysfs operation
  */
 static ssize_t show_mst_drv(struct device *dev,
-        struct device_attribute *attr, char *buf)
+			    struct device_attribute *attr, char *buf)
 {
-    if (!dev)
-        return -ENODEV;
+	if (!dev)
+		return -ENODEV;
 
-    // todo
-    if(escape_loop == 0){
+	// todo
+	if (escape_loop == 0) {
 		return sprintf(buf, "%s\n", "activating");
-    }else{
+	} else {
 		return sprintf(buf, "%s\n", "waiting");
-    }
+	}
 }
+
 /**
  * store_mst_drv - device attribute store sysfs operation
  */
 static ssize_t store_mst_drv(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+			     struct device_attribute *attr, const char *buf,
+			     size_t count)
 {
-	char test_result[TEST_RESULT_LEN]={0,};
+	char test_result[TEST_RESULT_LEN] = { 0, };
 
 	sscanf(buf, "%20s\n", test_result);
 
+#if defined(CONFIG_MFC_CHARGER)
 	if (wpc_det && (gpio_get_value(wpc_det) == 1)) {
 		printk("[MST] Wireless charging is ongoing, do not proceed MST work\n");
 		return count;
 	}
+#endif
 
-	switch(test_result[0]){
+	switch (test_result[0]) {
 
-		case CMD_MST_LDO_OFF:
-			of_mst_hw_onoff(OFF);
-			break;
+	case CMD_MST_LDO_OFF:
+		of_mst_hw_onoff(OFF);
+		break;
 
-		case CMD_MST_LDO_ON:
+	case CMD_MST_LDO_ON:
+		of_mst_hw_onoff(ON);
+		break;
+
+	case CMD_SEND_TRACK1_DATA:
+#if !defined(CONFIG_MFC_CHARGER)
+		of_mst_hw_onoff(ON);
+#endif
+		if (transmit_mst_data(TRACK1))
+			printk("[MST] Send track1 data --> failed\n");
+		else
+			printk("[MST] Send track1 data --> successful\n");
+#if !defined(CONFIG_MFC_CHARGER)
+		of_mst_hw_onoff(OFF);
+#endif
+		break;
+
+	case CMD_SEND_TRACK2_DATA:
+#if !defined(CONFIG_MFC_CHARGER)
+		of_mst_hw_onoff(ON);
+#endif
+		if (transmit_mst_data(TRACK2))
+			printk("[MST] Send track2 data --> failed\n");
+		else
+			printk("[MST] Send track2 data --> successful\n");
+#if !defined(CONFIG_MFC_CHARGER)
+		of_mst_hw_onoff(OFF);
+#endif
+		break;
+
+	case CMD_HW_RELIABILITY_TEST_START:
+		if (escape_loop) {
+			wake_lock_init(&mst_wakelock, WAKE_LOCK_SUSPEND,
+				       "mst_wakelock");
+			wake_lock(&mst_wakelock);
+		}
+		escape_loop = 0;
+		while (1) {
+			if (escape_loop == 1)
+				break;
+#if !defined(CONFIG_MFC_CHARGER)
 			of_mst_hw_onoff(ON);
-			break;
-
-		case CMD_SEND_TRACK1_DATA:
-			if(transmit_mst_data(TRACK1))
-				printk("[MST] Send track1 data --> failed\n");
-			else
-				printk("[MST] Send track1 data --> successful\n");
-			break;
-
-		case CMD_SEND_TRACK2_DATA:
-			if(transmit_mst_data(TRACK2))
+#endif
+			mdelay(10);
+			if (transmit_mst_data(TRACK2)) {
 				printk("[MST] Send track2 data --> failed\n");
-			else
-				printk("[MST] Send track2 data --> successful\n");
-			break;
-
-		case CMD_HW_RELIABILITY_TEST_START:
-			if(escape_loop){
-				wake_lock_init(&mst_wakelock, WAKE_LOCK_SUSPEND, "mst_wakelock");
-				wake_lock(&mst_wakelock);
+				break;
 			}
-			escape_loop = 0;
-			while( 1 ) {
-				if(escape_loop == 1)
-					break;
-				mdelay(10);
-				if (transmit_mst_data(TRACK2)) {
-					printk("[MST] Send track2 data --> failed\n");
-					break;
-				}
-				printk("[MST] Send track2 data --> successful\n");
-				mdelay(1000);
-			}
-			break;
+			printk("[MST] Send track2 data --> successful\n");
+#if !defined(CONFIG_MFC_CHARGER)
+			of_mst_hw_onoff(OFF);
+#endif
+			mdelay(1000);
+		}
+		break;
 
-		case CMD_HW_RELIABILITY_TEST_STOP:
-			if(!escape_loop)
-				wake_lock_destroy(&mst_wakelock);
-			escape_loop = 1;
-			printk("[MST] MST escape_loop value = 1\n");
-			break;
+	case CMD_HW_RELIABILITY_TEST_STOP:
+		if (!escape_loop)
+			wake_lock_destroy(&mst_wakelock);
+		escape_loop = 1;
+		printk("[MST] MST escape_loop value = 1\n");
+		break;
 
-		default:
-			printk(KERN_ERR "[MST] MST invalid value : %s\n", test_result);
-			break;
+	default:
+		printk(KERN_ERR "[MST] MST invalid value : %s\n", test_result);
+		break;
 	}
 	return count;
 }
-
 
 /**
  * sec_mst_gpio_init - Initialize GPIO pins used by driver
@@ -605,6 +675,7 @@ static ssize_t store_mst_drv(struct device *dev,
 static int sec_mst_gpio_init(struct device *dev)
 {
 	int ret = 0;
+#if defined(CONFIG_MFC_CHARGER)
 	struct device_node *np;
 	enum of_gpio_flags irq_gpio_flags;
 
@@ -620,23 +691,26 @@ static int sec_mst_gpio_init(struct device *dev)
 			dev_err(dev, "%s : can't get wpc_det\r\n", __FUNCTION__);
 		}
 	}
-
-	mst_pwr_en = of_get_named_gpio(dev->of_node, "sec-mst,mst-pwr-gpio", OFF);
+#endif
+	mst_pwr_en =
+	    of_get_named_gpio(dev->of_node, "sec-mst,mst-pwr-gpio", OFF);
 
 	/* check if gpio pin is inited */
 	if (mst_pwr_en < 0) {
-		printk(KERN_ERR "[MST] %s : Cannot create the gpio\n", __func__);
+		printk(KERN_ERR "[MST] %s : Cannot create the gpio\n",
+		       __func__);
 		//return 1;
 	}
 
 	/* gpio request */
 	ret = gpio_request(mst_pwr_en, "sec-mst,mst-pwr-gpio");
 	if (ret) {
-		printk(KERN_ERR "[MST] failed to get en gpio : %d, %d\n", ret, mst_pwr_en);
+		printk(KERN_ERR "[MST] failed to get en gpio : %d, %d\n", ret,
+		       mst_pwr_en);
 	}
 
 	/* set gpio direction */
-	if (!(ret < 0)  && (mst_pwr_en > 0)) {
+	if (!(ret < 0) && (mst_pwr_en > 0)) {
 		gpio_direction_output(mst_pwr_en, OFF);
 		printk(KERN_ERR "[MST] %s : Send Output\n", __func__);
 	}
@@ -646,16 +720,17 @@ static int sec_mst_gpio_init(struct device *dev)
 
 #if defined(CONFIG_MFC_CHARGER)
 static ssize_t show_mfc(struct device *dev,
-        struct device_attribute *attr, char *buf)
+			struct device_attribute *attr, char *buf)
 {
 	if (!dev)
-        return -ENODEV;
+		return -ENODEV;
 
 	return sprintf(buf, "%s\n", "mfc_charger");
 }
 
 static ssize_t store_mfc(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+			 struct device_attribute *attr, const char *buf,
+			 size_t count)
 {
 	return count;
 }
@@ -674,50 +749,59 @@ static int mst_ldo_device_probe(struct platform_device *pdev)
 
 	if (sec_mst_gpio_init(&pdev->dev)) {
 		retval = ERROR_VALUE;
-		printk(KERN_ERR "[MST] %s: driver initialization failed, retval : %d\n", __FILE__, retval);
+		printk(KERN_ERR
+		       "[MST] %s: driver initialization failed, retval : %d\n",
+		       __FILE__, retval);
 		goto done;
 	}
 
 	mst_drv_class = class_create(THIS_MODULE, "mstldo");
 	if (IS_ERR(mst_drv_class)) {
 		retval = PTR_ERR(mst_drv_class);
-		printk(KERN_ERR "[MST] %s: driver initialization failed, retval : %d\n", __FILE__, retval);
+		printk(KERN_ERR
+		       "[MST] %s: driver initialization failed, retval : %d\n",
+		       __FILE__, retval);
 		goto done;
 	}
 
 	mst_drv_dev = device_create(mst_drv_class,
-			NULL /* parent */, 0 /* dev_t */, NULL /* drvdata */,
-			MST_DRV_DEV);
+				    NULL /* parent */, 0 /* dev_t */,
+				    NULL /* drvdata */,
+				    MST_DRV_DEV);
 	if (IS_ERR(mst_drv_dev)) {
 		retval = PTR_ERR(mst_drv_dev);
 		kfree(mst_drv_dev);
 		device_destroy(mst_drv_class, 0);
-		printk(KERN_ERR "[MST] %s: driver initialization failed, retval : %d\n", __FILE__, retval);
+		printk(KERN_ERR
+		       "[MST] %s: driver initialization failed, retval : %d\n",
+		       __FILE__, retval);
 		goto done;
 	}
 
 	/* register this mst device with the driver core */
 	retval = device_create_file(mst_drv_dev, &dev_attr_transmit);
-	if (retval)
-	{
+	if (retval) {
 		kfree(mst_drv_dev);
 		device_destroy(mst_drv_class, 0);
-		printk(KERN_ERR "[MST] %s: (transmit)driver initialization failed, retval : %d\n", __FILE__, retval);
+		printk(KERN_ERR
+		       "[MST] %s: (transmit)driver initialization failed, retval : %d\n",
+		       __FILE__, retval);
 		goto done;
 	}
-	
 #if defined(CONFIG_MFC_CHARGER)
-    retval = device_create_file(mst_drv_dev, &dev_attr_mfc);
-	if (retval)
-	{
+	retval = device_create_file(mst_drv_dev, &dev_attr_mfc);
+	if (retval) {
 		kfree(mst_drv_dev);
 		device_destroy(mst_drv_class, 0);
-		printk(KERN_ERR "[MST] %s: (mfc)driver initialization failed, retval : %d\n", __FILE__, retval);
+		printk(KERN_ERR
+		       "[MST] %s: (mfc)driver initialization failed, retval : %d\n",
+		       __FILE__, retval);
 		goto done;
 	}
 #endif
 
-	printk(KERN_DEBUG "[MST] MST drv driver (%s) is initialized.\n", MST_DRV_DEV);
+	printk(KERN_DEBUG "[MST] MST drv driver (%s) is initialized.\n",
+	       MST_DRV_DEV);
 
 done:
 	return retval;
@@ -728,12 +812,13 @@ done:
  */
 static int __init mst_drv_init(void)
 {
-	int ret=0;
+	int ret = 0;
 	printk(KERN_ERR "[MST] %s\n", __func__);
 	ret = platform_driver_register(&sec_mst_ldo_driver);
-	printk(KERN_ERR "[MST] MST_LDO_DRV]]] init , ret val : %d\n",ret);
+	printk(KERN_ERR "[MST] MST_LDO_DRV]]] init , ret val : %d\n", ret);
 
-	cluster_freq_ctrl_wq = create_singlethread_workqueue("mst_cluster_freq_ctrl_wq");
+	cluster_freq_ctrl_wq =
+	    create_singlethread_workqueue("mst_cluster_freq_ctrl_wq");
 	INIT_DELAYED_WORK(&dwork, mst_cluster_freq_ctrl_worker);
 
 	return ret;
@@ -742,10 +827,10 @@ static int __init mst_drv_init(void)
 /**
  * mst_drv_exit - Driver exit function
  */
-static void __exit mst_drv_exit (void)
+static void __exit mst_drv_exit(void)
 {
-    class_destroy(mst_drv_class);
-    printk(KERN_ALERT "[MST] %s\n", __func__);
+	class_destroy(mst_drv_class);
+	printk(KERN_ALERT "[MST] %s\n", __func__);
 }
 
 MODULE_AUTHOR("JASON KANG, j_seok.kang@samsung.com");
@@ -754,4 +839,3 @@ MODULE_VERSION("0.1");
 
 module_init(mst_drv_init);
 module_exit(mst_drv_exit);
-

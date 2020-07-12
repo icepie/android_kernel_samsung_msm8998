@@ -2675,6 +2675,17 @@ static int dpui_notifier_callback(struct notifier_block *self,
 
 	set_dpui_field(DPUI_KEY_CHIPID, tbuf, size);
 
+	/* cell id */
+	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+			cell_id[0], cell_id[1], cell_id[2], cell_id[3], cell_id[4],
+			cell_id[5], cell_id[6],
+			(vdd->mdnie_x[ndx] & 0xFF00) >> 8,
+			vdd->mdnie_x[ndx] & 0xFF,
+			(vdd->mdnie_y[ndx] & 0xFF00) >> 8,
+			vdd->mdnie_y[ndx] & 0xFF);
+
+	set_dpui_field(DPUI_KEY_CELLID, tbuf, size);
+
 	return 0;
 }
 
@@ -2854,6 +2865,51 @@ static ssize_t mdss_samsung_force_flip_store(struct device *dev,
 }
 #endif
 
+#define MIN_INPUT_CLKRATE	100000000 /* 100 Mbps */
+#define MAX_INPUT_CLKRATE	1000000000 /* 1 Gbps*/
+static ssize_t mdss_samsung_mipi_clk_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct samsung_display_driver_data *vdd =
+		(struct samsung_display_driver_data *)dev_get_drvdata(dev);
+	struct mdss_panel_data *pdata0;
+	struct mdss_panel_info *pinfo0;
+	struct mdss_panel_data *pdata1;
+	struct mdss_panel_info *pinfo1;
+	u64 clk_rate;
+
+	if (IS_ERR_OR_NULL(vdd) || IS_ERR_OR_NULL(vdd->mfd_dsi[DISPLAY_1])) {
+		LCD_ERR("no vdd");
+		return size;
+	}
+
+	sscanf(buf, "%llu" , &clk_rate);
+
+	if (clk_rate < MIN_INPUT_CLKRATE || clk_rate > MAX_INPUT_CLKRATE) {
+		LCD_ERR("invalid input clk rate(%llu)\n", clk_rate);
+		return size;
+	}
+
+	/* 1) set mipi clk_rate */
+	pdata0 = &vdd->ctrl_dsi[DSI_CTRL_0]->panel_data;
+	pinfo0 = &pdata0->panel_info;
+	pdata1 = &vdd->ctrl_dsi[DSI_CTRL_1]->panel_data;
+	pinfo1 = &pdata1->panel_info;
+
+	/* 2) update mipi clk_rate */
+	mdss_dsi_clk_config(pdata0, clk_rate);
+	mdss_dsi_clk_config(pdata1, clk_rate);
+
+	/* 3) reset display to apply new mipi clk */
+	if (!vdd->mfd_dsi[DSI_CTRL_LEFT]) {
+		LCD_ERR("no mfd");
+		return size;
+	}
+	mdss_fb_report_panel_dead(vdd->mfd_dsi[DSI_CTRL_LEFT]);
+
+	return size;
+}
+
 static DEVICE_ATTR(lcd_type, S_IRUGO, mdss_samsung_disp_lcdtype_show, NULL);
 static DEVICE_ATTR(lcd_type2, S_IRUGO, mdss_samsung_disp_lcdtype2_show, NULL);
 static DEVICE_ATTR(cell_id, S_IRUGO, mdss_samsung_disp_cell_id_show, NULL);
@@ -2908,6 +2964,7 @@ static DEVICE_ATTR(dpci_dbg, S_IRUSR|S_IRGRP|S_IWUSR|S_IWGRP, mdss_samsung_dpci_
 #if defined(CONFIG_FOLDER_HALL)
 static DEVICE_ATTR(force_flip, S_IWUSR | S_IWGRP, NULL, mdss_samsung_force_flip_store);
 #endif
+static DEVICE_ATTR(mipi_clk, S_IRUSR | S_IWUSR, NULL, mdss_samsung_mipi_clk_store);
 
 static struct attribute *panel_sysfs_attributes[] = {
 	&dev_attr_lcd_type.attr,
@@ -2962,8 +3019,10 @@ static struct attribute *panel_sysfs_attributes[] = {
 #if defined(CONFIG_FOLDER_HALL)
 	&dev_attr_force_flip.attr,
 #endif
+	&dev_attr_mipi_clk.attr,
 	NULL
 };
+
 static const struct attribute_group panel_sysfs_group = {
 	.attrs = panel_sysfs_attributes,
 };

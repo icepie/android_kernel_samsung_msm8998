@@ -52,6 +52,11 @@ static ssize_t epen_firm_version_show(struct device *dev,
 {
 	struct wacom_i2c *wac_i2c = dev_get_drvdata(dev);
 	struct i2c_client *client = wac_i2c->client;
+	int ret;
+
+	ret = wacom_i2c_query(wac_i2c);
+	if (ret < 0)
+		input_info(true, &client->dev, "failed to query to IC(%d)\n", ret);
 
 	input_info(true, &client->dev, "%s: 0x%x|0x%X\n", __func__,
 		   wac_i2c->wac_feature->fw_version, wac_i2c->fw_ver_file);
@@ -398,8 +403,13 @@ static ssize_t epen_saving_mode_store(struct device *dev,
 		return count;
 	}
 
-	if (!(wac_i2c->function_result & EPEN_EVENT_PEN_OUT))
+	if (!(wac_i2c->function_result & EPEN_EVENT_PEN_OUT)) {
 		wacom_select_survey_mode(wac_i2c, wac_i2c->screen_on);
+
+		if (wac_i2c->battery_saving_mode) {
+			/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_GLOBAL_SCAN_MODE); */
+		}
+	}
 
 	return count;
 }
@@ -499,6 +509,52 @@ static ssize_t epen_aod_enable_store(struct device *dev,
 	return count;
 }
 
+static ssize_t epen_aot_enable_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct wacom_i2c *wac_i2c = dev_get_drvdata(dev);
+	struct i2c_client *client = wac_i2c->client;
+	int val = 0;
+
+	if (!wac_i2c->pdata->support_aot) {
+		input_err(true, &client->dev, "%s: not support aot\n", __func__);
+		return count;
+	}
+
+	if (kstrtoint(buf, 0, &val)) {
+		input_err(true, &client->dev, "%s: failed to get param\n",
+			  __func__);
+		return count;
+	}
+
+#ifdef CONFIG_SEC_FACTORY
+	input_info(true, &client->dev,
+		   "%s : Not support aot mode(%d) in Factory Bin\n",
+		   __func__, val);
+
+	return count;
+#endif
+
+	val = !(!val);
+
+	if (val)
+		wac_i2c->function_set |= EPEN_SETMODE_AOP_OPTION_AOT;
+	else
+		wac_i2c->function_set &= (~EPEN_SETMODE_AOP_OPTION_AOT);
+
+	input_info(true, &client->dev,
+		   "%s: ps %s aop(%d) set(0x%x) ret(0x%x)\n", __func__,
+		   wac_i2c->battery_saving_mode ? "on" : "off",
+		   (wac_i2c->function_set & EPEN_SETMODE_AOP) ? 1 : 0,
+		   wac_i2c->function_set, wac_i2c->function_result);
+
+	if (!wac_i2c->screen_on)
+		wacom_select_survey_mode(wac_i2c, false);
+
+	return count;
+}
+
 static ssize_t epen_wcharging_mode_show(struct device *dev,
 					struct device_attribute *attr,
 					char *buf)
@@ -577,9 +633,24 @@ static ssize_t epen_keyboard_mode_store(struct device *dev,
 void epen_disable_mode(struct wacom_i2c *wac_i2c, int mode)
 {
 	struct i2c_client *client = wac_i2c->client;
+	static int depth;
 
-	input_info(true, &client->dev, "%s: %d\n", __func__, mode);
+	if (mode) {
+		if (!depth++)
+			goto out;
+	} else {
+		if (!(--depth))
+			goto out;
 
+		if (depth < 0)
+			depth = 0;
+	}
+
+	input_info(true, &client->dev, "%s: %d(%d)!\n", __func__, mode, depth);
+
+	return;
+
+out:
 	wac_i2c->epen_blocked = mode;
 
 	if (!wac_i2c->power_enable && wac_i2c->epen_blocked) {
@@ -589,6 +660,8 @@ void epen_disable_mode(struct wacom_i2c *wac_i2c, int mode)
 	}
 
 	wacom_select_survey_mode(wac_i2c, wac_i2c->screen_on);
+
+	input_info(true, &client->dev, "%s: %d(%d)!\n", __func__, mode, depth);
 }
 
 static ssize_t epen_disable_mode_store(struct device *dev,
@@ -860,7 +933,7 @@ static ssize_t epen_fac_garage_mode_show(struct device *dev,
 	input_info(true, &client->dev, "%s: garage mode %s\n", __func__,
 		   wac_i2c->fac_garage_mode ? "IN" : "OUT");
 
-	return snprintf(buf, PAGE_SIZE, "garage mode %s\n",
+	return snprintf(buf, PAGE_SIZE, "garage mode %s",
 			wac_i2c->fac_garage_mode ? "IN" : "OUT");
 }
 
@@ -870,13 +943,17 @@ static ssize_t epen_fac_garage_rawdata_show(struct device *dev,
 {
 	struct wacom_i2c *wac_i2c = dev_get_drvdata(dev);
 	struct i2c_client *client = wac_i2c->client;
+	char data[10] = { 0, };
 	int ret;
 	u8 cmd;
 
 	if (!wac_i2c->fac_garage_mode) {
 		input_err(true, &client->dev, "not in factory garage mode\n");
-		goto out;
+		return snprintf(buf, PAGE_SIZE, "NG");
 	}
+
+	wacom_enable_irq(wac_i2c, false);
+	wacom_enable_pdct_irq(wac_i2c, false);
 
 	cmd = COM_REQUESTGARAGEDATA;
 	ret = wacom_i2c_send(wac_i2c, &cmd, 1, WACOM_I2C_MODE_NORMAL);
@@ -891,16 +968,43 @@ static ssize_t epen_fac_garage_rawdata_show(struct device *dev,
 
 	msleep(30);
 
+	ret = wacom_i2c_recv(wac_i2c, data, 10, WACOM_I2C_MODE_NORMAL);
+	if (ret < 0) {
+		input_err(true, &client->dev,
+			  "failed to read garage raw data, %d\n", ret);
+
+		wac_i2c->garage_freq0 = wac_i2c->garage_freq1 = 0;
+		wac_i2c->garage_gain0 = wac_i2c->garage_gain1 = 0;
+
+		goto out;
+	}
+
+	wacom_enable_irq(wac_i2c, true);
+	wacom_enable_pdct_irq(wac_i2c, true);
+
+	input_info(true, &client->dev, "%x %x %x %x %x %x %x %x %x %x\n",
+		   data[0], data[1], data[2], data[3], data[4], data[5],
+		   data[6], data[7], data[8], data[9]);
+
+	wac_i2c->garage_gain0 = data[4];
+	wac_i2c->garage_freq0 = ((u16)data[5] << 8) + data[6];
+
+	wac_i2c->garage_gain1 = data[7];
+	wac_i2c->garage_freq1 = ((u16)data[8] << 8) + data[9];
+
 	input_info(true, &client->dev, "%s: %d, %d, %d, %d\n", __func__,
 		   wac_i2c->garage_gain0, wac_i2c->garage_freq0,
 		   wac_i2c->garage_gain1, wac_i2c->garage_freq1);
 
-	return snprintf(buf, PAGE_SIZE, "%d,%d,%d,%d\n", wac_i2c->garage_gain0,
+	return snprintf(buf, PAGE_SIZE, "%d,%d,%d,%d", wac_i2c->garage_gain0,
 			wac_i2c->garage_freq0, wac_i2c->garage_gain1,
 			wac_i2c->garage_freq1);
 
 out:
-	return snprintf(buf, PAGE_SIZE, "NG\n");
+	wacom_enable_irq(wac_i2c, true);
+	wacom_enable_pdct_irq(wac_i2c, true);
+
+	return snprintf(buf, PAGE_SIZE, "NG");
 }
 #endif
 
@@ -962,6 +1066,8 @@ static DEVICE_ATTR(get_epen_pos,
 			S_IRUGO, get_epen_pos_show, NULL);
 static DEVICE_ATTR(aod_enable, (S_IWUSR | S_IWGRP),
 		   NULL, epen_aod_enable_store);
+static DEVICE_ATTR(aot_enable, (S_IWUSR | S_IWGRP),
+		   NULL, epen_aot_enable_store);
 static DEVICE_ATTR(dex_enable, (S_IRUGO | S_IWUSR | S_IWGRP),
 		   epen_dex_enable_show, epen_dex_enable_store);
 static DEVICE_ATTR(dex_rate, (S_IRUGO | S_IWUSR | S_IWGRP),
@@ -997,6 +1103,7 @@ static struct attribute *epen_attributes[] = {
 	&dev_attr_screen_off_memo_enable.attr,
 	&dev_attr_get_epen_pos.attr,
 	&dev_attr_aod_enable.attr,
+	&dev_attr_aot_enable.attr,
 	&dev_attr_dex_enable.attr,
 	&dev_attr_dex_rate.attr,
 	&dev_attr_abnormal_reset_count.attr,

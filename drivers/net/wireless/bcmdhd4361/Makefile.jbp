@@ -881,15 +881,15 @@ endif
 
 ifneq ($(filter y,$(CONFIG_BCM43455) $(CONFIG_BCM43456)),$(filter m,$(CONFIG_BCM43455) $(CONFIG_BCM43456)))
 # Enable Firmware Coredump
-    DHDCFLAGS += -DDHD_FW_COREDUMP
+  DHDCFLAGS += -DDHD_FW_COREDUMP
 ifeq ($(CONFIG_BCMDHD_PREALLOC_MEMDUMP),y)
-    DHDCFLAGS += -DDHD_USE_STATIC_MEMDUMP
+  DHDCFLAGS += -DDHD_USE_STATIC_MEMDUMP
 endif
 
 # Enable concate blob path
-    DHDCFLAGS += -DCONCATE_BLOB
+  DHDCFLAGS += -DCONCATE_BLOB
 # Generate .softap.info
-    DHDCFLAGS += -DGEN_SOFTAP_INFO_FILE
+  DHDCFLAGS += -DGEN_SOFTAP_INFO_FILE
 
 ifneq ($(CONFIG_BCM43456),)
 # STA/SoftAP Concurrent Mode Support for legacy chip

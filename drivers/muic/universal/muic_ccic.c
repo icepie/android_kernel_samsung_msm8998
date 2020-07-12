@@ -838,6 +838,7 @@ static int muic_handle_ccic_notification(struct notifier_block *nb,
 #endif		
 	default:
 		pr_info("%s: Undefined Noti. ID\n", __func__);
+		mutex_unlock(&pmuic->muic_mutex);
 		return NOTIFY_DONE;
 	}
 

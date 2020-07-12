@@ -58,6 +58,8 @@
 
 static uint32_t lmk_count = 0;
 static uint32_t timeoutlmk_count = 0;
+static int lmkd_count;
+static int lmkd_cricount;
 
 #ifdef CONFIG_SEC_TIMEOUT_LOW_MEMORY_KILLER
 #define MULTIPLE_OOM_KILLER
@@ -500,7 +502,7 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 		cache_limit = minfree * (long)(PAGE_SIZE / 1024);
 		free = other_free * (long)(PAGE_SIZE / 1024);
 		trace_lowmemory_kill(selected, cache_size, cache_limit, free);
-		lowmem_print(1, "Killing '%s' (%d), adj %hd,\n" \
+		lowmem_print(1, "Killing '%s' (%d) (tgid %d), adj %hd,\n" \
 			        "   to free %ldkB on behalf of '%s' (%d) because\n" \
 			        "   cache %ldkB is below limit %ldkB for oom_score_adj %hd\n" \
 				"   Free memory is %ldkB above reserved.\n" \
@@ -511,7 +513,7 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 				"   Total file cache is %ldkB\n" \
 				"   Total zcache is %ldkB\n" \
 				"   GFP mask is 0x%x\n",
-			     selected->comm, selected->pid,
+			     selected->comm, selected->pid, selected->tgid,
 			     selected_oom_score_adj,
 			     selected_tasksize * (long)(PAGE_SIZE / 1024),
 			     current->comm, current->pid,
@@ -866,3 +868,5 @@ module_param_array_named(minfree, lowmem_minfree, uint, &lowmem_minfree_size,
 module_param_named(debug_level, lowmem_debug_level, uint, S_IRUGO | S_IWUSR);
 module_param_named(lmkcount, lmk_count, uint, S_IRUGO);
 module_param_named(timeoutlmkcount, timeoutlmk_count, uint, S_IRUGO);
+module_param_named(lmkd_count, lmkd_count, int, 0644);
+module_param_named(lmkd_cricount, lmkd_cricount, int, 0644);

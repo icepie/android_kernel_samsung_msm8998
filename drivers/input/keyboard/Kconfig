@@ -550,6 +550,16 @@ config KEYBOARD_GOLDFISH_EVENTS
 	  To compile this driver as a module, choose M here: the
 	  module will be called goldfish-events.
 
+config KEYBOARD_GOLDFISH_ROTARY
+	depends on GOLDFISH
+	tristate "Rotary encoder device for Goldfish"
+	help
+	  Say Y here to get an input event device for the Goldfish virtual
+	  device emulator that acts as a rotary encoder.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called goldfish-rotary.
+
 config KEYBOARD_STOWAWAY
 	tristate "Stowaway keyboard"
 	select SERIO
@@ -749,4 +759,12 @@ config KEYBOARD_ABOV_TOUCH_FOLDER
 	depends on I2C
 	help
 	  Say Y here if you want to use ABOV MC96FT16XX chip as touchkey for folder model.
+
+config KEYBOARD_STM32_POGO
+	tristate "STM32 keypad support"
+	depends on MUIC_KEYBOARD
+	select INPUT_MATRIXKMAP
+	help
+	  Say Y here if you want to use the keypad controller on STM32 I/O
+	  expanders.
 endif

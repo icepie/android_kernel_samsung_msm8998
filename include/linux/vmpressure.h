@@ -13,6 +13,7 @@ struct vmpressure {
 	unsigned long scanned;
 	unsigned long reclaimed;
 	unsigned long stall;
+	unsigned long pressure;
 	/* The lock is used to keep the scanned/reclaimed above in sync. */
 	struct spinlock sr_lock;
 

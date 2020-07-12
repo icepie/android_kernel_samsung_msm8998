@@ -315,7 +315,7 @@ EXPORT_SYMBOL_GPL(__ktime_divns);
  */
 ktime_t ktime_add_safe(const ktime_t lhs, const ktime_t rhs)
 {
-	ktime_t res = ktime_add(lhs, rhs);
+	ktime_t res = ktime_add_unsafe(lhs, rhs);
 
 	/*
 	 * We use KTIME_SEC_MAX here, the maximum timeout which we can
@@ -438,6 +438,7 @@ void destroy_hrtimer_on_stack(struct hrtimer *timer)
 {
 	debug_object_free(timer, &hrtimer_debug_descr);
 }
+EXPORT_SYMBOL_GPL(destroy_hrtimer_on_stack);
 
 #else
 static inline void debug_hrtimer_init(struct hrtimer *timer) { }
@@ -1121,7 +1122,12 @@ static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
 
 	cpu_base = raw_cpu_ptr(&hrtimer_bases);
 
-	if (clock_id == CLOCK_REALTIME && mode != HRTIMER_MODE_ABS)
+	/*
+	 * POSIX magic: Relative CLOCK_REALTIME timers are not affected by
+	 * clock modifications, so they needs to become CLOCK_MONOTONIC to
+	 * ensure POSIX compliance.
+	 */
+	if (clock_id == CLOCK_REALTIME && mode & HRTIMER_MODE_REL)
 		clock_id = CLOCK_MONOTONIC;
 
 	base = hrtimer_clockid_to_base(clock_id);

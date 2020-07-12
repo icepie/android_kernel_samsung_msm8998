@@ -109,7 +109,7 @@ int wacom_i2c_send(struct wacom_i2c *wac_i2c,
 			break;
 
 		if (retry < WACOM_I2C_RETRY) {
-			input_err(true, &wac_i2c->client->dev, "%s: I2C retry(%d)",
+			input_err(true, &wac_i2c->client->dev, "%s: I2C retry(%d)\n",
 					__func__, WACOM_I2C_RETRY - retry);
 			wac_i2c->i2c_fail_count++;
 		}
@@ -136,7 +136,7 @@ int wacom_i2c_recv(struct wacom_i2c *wac_i2c, char *buf, int count, bool mode)
 			break;
 
 		if (retry < WACOM_I2C_RETRY) {
-			input_err(true, &wac_i2c->client->dev, "%s: I2C retry(%d)",
+			input_err(true, &wac_i2c->client->dev, "%s: I2C retry(%d)\n",
 					__func__, WACOM_I2C_RETRY - retry);
 			wac_i2c->i2c_fail_count++;
 		}
@@ -245,7 +245,7 @@ int wacom_i2c_query(struct wacom_i2c *wac_i2c)
 		   query[5], query[6], query[7],  query[8], query[9], query[10],
 		   query[11], query[12], query[13], query[14]);
 
-	if (i == COM_QUERY_RETRY || ret < 0) {
+	if (ret < 0) {
 		input_err(true, &client->dev, "%s: failed to read query\n",
 			  __func__);
 		wac_feature->fw_version = 0;
@@ -281,7 +281,7 @@ int wacom_i2c_query(struct wacom_i2c *wac_i2c)
 		   query[EPEN_REG_MPUVER], query[EPEN_REG_BLVER], x_tilt,
 		   y_tilt, height);
 
-	return ret;
+	return 0;
 }
 
 int wacom_i2c_set_sense_mode(struct wacom_i2c *wac_i2c)
@@ -388,9 +388,15 @@ void wacom_select_survey_mode(struct wacom_i2c *wac_i2c, bool enable)
 							  EPEN_SURVEY_MODE_GARAGE_ONLY);
 			} else {
 				input_info(true, &client->dev,
-					   "%s: %s & garage off. keep power off\n",
-					   __func__,
+					   "%s: %s & garage off. power off\n", __func__,
 					   wac_i2c->epen_blocked ? "epen blocked" : "ps on & pen in");
+
+				wacom_enable_irq(wac_i2c, false);
+				wacom_enable_pdct_irq(wac_i2c, false);
+				wacom_power(wac_i2c, false);
+
+				wac_i2c->survey_mode = EPEN_SURVEY_MODE_NONE;
+				wac_i2c->function_result &= ~EPEN_EVENT_SURVEY;
 			}
 		} else if (wac_i2c->survey_mode) {
 			input_info(true, &client->dev, "%s: exit aop mode\n",
@@ -403,6 +409,8 @@ void wacom_select_survey_mode(struct wacom_i2c *wac_i2c, bool enable)
 				   __func__);
 
 			wacom_power(wac_i2c, true);
+			msleep(100);
+
 			wacom_enable_irq(wac_i2c, true);
 			wacom_enable_pdct_irq(wac_i2c, true);
 		}
@@ -457,6 +465,17 @@ void wacom_select_survey_mode(struct wacom_i2c *wac_i2c, bool enable)
 			input_info(true, &client->dev,
 				   "%s: aop on. aop mode\n", __func__);
 
+			if (!wac_i2c->power_enable) {
+				input_info(true, &client->dev, "%s: power on\n",
+					   __func__);
+
+				wacom_power(wac_i2c, true);
+				msleep(100);
+
+				wacom_enable_irq(wac_i2c, true);
+				wacom_enable_pdct_irq(wac_i2c, true);
+			}
+
 			wacom_i2c_set_survey_mode(wac_i2c,
 						  EPEN_SURVEY_MODE_GARAGE_AOP);
 		}
@@ -507,8 +526,8 @@ void wacom_i2c_set_survey_mode(struct wacom_i2c *wac_i2c, int mode)
 	}
 
 	wac_i2c->survey_mode = mode;
-	input_info(true, &client->dev, "%s: ps %s & mode : %d\n", __func__,
-		   wac_i2c->battery_saving_mode ? "on" : "off", mode);
+	input_info(true, &client->dev, "%s: ps %s & mode : %d cmd(0x%2X)\n", __func__,
+		   wac_i2c->battery_saving_mode ? "on" : "off", mode, data[0]);
 
 	retval = wacom_i2c_send(wac_i2c, &data[0], 1, WACOM_I2C_MODE_NORMAL);
 	if (retval != 1) {
@@ -579,19 +598,8 @@ void wacom_i2c_softkey(struct wacom_i2c *wac_i2c, s16 key, s16 pressed)
 void forced_release_fullscan(struct wacom_i2c *wac_i2c)
 {
 	input_info(true, &wac_i2c->client->dev, "%s full scan OUT\n", __func__);
-	/* wac_i2c->tsp_noise_mode = set_spen_mode(0); */
+	/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_GLOBAL_SCAN_MODE); */
 	wac_i2c->fullscan_mode = false;
-}
-
-void wacom_set_scan_mode(struct wacom_i2c *wac_i2c, int mode)
-{
-	if (mode)
-		input_info(true, &wac_i2c->client->dev, "set - full scan IN\n");
-	else
-		input_info(true, &wac_i2c->client->dev,
-			   "set - full scan OUT\n");
-
-	/* wac_i2c->tsp_noise_mode = set_spen_mode(mode); */
 }
 
 int wacom_get_scan_mode(struct wacom_i2c *wac_i2c)
@@ -601,7 +609,7 @@ int wacom_get_scan_mode(struct wacom_i2c *wac_i2c)
 	char data[COM_COORD_NUM + 1] = { 0, };
 	int i, retry = 3, temp = 0, ret = 0;
 
-	input_err(true, &wac_i2c->client->dev, "get scan mode\n");
+	input_info(true, &wac_i2c->client->dev, "%s\n", __func__);
 
 	data[0] = COM_SAMPLERATE_STOP;
 	retval = wacom_i2c_send(wac_i2c, &data[0], 1, WACOM_I2C_MODE_NORMAL);
@@ -609,7 +617,7 @@ int wacom_get_scan_mode(struct wacom_i2c *wac_i2c)
 		input_err(true, &client->dev,
 			  "%s: failed to read wacom i2c send (stop), %d\n",
 			  __func__, retval);
-		return 0;
+		return -EIO;
 	}
 
 	data[0] = COM_REQUESTSCANMODE;
@@ -618,7 +626,7 @@ int wacom_get_scan_mode(struct wacom_i2c *wac_i2c)
 		input_err(true, &client->dev,
 			  "%s: failed to read wacom i2c send (request data), %d\n",
 			  __func__, retval);
-		return 0;
+		return -EIO;
 	}
 	msleep(35);
 
@@ -641,10 +649,10 @@ int wacom_get_scan_mode(struct wacom_i2c *wac_i2c)
 			   data[11], data[12]);
 
 		if (temp == 0) {	/* unlock */
-			ret = 1;
+			ret = EPEN_GLOBAL_SCAN_MODE;
 			break;
 		} else if (data[12] == 0x01) {	/* send noise mode to tsp */
-			ret = 2;
+			ret = EPEN_HIGH_NOISE_MODE;
 			break;
 		}
 		msleep(10);
@@ -660,53 +668,20 @@ int wacom_get_scan_mode(struct wacom_i2c *wac_i2c)
 		input_err(true, &client->dev,
 			  "%s: failed to read wacom i2c send (start), %d\n",
 			  __func__, retval);
-		return 0;
+		return -EIO;
 	}
+
 	return ret;
 }
 
-#ifdef CONFIG_SEC_FACTORY
-void wacom_get_garage_data(struct wacom_i2c *wac_i2c)
-{
-	struct i2c_client *client = wac_i2c->client;
-	int retval;
-	char data[10] = { 0, };
-	int ret;
-
-	input_info(true, &wac_i2c->client->dev, "%s: get garage raw data\n",
-		   __func__);
-
-	retval = wacom_i2c_recv(wac_i2c, data, 10, WACOM_I2C_MODE_NORMAL);
-	if (retval < 0) {
-		input_err(true, &client->dev,
-			  "failed to read garage raw data, %d\n", ret);
-
-		wac_i2c->garage_freq0 = wac_i2c->garage_freq1 = 0;
-		wac_i2c->garage_gain0 = wac_i2c->garage_gain1 = 0;
-
-		return;
-	}
-
-	input_info(true, &client->dev, "%x %x %x %x %x %x %x %x %x %x\n",
-		   data[0], data[1], data[2], data[3], data[4], data[5],
-		   data[6], data[7], data[8], data[9]);
-
-	wac_i2c->garage_gain0 = data[4];
-	wac_i2c->garage_freq0 = ((u16)data[5] << 8) + data[6];
-
-	wac_i2c->garage_gain1 = data[7];
-	wac_i2c->garage_freq1 = ((u16)data[8] << 8) + data[9];
-}
-#endif
-
-bool wacom_get_aop_data(struct wacom_i2c *wac_i2c, char *data)
+bool wacom_get_status_data(struct wacom_i2c *wac_i2c, char *data)
 {
 	struct i2c_client *client = wac_i2c->client;
 	int retval;
 	int retry = 5;
 	bool ret = false;
 
-	input_info(true, &wac_i2c->client->dev, "%s: get aop irq\n", __func__);
+	input_info(true, &wac_i2c->client->dev, "%s\n", __func__);
 
 	while (retry--) {
 		retval =
@@ -714,13 +689,21 @@ bool wacom_get_aop_data(struct wacom_i2c *wac_i2c, char *data)
 				   WACOM_I2C_MODE_NORMAL);
 		if (retval < 0) {
 			input_err(true, &client->dev,
-				  "%s: failed to read aop event, %d\n",
+				  "%s: failed to read status data, %d\n",
 				  __func__, retval);
 		}
 
-		/* AOP event   BB BB=Button+Hover, DD DD=Double Tab gesture */
-		if (((data[10] == AOP_BUTTON_HOVER) && (data[11] == AOP_BUTTON_HOVER)) ||
-				((data[10] == AOP_DOUBLE_TAB) && (data[11] == AOP_DOUBLE_TAB))) {
+		if (data[10] != data[11]) {
+			input_err(true, &client->dev,
+				  "%s: invalid status data\n", __func__);
+			break;
+		}
+
+		/* AOP status   : BB BB = Button+Hover, DD DD = Double Tab gesture
+		 * Noise status : 11 11 = High noise, 22 22 = Low noise
+		 */
+		if ((data[10] == AOP_BUTTON_HOVER) || (data[10] == AOP_DOUBLE_TAB) ||
+		    (data[10] == WACOM_NOISE_HIGH) || (data[10] == WACOM_NOISE_LOW)) {
 			ret = true;
 			break;
 		}
@@ -763,18 +746,17 @@ void wacom_fullscan_check_work(struct work_struct *work)
 		   "fullscan_check_work irq-cnt(%d)\n", coordc);
 	if (coordc <= 2) {
 		ret = wacom_get_scan_mode(wac_i2c);
-		if (ret == 0) {
-			input_info(true, &wac_i2c->client->dev,
-				   "work - stay scan mode\n");
-		} else if (ret == 1) {
-			input_info(true, &wac_i2c->client->dev,
-				   "work - full scan OUT\n");
-			/* wac_i2c->tsp_noise_mode = set_spen_mode(0); */
+		if (ret < 0) {
+			input_info(true, &wac_i2c->client->dev, "work - stay scan mode\n");
+		} else if (ret == EPEN_GLOBAL_SCAN_MODE) {
+			input_info(true, &wac_i2c->client->dev, "work - full scan OUT\n");
+			/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_GLOBAL_SCAN_MODE); */
 			wac_i2c->fullscan_mode = false;
-		} else if (ret == 2) {
-			input_info(true, &wac_i2c->client->dev,
-				   "work - wacom noise mode\n");
-			/* wac_i2c->tsp_noise_mode = set_spen_mode(2); */
+		} else if (ret == EPEN_HIGH_NOISE_MODE) {
+			input_info(true, &wac_i2c->client->dev, "work - wacom noise mode\n");
+			/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_HIGH_NOISE_MODE); */
+		} else {
+			input_err(true, &wac_i2c->client->dev, "unexpected status\n");
 		}
 	}
 }
@@ -867,10 +849,9 @@ int wacom_i2c_coord(struct wacom_i2c *wac_i2c)
 				   "x-y scan IN, rdy(%d) tsp(%d)\n", rdy, tsp);
 			wac_i2c->fullscan_mode = true;
 			if (wac_i2c->wacom_noise_state != WACOM_NOISE_HIGH) {
-				/* wac_i2c->tsp_noise_mode = set_spen_mode(1); */
+				/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_LOCAL_SCAN_MODE); */
 			} else {
-				input_info(true, &client->dev,
-					   "high noise mode, skip tsp (75 1)\n");
+				input_info(true, &client->dev, "high noise mode, skip tsp (F3 1)\n");
 			}
 
 			coordc = 0;
@@ -887,15 +868,13 @@ int wacom_i2c_coord(struct wacom_i2c *wac_i2c)
 			   data[6], data[7], data[8], data[9], data[10],
 			   data[11], data[12]);
 		if ((data[10] == WACOM_NOISE_HIGH) && (data[11] == WACOM_NOISE_HIGH)) {
-			input_err(true, &wac_i2c->client->dev,
-				  "11 11 high-noise mode\n");
+			input_err(true, &wac_i2c->client->dev, "11 11 high-noise mode\n");
 			wac_i2c->wacom_noise_state = WACOM_NOISE_HIGH;
-			/* wac_i2c->tsp_noise_mode = set_spen_mode(2); */
+			/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_HIGH_NOISE_MODE); */
 		} else if ((data[10] == WACOM_NOISE_LOW) && (data[11] == WACOM_NOISE_LOW)) {
-			input_err(true, &wac_i2c->client->dev,
-				  "22 22 low-noise mode\n");
+			input_err(true, &wac_i2c->client->dev, "22 22 low-noise mode\n");
 			wac_i2c->wacom_noise_state = WACOM_NOISE_LOW;
-			/* wac_i2c->tsp_noise_mode = set_spen_mode(0); */
+			/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_GLOBAL_SCAN_MODE); */
 		}
 	}
 
@@ -923,23 +902,32 @@ int wacom_i2c_coord(struct wacom_i2c *wac_i2c)
 		y = ((u16) data[3] << 8) + (u16) data[4];
 		pressure = ((u16) data[5] << 8) + (u16) data[6];
 		gain = data[7];
-		tilt_x = (s8) data[9];
-		tilt_y = -(s8) data[8];
+		tilt_x = (s8) data[8];
+		tilt_y = (s8) data[9];
 
 		/* origin */
 		x = x - pdata->origin[0];
 		y = y - pdata->origin[1];
 
 		/* change axis from wacom to lcd */
-		if (pdata->x_invert)
+		if (pdata->x_invert) {
 			x = pdata->max_x - x;
-		if (pdata->y_invert)
+			tilt_x = -tilt_x;
+		}
+
+		if (pdata->y_invert) {
 			y = pdata->max_y - y;
+			tilt_y = -tilt_y;
+		}
 
 		if (pdata->xy_switch) {
 			tmp = x;
 			x = y;
 			y = tmp;
+
+			tmp = tilt_x;
+			tilt_x = tilt_y;
+			tilt_y = tmp;
 		}
 
 		if (wac_i2c->keyboard_cover_mode == true) {
@@ -1202,13 +1190,11 @@ int wacom_i2c_coord(struct wacom_i2c *wac_i2c)
 		}
 
 		if (!tsp) {
-			input_info(true, &client->dev,
-				   "full scan out (00 00)\n");
+			input_info(true, &client->dev, "full scan out (00 00)\n");
 			if (wac_i2c->wacom_noise_state != WACOM_NOISE_HIGH) {
-			/* wac_i2c->tsp_noise_mode = set_spen_mode(0); */
+				/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_GLOBAL_SCAN_MODE); */
 			} else {
-				input_info(true, &client->dev,
-					   "high noise mode, skip tsp (75 0)\n");
+				input_info(true, &client->dev, "high noise mode, skip tsp (F3 0)\n");
 			}
 
 			cancel_delayed_work_sync(&wac_i2c->fullscan_check_work);
@@ -1593,13 +1579,6 @@ static irqreturn_t wacom_interrupt(int irq, void *dev_id)
 	int ret = 0;
 	char data[COM_COORD_NUM + 1] = { 0, };
 
-#ifdef CONFIG_SEC_FACTORY
-	if (wac_i2c->fac_garage_mode) {
-		wacom_get_garage_data(wac_i2c);
-		return IRQ_HANDLED;
-	}
-#endif
-
 	if (!wac_i2c->screen_on && wac_i2c->survey_mode) {
 		input_info(true, &wac_i2c->client->dev,
 			   "%s: lcd off & survey mode on\n", __func__);
@@ -1623,15 +1602,14 @@ static irqreturn_t wacom_interrupt(int irq, void *dev_id)
 			}
 		}
 
-		if (wac_i2c->function_set & EPEN_SETMODE_AOP) {
-			ret = wacom_get_aop_data(wac_i2c, data);
-			if (!ret)
-				return IRQ_HANDLED;
+		ret = wacom_get_status_data(wac_i2c, data);
+		if (!ret)
+			return IRQ_HANDLED;
 
+		if (wac_i2c->function_set & EPEN_SETMODE_AOP) {
 			if (data[10] == AOP_BUTTON_HOVER) {
 				if (wac_i2c->function_set & EPEN_SETMODE_AOP_OPTION_SCREENOFFMEMO) {
-					input_info(true, &wac_i2c->client->dev,
-						   "AOP detected and wake up device\n");
+					input_info(true, &wac_i2c->client->dev, "Hover & Side Button detected\n");
 
 					input_report_key(wac_i2c->input_dev,
 							 KEY_WAKEUP_UNLOCK, 1);
@@ -1669,8 +1647,7 @@ static irqreturn_t wacom_interrupt(int irq, void *dev_id)
 				}
 			} else if (data[10] == AOP_DOUBLE_TAB) {
 				if (wac_i2c->function_set & EPEN_SETMODE_AOP_OPTION_AOD) {
-					input_info(true, &wac_i2c->client->dev,
-						   "AOP Double Tab detected\n");
+					input_info(true, &wac_i2c->client->dev, "Double Tab detected in AOD\n");
 
 					x = ((u16) data[1] << 8) + (u16) data[2];
 					y = ((u16) data[3] << 8) + (u16) data[4];
@@ -1722,17 +1699,35 @@ static irqreturn_t wacom_interrupt(int irq, void *dev_id)
 #else
 					input_info(true, &wac_i2c->client->dev, "P / R event\n");
 #endif
+				} else if (wac_i2c->function_set & EPEN_SETMODE_AOP_OPTION_AOT) {
+					input_info(true, &wac_i2c->client->dev, "Double Tab detected\n");
+
+					input_report_key(wac_i2c->input_dev, KEY_HOMEPAGE, 1);
+					input_sync(wac_i2c->input_dev);
+					input_report_key(wac_i2c->input_dev, KEY_HOMEPAGE, 0);
+					input_sync(wac_i2c->input_dev);
 				} else {
 					input_info(true, &wac_i2c->client->dev,
-						   "AOP Double Tab detected but skip report, aod disabled\n");
+						   "AOP Double Tab detected but skip report, aod & aot disabled\n");
 				}
 			} else {
-				input_info(true, &wac_i2c->client->dev,
-					   "unknown irq event of aop\n");
+				input_info(true, &wac_i2c->client->dev, "unknown AOP status\n");
 			}
 		} else {
 			input_info(true, &wac_i2c->client->dev,
 				   "AOP Disabled \n");
+		}
+
+		if (data[0] == 0x0F) {
+			if (data[10] == WACOM_NOISE_HIGH) {
+				input_err(true, &wac_i2c->client->dev, "11 11 high-noise mode\n");
+				wac_i2c->wacom_noise_state = WACOM_NOISE_HIGH;
+				/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_HIGH_NOISE_MODE); */
+			} else if (data[10] == WACOM_NOISE_LOW) {
+				input_err(true, &wac_i2c->client->dev, "22 22 low-noise mode\n");
+				wac_i2c->wacom_noise_state = WACOM_NOISE_LOW;
+				/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_GLOBAL_SCAN_MODE); */
+			}
 		}
 
 		return IRQ_HANDLED;
@@ -1837,15 +1832,14 @@ static void pen_insert_work(struct work_struct *work)
 			wac_i2c->function_result &= ~EPEN_EVENT_PEN_OUT;
 		else
 			wac_i2c->function_result |= EPEN_EVENT_PEN_OUT;
-
-		input_report_switch(wac_i2c->input_dev_pen, SW_PEN_INSERT,
-				    (wac_i2c->function_result & EPEN_EVENT_PEN_OUT));
-		input_sync(wac_i2c->input_dev_pen);
-
-		input_info(true, &wac_i2c->client->dev, "%s : pen is %s\n",
-			__func__,
-			(wac_i2c->function_result & EPEN_EVENT_PEN_OUT) ? "OUT" : "IN");
 	}
+
+	input_report_switch(wac_i2c->input_dev_pen, SW_PEN_INSERT,
+				(wac_i2c->function_result & EPEN_EVENT_PEN_OUT));
+	input_sync(wac_i2c->input_dev_pen);
+
+	input_info(true, &wac_i2c->client->dev, "%s : pen is %s\n", __func__,
+			(wac_i2c->function_result & EPEN_EVENT_PEN_OUT) ? "OUT" : "IN");
 }
 
 static void init_pen_insert(struct wacom_i2c *wac_i2c)
@@ -1906,6 +1900,7 @@ static void wacom_i2c_set_input_values(struct wacom_i2c *wac_i2c,
 
 	/* AOP */
 	input_set_capability(input_dev, EV_KEY, KEY_WAKEUP_UNLOCK);
+	input_set_capability(input_dev, EV_KEY, KEY_HOMEPAGE);
 
 	if (propbit & DEX_MODE_MOUSE) {
 		input_set_capability(input_dev, EV_REL, REL_X);
@@ -1999,7 +1994,7 @@ reset:
 		wacom_i2c_set_sense_mode(wac_i2c);
 
 	if (wac_i2c->tsp_noise_mode < 0) {
-		/* wac_i2c->tsp_noise_mode = set_spen_mode(0); */
+		/* wac_i2c->tsp_noise_mode = set_spen_mode(EPEN_GLOBAL_SCAN_MODE); */
 	}
 
 	irq_state = wacom_get_irq_state(wac_i2c);
@@ -2436,9 +2431,6 @@ static void wacom_usb_typec_work(struct work_struct *work)
 	char data[5] = { 0 };
 	int ret;
 
-	if (!wac_i2c)
-		return;
-
 	if (wac_i2c->dp_connect_state == wac_i2c->dp_connect_cmd)
 		return;
 
@@ -2508,9 +2500,6 @@ static int wacom_usb_typec_notification_cb(struct notifier_block *nb,
 	struct wacom_i2c *wac_i2c = container_of(nb, struct wacom_i2c, typec_nb);
 	CC_NOTI_TYPEDEF usb_typec_info = *(CC_NOTI_TYPEDEF *)data;
 
-	if (!wac_i2c)
-		goto out;
-
 	if (usb_typec_info.src != CCIC_NOTIFY_DEV_CCIC ||
 			usb_typec_info.dest != CCIC_NOTIFY_DEV_DP ||
 			usb_typec_info.id != CCIC_NOTIFY_ID_DP_CONNECT)
@@ -2554,7 +2543,7 @@ static void wacom_usb_typec_nb_register_work(struct work_struct *work)
 
 	ret = manager_notifier_register(&wac_i2c->typec_nb,
 					wacom_usb_typec_notification_cb,
-					MANAGER_NOTIFY_CCIC_DP);
+					MANAGER_NOTIFY_CCIC_WACOM);
 	if (ret) {
 		count++;
 		schedule_delayed_work(&wac_i2c->typec_nb_reg_work, msecs_to_jiffies(10));
@@ -2764,13 +2753,15 @@ static struct wacom_g5_platform_data *wacom_parse_dt(struct i2c_client *client)
 		}
 	}
 
+	pdata->support_aot = of_property_read_bool(np, "wacom,support_aot_mode");
 	pdata->table_swap = of_property_read_bool(np, "wacom,table_swap_for_dex_station");
 
 	input_info(true, &client->dev,
 		   "boot_addr: 0x%X, origin: (%d,%d), max_coords: (%d,%d), "
 		   "max_pressure: %d, max_height: %d, max_tilt: (%d,%d) "
 		   "project_name: (%s,%s), invert: (%d,%d,%d), fw_path: %s, "
-		   "ic_type: %d, %s virtual softkey, %s garage, support_dex:%d, dex_rate:%d, table_swap:%d\n",
+		   "ic_type: %d, %s virtual softkey, %s garage, support_dex:%d, "
+		   "dex_rate:%d, table_swap:%d, support_aot:%d\n",
 		   pdata->boot_addr, pdata->origin[0], pdata->origin[1],
 		   pdata->max_x, pdata->max_y, pdata->max_pressure,
 		   pdata->max_height, pdata->max_x_tilt, pdata->max_y_tilt,
@@ -2779,7 +2770,7 @@ static struct wacom_g5_platform_data *wacom_parse_dt(struct i2c_client *client)
 		   pdata->ic_type,
 		   pdata->use_virtual_softkey ? "enabled" : "disabled",
 		   pdata->use_garage ? "enabled" : "disabled",
-		   pdata->support_dex, pdata->dex_rate, pdata->table_swap);
+		   pdata->support_dex, pdata->dex_rate, pdata->table_swap, pdata->support_aot);
 
 	return pdata;
 }
@@ -2841,6 +2832,14 @@ static int wacom_i2c_probe(struct i2c_client *client,
 				  "failed to allocate input device pad\n");
 			return -ENOMEM;
 		}
+
+		wac_i2c->input_dev_virtual
+				= devm_input_allocate_device(&client->dev);
+		if (!wac_i2c->input_dev_virtual) {
+			input_err(true, &client->dev,
+				  "failed to allocate input device virtual\n");
+			return -ENOMEM;
+		}
 	}
 
 	/* using 2 slave address. one is normal mode, another is boot mode for
@@ -2864,7 +2863,7 @@ static int wacom_i2c_probe(struct i2c_client *client,
 	wac_i2c->fw_update_way = FW_NONE;
 	wac_i2c->fullscan_mode = false;
 	wac_i2c->wacom_noise_state = WACOM_NOISE_LOW;
-	wac_i2c->tsp_noise_mode = 0;
+	wac_i2c->tsp_noise_mode = EPEN_GLOBAL_SCAN_MODE;
 	wac_i2c->wac_feature = &wacom_feature_EMR;
 	wac_i2c->survey_mode = EPEN_SURVEY_MODE_NONE;
 	wac_i2c->function_result = EPEN_EVENT_PEN_OUT;
@@ -2898,6 +2897,9 @@ static int wacom_i2c_probe(struct i2c_client *client,
 		wac_i2c->input_dev_pad->name = "sec_e-pen-pad";
 		wacom_i2c_set_input_values(wac_i2c, wac_i2c->input_dev_pad,
 					   DEX_MODE_MOUSE);
+		wac_i2c->input_dev_virtual->name = "sec_virtual-e-pen";
+		wacom_i2c_set_input_values(wac_i2c, wac_i2c->input_dev_virtual,
+					   DEX_MODE_STYLUS);
 	}
 	wac_i2c->input_dev_pen = input;
 
@@ -2943,6 +2945,13 @@ static int wacom_i2c_probe(struct i2c_client *client,
 		if (ret) {
 			input_err(true, &client->dev,
 				  "failed to register input device pad\n");
+			goto err_register_input_dev;
+		}
+
+		ret = input_register_device(wac_i2c->input_dev_virtual);
+		if (ret) {
+			input_err(true, &client->dev,
+				  "failed to register input device virtual\n");
 			goto err_register_input_dev;
 		}
 	}
@@ -3046,20 +3055,19 @@ static int wacom_i2c_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(wacom_pm_ops, wacom_i2c_suspend, wacom_i2c_resume);
 #endif
 
-void wacom_i2c_shutdown(struct i2c_client *client)
+static void wacom_i2c_shutdown(struct i2c_client *client)
 {
 	struct wacom_i2c *wac_i2c = i2c_get_clientdata(client);
 
 	if (!wac_i2c)
 		return;
 
+	wacom_enable_irq(wac_i2c, false);
+	wacom_enable_pdct_irq(wac_i2c, false);
+
 	wacom_power(wac_i2c, false);
 
 	input_info(true, &wac_i2c->client->dev, "%s\n", __func__);
-
-	device_destroy(sec_class, wac_i2c->dev->devt);
-
-	wake_lock_destroy(&wac_i2c->wakelock);
 }
 
 static int wacom_i2c_remove(struct i2c_client *client)
@@ -3076,6 +3084,7 @@ static int wacom_i2c_remove(struct i2c_client *client)
 	wacom_power(wac_i2c, false);
 
 	wake_lock_destroy(&wac_i2c->fw_wakelock);
+	wake_lock_destroy(&wac_i2c->wakelock);
 	mutex_destroy(&wac_i2c->irq_lock);
 	mutex_destroy(&wac_i2c->update_lock);
 	mutex_destroy(&wac_i2c->lock);
@@ -3084,14 +3093,13 @@ static int wacom_i2c_remove(struct i2c_client *client)
 
 	i2c_unregister_device(wac_i2c->client_boot);
 
-	if (&wac_i2c->pdata->support_dex) {
-		if (wac_i2c->input_dev_pad)
-			input_unregister_device(wac_i2c->input_dev_pad);
+	if (wac_i2c->pdata->support_dex) {
+		input_unregister_device(wac_i2c->input_dev_pad);
+		input_unregister_device(wac_i2c->input_dev_virtual);
 		wac_i2c->input_dev = wac_i2c->input_dev_pen;
 	}
 
-	if (wac_i2c->input_dev)
-		input_unregister_device(wac_i2c->input_dev);
+	input_unregister_device(wac_i2c->input_dev);
 
 	return 0;
 }

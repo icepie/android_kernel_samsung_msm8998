@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016 TRUSTONIC LIMITED
+ * Copyright (c) 2015-2018 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -32,9 +32,9 @@
 #include "tlcTui.h"
 #include "mobicore_driver_api.h"
 
-uint32_t width;
-uint32_t height;
-uint32_t stride;
+u32 width;
+u32 height;
+u32 stride;
 
 #define WB_USER_ALLOC
 
@@ -52,23 +52,22 @@ static char *touchscreen_path =
 
 #ifdef SECURE_INPUT
 static struct tui_hal_ts_context {
-	struct device* dev;
-	atomic_t* st_enabled;
-	struct completion* st_irq_received;
+	struct device *dev;
+	atomic_t *st_enabled;
+	struct completion *st_irq_received;
 	int (*secure_get_irq)(struct device *dev);
-	ssize_t (*secure_touch_enable_store)(struct device *dev, \
-										 struct device_attribute *attr, \
-										 const char *buf, size_t count);
+	ssize_t (*secure_touch_enable_store)(struct device *dev,
+						struct device_attribute *attr,
+						const char *buf, size_t count);
 } ts_ctx;
 
-int register_tui_hal_ts(
-		struct device* dev, \
-		atomic_t* st_enabled, \
-		struct completion* st_irq_received, \
-		int (*secure_get_irq)(struct device *dev),
-		ssize_t (*secure_touch_enable_store)(struct device *dev, \
-											struct device_attribute *attr, \
-											const char *buf, size_t count)
+int register_tui_hal_ts(struct device *dev,
+			atomic_t *st_enabled,
+			struct completion *st_irq_received,
+			int (*secure_get_irq)(struct device *dev),
+			ssize_t (*secure_touch_enable_store)(struct device *dev,
+						struct device_attribute *attr,
+						const char *buf, size_t count)
 	)
 {
 	if (!ts_ctx.dev) {
@@ -78,17 +77,16 @@ int register_tui_hal_ts(
 		ts_ctx.secure_get_irq = secure_get_irq;
 		ts_ctx.secure_touch_enable_store = secure_touch_enable_store;
 		return 0;
-	} else {
-		pr_err("already registered in %s\n", __func__);
 	}
 
+	pr_err("already registered in %s\n", __func__);
 	return -1;
 }
 #endif
 DECLARE_COMPLETION(swd_completed);
 
-uint64_t g_ion_phys[MAX_BUFFER_NUMBER];
-uint32_t g_ion_size[MAX_BUFFER_NUMBER];
+u64 g_ion_phys[MAX_BUFFER_NUMBER];
+u32 g_ion_size[MAX_BUFFER_NUMBER];
 
 /**
  * hal_tui_alloc() - allocator for secure framebuffer and working buffer
@@ -114,11 +112,10 @@ uint32_t g_ion_size[MAX_BUFFER_NUMBER];
  * the physical address of the working buffer is at index 0 of the allocbuffer
  * table (allocbuffer[0].pa).
  */
-uint32_t hal_tui_alloc(struct tui_alloc_buffer_t *allocbuffer,
-		       size_t allocsize,
-		       uint32_t number)
+u32 hal_tui_alloc(struct tui_alloc_buffer_t *allocbuffer, size_t allocsize,
+		  u32 number)
 {
-	uint32_t i, ret = TUI_DCI_ERR_INTERNAL_ERROR;
+	u32 i, ret = TUI_DCI_ERR_INTERNAL_ERROR;
 	size_t aligned_alloc_size = 0;
 
 	/* align size to 1MB */
@@ -162,7 +159,7 @@ uint32_t hal_tui_alloc(struct tui_alloc_buffer_t *allocbuffer,
 	/* The ion_hanle pointer must be non-null */
 	if (!IS_ERR(ihandle)) {
 		ion_ret = ion_phys(g_iclnt, ihandle, &phys, &size);
-		if (0 != ion_ret) {
+		if (ion_ret) {
 			pr_info("ERROR %s:%d ion_phys failed (ret=%i)!\n",
 				__func__, __LINE__, ion_ret);
 			return TUI_DCI_ERR_INTERNAL_ERROR;
@@ -171,9 +168,9 @@ uint32_t hal_tui_alloc(struct tui_alloc_buffer_t *allocbuffer,
 		pr_debug("%s: phys=%p size=%zu\n",
 			 __func__, (void *)phys, size);
 		g_ion_phys[ION_PHYS_WORKING_BUFFER_IDX] =
-			(uint64_t)phys;
+			(u64)phys;
 		g_ion_size[ION_PHYS_WORKING_BUFFER_IDX] =
-			(uint32_t)size;
+			(u32)size;
 		pr_debug("%s: g_ion_phys[%i] = 0x%0llx (g_ion_size[%i]=%u)\n",
 			 __func__, ION_PHYS_WORKING_BUFFER_IDX,
 			 g_ion_phys[ION_PHYS_WORKING_BUFFER_IDX],
@@ -187,8 +184,10 @@ uint32_t hal_tui_alloc(struct tui_alloc_buffer_t *allocbuffer,
 		return TUI_DCI_ERR_INTERNAL_ERROR;
 	}
 
-	/* Alloc FBs in userland with dequeueBuffer, -1 is for the Working
-	 * buffer */
+	/*
+	 * Alloc FBs in userland with dequeueBuffer, -1 is for the Working
+	 * buffer
+	 */
 	ret = send_cmd_to_user(TLC_TUI_CMD_ALLOC_FB, number - 1,
 			       aligned_alloc_size);
 #else
@@ -196,7 +195,7 @@ uint32_t hal_tui_alloc(struct tui_alloc_buffer_t *allocbuffer,
 	ret = send_cmd_to_user(TLC_TUI_CMD_ALLOC_FB, number,
 			       aligned_alloc_size);
 #endif
-	if (TUI_DCI_OK != ret) {
+	if (ret != TUI_DCI_OK) {
 		/* Something failed during the FBs allocation in userland */
 		pr_info("ERROR %s:%d TLC_TUI_CMD_ALLOC_FB failed with (%d)",
 			__func__, __LINE__, ret);
@@ -232,18 +231,22 @@ void hal_tui_post_start(struct tlc_tui_response_t *rsp)
 	int ion_ret = 0, i = 0;
 	unsigned char idx = 0;
 
-	uint32_t num_of_buff = dci->cmd_nwd.payload.alloc_data.num_of_buff;
+	u32 num_of_buff = dci->cmd_nwd.payload.alloc_data.num_of_buff;
 
-	/* Before to retrieve the ION buffer info, check that the TuiService
+	/*
+	 * Before to retrieve the ION buffer info, check that the TuiService
 	 * client succeed to allocate the buffers. If not, it means ion_fd must
-	 * be invalid. */
-	if (TLC_TUI_OK != rsp->return_code) {
+	 * be invalid.
+	 */
+	if (rsp->return_code != TLC_TUI_OK) {
 		pr_debug("ERROR %s:%d  TLC_TUI_CMD_ALLOC_FB failed (ret=%u)!\n",
 			 __func__, __LINE__, rsp->return_code);
 		return;
 	}
-	/* Retrieve the framebuffers information (phys,size), -1 is for the
-	 * working buffer */
+	/*
+	 * Retrieve the framebuffers information (phys,size), -1 is for the
+	 * working buffer
+	 */
 #ifdef WB_USER_ALLOC
 	for (i = 0; i < num_of_buff; i++) {
 #else
@@ -253,8 +256,10 @@ void hal_tui_post_start(struct tlc_tui_response_t *rsp)
 			 __func__, i, rsp->ion_fd[i]);
 		/* Ensure that ion_fd is valid */
 		if (!rsp->ion_fd[i]) {
-			/* If one of the ion_fd is invalid, clean the g_ion_*
-			 * tables and exit this loop. */
+			/*
+			 * If one of the ion_fd is invalid, clean the g_ion_*
+			 * tables and exit this loop.
+			 */
 			pr_debug("ERROR %s:%d  invalid ion_fd[%i]=%i!\n",
 				 __func__, __LINE__, i, rsp->ion_fd[i]);
 			goto clean_up;
@@ -263,11 +268,13 @@ void hal_tui_post_start(struct tlc_tui_response_t *rsp)
 		ihandle = ion_import_dma_buf(g_iclnt, rsp->ion_fd[i]);
 		pr_debug("%s: ihandle=%p\n", __func__, ihandle);
 
-		/* Retrieve the physical address corresponding to the ION
-		 * handle */
+		/*
+		 * Retrieve the physical address corresponding to the ION
+		 * handle
+		 */
 		ion_ret = ion_phys(g_iclnt, ihandle, &ion_phys_addr,
 				   &ion_length);
-		if (0 != ion_ret) {
+		if (ion_ret) {
 			pr_debug("ERROR %s:%d ion_phys failed (ret=%i)!\n",
 				 __func__, __LINE__, ion_ret);
 		} else {
@@ -276,8 +283,8 @@ void hal_tui_post_start(struct tlc_tui_response_t *rsp)
 #else
 			idx = i + ION_PHYS_FRAME_BUFFER_IDX;
 #endif
-			g_ion_phys[idx] = (uint64_t)ion_phys_addr;
-			g_ion_size[idx] = (uint32_t)ion_length;
+			g_ion_phys[idx] = (u64)ion_phys_addr;
+			g_ion_size[idx] = (u32)ion_length;
 			pr_debug("%s: g_ion_phys[%d]=0x%0llX g_ion_size[%d]=%u\n",
 				 __func__, idx, g_ion_phys[idx], idx,
 				 g_ion_size[idx]);
@@ -310,7 +317,7 @@ void hal_tui_free(void)
 	/* Ask userland to clean and free previously allocated framebuffers */
 	int ret = send_cmd_to_user(TLC_TUI_CMD_FREE_FB, 0, 0);
 
-	if (TUI_DCI_OK != ret) {
+	if (ret != TUI_DCI_OK) {
 		/* Something failed during the FBs allocation in userland */
 		pr_info("ERROR %s:%d TLC_TUI_CMD_FREE_FB failed with (%d)",
 			__func__, __LINE__, ret);
@@ -339,7 +346,7 @@ static int is_synaptics(struct device *dev, const void *data)
 
 		pr_debug("kobj_path: %s\n", path);
 
-		if (0 == strcmp(path, touchscreen_path))
+		if (!strcmp(path, touchscreen_path))
 			found = 1;
 
 		kfree(path);
@@ -407,7 +414,7 @@ static bool notify_touch_event(void)
 	/* Signal the Driver */
 	result = mc_notify(get_session_handle());
 
-	if (MC_DRV_OK != result) {
+	if (result != MC_DRV_OK) {
 		pr_debug("ERROR %s: mc_notify failed: %d\n", __func__, result);
 		return false;
 	}
@@ -425,16 +432,19 @@ int forward_irq_thread_fn(void *data)
 
 	pr_info("from irq kthread secure touch IRQ\n");
 	while (1) {
+		int i;
+
 		pr_info("NWd waiting for TUI event\n");
 		/* wait for the touchscreen driver to notify a touch event */
 		wait_for_completion(&rmi4_data->st_irq_received);
 
-		if (0 == atomic_read(&rmi4_data->st_enabled))
+		if (!atomic_read(&rmi4_data->st_enabled))
 			do_exit(0);
 
-		int i;
-		/* TODO wait condition here should be
-		 * 1==synaptics_secure_get_irq() */
+		/*
+		 * TODO wait condition here should be
+		 * 1==synaptics_secure_get_irq()
+		 */
 		while ((i = synaptics_secure_get_irq(dev))) {
 			pr_info("NWd got an event to fwd to Swd\n");
 
@@ -449,7 +459,8 @@ int forward_irq_thread_fn(void *data)
 			}
 
 			pr_info("NWd: i is %d\n", i);
-			/* forward the notification to the SWd and wait for the
+			/*
+			 * forward the notification to the SWd and wait for the
 			 * answer
 			 */
 			reinit_completion(&swd_completed);
@@ -466,7 +477,7 @@ int forward_irq_thread_fn(void *data)
 #endif
 
 #ifdef SECURE_INPUT
-int forward_irq_thread_fn(void* data)
+int forward_irq_thread_fn(void *data)
 {
 	pr_info("from irq kthread secure touch IRQ\n");
 	while (1) {
@@ -474,7 +485,7 @@ int forward_irq_thread_fn(void* data)
 		/* wait for the touchscreen driver to notify a touch event */
 		wait_for_completion(ts_ctx.st_irq_received);
 
-		if (0 == atomic_read(ts_ctx.st_enabled)) {
+		if (atomic_read(ts_ctx.st_enabled) == 0) {
 			pr_info("exit due to secure_touch is disabled\n");
 			do_exit(0);
 		}
@@ -485,11 +496,10 @@ int forward_irq_thread_fn(void* data)
 			pr_info("NWd got an event to fwd to Swd\n");
 
 			if (i < 0) {
-				pr_err("secure_get_irq returned %d\n",
-				       i);
+				pr_err("secure_get_irq returned %d\n", i);
 				if (-EBADF == i)
 					do_exit(0);
-				else if(-EINVAL == i)
+				else if (-EINVAL == i)
 					tlc_notify_event(1);
 				break;
 			}
@@ -519,7 +529,7 @@ int forward_irq_thread_fn(void* data)
  *
  * Return: must return 0 on success, non-zero otherwise.
  */
-uint32_t hal_tui_deactivate(void)
+u32 hal_tui_deactivate(void)
 {
 #ifdef SECURE_INPUT_TT
 	struct device *dev;
@@ -544,8 +554,10 @@ uint32_t hal_tui_deactivate(void)
 		return TUI_DCI_ERR_UNKNOWN_CMD;
 	}
 
-	/* Take a reference on the clocks to prevent the i2c bus from
-	 * being clock gated */
+	/*
+	 * Take a reference on the clocks to prevent the i2c bus from
+	 * being clock gated
+	 */
 	synaptics_clk_control(dev, true);
 #endif
 
@@ -575,7 +587,7 @@ uint32_t hal_tui_deactivate(void)
  *
  * Return: must return 0 on success, non-zero otherwise.
  */
-uint32_t hal_tui_activate(void)
+u32 hal_tui_activate(void)
 {
 #ifdef SECURE_INPUT_TT
 	struct device *dev = find_synaptic_driver();
@@ -599,8 +611,7 @@ uint32_t hal_tui_activate(void)
 #ifdef SECURE_INPUT
 	msleep(300);
 	/* Disable touchscreen secure mode */
-	ts_ctx.secure_touch_enable_store(ts_ctx.dev, NULL, "0",
-							  strlen("0")+1);	
+	ts_ctx.secure_touch_enable_store(ts_ctx.dev, NULL, "0", strlen("0")+1);
 	pr_debug("%s\n", __func__);
 	/* No need to kill the kernel thread.  The kernel thread is
 	 * responsible for killing itself when secure touch is disabled.
@@ -625,7 +636,7 @@ uint32_t hal_tui_activate(void)
  * Return: must return 0 on success, or non-zero on error. If the function
  * returns an error, the module initialization will fail.
  */
-uint32_t hal_tui_init(void)
+u32 hal_tui_init(void)
 {
 	return TUI_DCI_OK;
 }
@@ -643,7 +654,7 @@ void hal_tui_exit(void)
 	/* delete memory pool if any */
 }
 
-static unsigned int get_buffer_id(uint64_t phys_addr)
+static unsigned int get_buffer_id(u64 phys_addr)
 {
 	unsigned int i;
 	/* Find ion handle from phys addr */
@@ -658,11 +669,10 @@ static unsigned int get_buffer_id(uint64_t phys_addr)
 #endif
 }
 
-uint32_t hal_tui_process_cmd(struct tui_hal_cmd_t *cmd,
-			     struct tui_hal_rsp_t *rsp)
+u32 hal_tui_process_cmd(struct tui_hal_cmd_t *cmd, struct tui_hal_rsp_t *rsp)
 {
 	struct tui_hal_cmd_t swd_cmd = {0};
-	uint32_t ret = TUI_DCI_ERR_INTERNAL_ERROR;
+	u32 ret = TUI_DCI_ERR_INTERNAL_ERROR;
 
 	pr_debug("%s\n", __func__);
 	unsigned int buffer_id = -1;
@@ -677,14 +687,11 @@ uint32_t hal_tui_process_cmd(struct tui_hal_cmd_t *cmd,
 			buffer_id = get_buffer_id(swd_cmd.data[0]);
 			pr_debug("%s: phys addr is at index %d\n",
 				 __func__, buffer_id);
-			ret =
-			send_cmd_to_user(TLC_TUI_CMD_QUEUE,
-					 buffer_id,
-					 0);
-			if (TUI_DCI_OK == ret) {
-					rsp->data[0] = width;
-					rsp->data[1] = height;
-					rsp->data[2] = stride;
+			ret = send_cmd_to_user(TLC_TUI_CMD_QUEUE, buffer_id, 0);
+			if (ret == TUI_DCI_OK) {
+				rsp->data[0] = width;
+				rsp->data[1] = height;
+				rsp->data[2] = stride;
 			}
 		break;
 
@@ -712,7 +719,7 @@ uint32_t hal_tui_process_cmd(struct tui_hal_cmd_t *cmd,
 			ret = send_cmd_to_user(TLC_TUI_CMD_GET_RESOLUTION,
 					       0,
 					       0);
-			if (TUI_DCI_OK == ret) {
+			if (ret == TUI_DCI_OK) {
 				rsp->data[0] = g_user_rsp.screen_metrics[0];
 				rsp->data[1] = g_user_rsp.screen_metrics[1];
 			}
@@ -739,7 +746,7 @@ uint32_t hal_tui_process_cmd(struct tui_hal_cmd_t *cmd,
 	return ret;
 }
 
-uint32_t hal_tui_notif(void)
+u32 hal_tui_notif(void)
 {
 	complete(&swd_completed);
 	return 0;

@@ -1,9 +1,6 @@
 /*
  * Copyright (c) 2011, 2013-2017 The Linux Foundation. All rights reserved.
  *
- * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
- *
- *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all
@@ -17,12 +14,6 @@
  * PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
  * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
- */
-
-/*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
  */
 
 #include <qdf_nbuf.h>           /* qdf_nbuf_t */
@@ -231,10 +222,21 @@ ol_rx_pn_check_base(struct ol_txrx_vdev_t *vdev,
 			 * of the PN.
 			 * This is more efficient than doing a conditional
 			 * branch to copy only the relevant portion.
+
+			 * IWNCOM AP will send 1 packet with old PN after USK
+			 * rekey, don't update last_pn when recv the packet, or
+			 * PN check failed for later packets
 			 */
-			last_pn->pn128[0] = new_pn.pn128[0];
-			last_pn->pn128[1] = new_pn.pn128[1];
-			OL_RX_PN_TRACE_ADD(pdev, peer, tid, rx_desc);
+			if ((peer->security[index].sec_type
+				== htt_sec_type_wapi) &&
+			    (peer->tids_rekey_flag[tid] == 1) &&
+			    (index == txrx_sec_ucast)) {
+				peer->tids_rekey_flag[tid] = 0;
+			} else {
+				last_pn->pn128[0] = new_pn.pn128[0];
+				last_pn->pn128[1] = new_pn.pn128[1];
+				OL_RX_PN_TRACE_ADD(pdev, peer, tid, rx_desc);
+			}
 		}
 
 		mpdu = next_mpdu;

@@ -266,6 +266,12 @@ static int fec_read_bufs(struct dm_verity *v, struct dm_verity_io *io,
 			continue;
 		}
 
+		/* assumes block0's first 1024 bytes were all zeroes when encoding.*/
+		if(block == 0 && bufio == v->fec->data_bufio){
+			memset(bbuf, 0, 1024);
+			goto skip_erasure;
+		}
+
 		/* locate erasures if the block is on the data device */
 		if (bufio == v->fec->data_bufio &&
 		    verity_hash_for_block(v, io, block, want_digest,
@@ -282,7 +288,7 @@ static int fec_read_bufs(struct dm_verity *v, struct dm_verity_io *io,
 			    fec_is_erasure(v, io, want_digest, bbuf))
 				fio->erasures[(*neras)++] = i;
 		}
-
+skip_erasure :
 		/*
 		 * deinterleave and copy the bytes that fit into bufs,
 		 * starting from block_offset
@@ -439,6 +445,8 @@ int verity_fec_decode(struct dm_verity *v, struct dm_verity_io *io,
 	struct dm_verity_fec_io *fio = fec_io(io);
 	u64 offset, res, rsb;
 
+	if (block == 0)
+		return -1;
 	if (!verity_fec_is_enabled(v))
 		return -EOPNOTSUPP;
 

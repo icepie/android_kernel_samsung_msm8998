@@ -96,6 +96,9 @@ struct msm_ois_ctrl_t {
     bool is_shift_enabled;
     bool is_force_update;
     bool is_servo_on;
+    uint16_t ois_mode;
+    uint8_t Xcenter[2];
+    uint8_t Ycenter[2];
 };
 
 enum msm_ois_modes {
@@ -108,6 +111,7 @@ enum msm_ois_modes {
     OIS_MODE_SINE_Y    = 7,
     OIS_MODE_CENTERING = 8,
     OIS_MODE_ON_VDIS   = 9,
+    OIS_MODE_FIXED     = 10,
     OIS_MODE_MAX,
 };
 

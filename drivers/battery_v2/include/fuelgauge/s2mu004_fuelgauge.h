@@ -123,6 +123,9 @@ struct s2mu004_fuelgauge_platform_data {
 	char *fuelgauge_name;
 
 	bool repeated_fuelalert;
+
+	int jig_irq;
+	int jig_low_active;
 };
 
 #define s2mu004_fuelgauge_platform_data_t \
@@ -179,6 +182,7 @@ struct s2mu004_fuelgauge_data {
 
 		unsigned int pre_soc;
 		int fg_irq;
+		int jig_irq;
 		int diff_soc;
 		int target_ocv;
 		int vm_soc;

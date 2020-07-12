@@ -61,6 +61,15 @@ int adsp_unicast(void *param, int param_size, int type, u32 portid, int flags)
 	void *msg;
 	int ret = -1;
 
+#ifdef CONFIG_SLPI_MOTOR
+	if (((type == NETLINK_MESSAGE_ACCEL_MOTOR_ON)
+		|| (type == NETLINK_MESSAGE_ACCEL_MOTOR_OFF))
+		&& (data->sysfs_created[ADSP_FACTORY_ACCEL] == false)) {
+		pr_info("[FACTORY] type:%d accel is not attached\n",
+			type);
+		return ret;
+	}
+#endif
 	pr_info("[FACTORY] %s type:%d, param_size:%d\n", __func__,
 		type, param_size);
 	skb = nlmsg_new(param_size, GFP_KERNEL);
@@ -142,9 +151,9 @@ int adsp_factory_unregister(unsigned int type)
 		sensors_unregister(data->sensor_device[type],
 			data->sensor_attr[type]);
 		data->sysfs_created[type] = false;
-	} else
-		pr_info("[FACTORY] %s: skip sensors_unregister for type %u\n",
-			__func__, type);
+	} else {
+		pr_info("[FACTORY] %s: skip type %u\n", __func__, type);
+	}
 	return 0;
 }
 
@@ -486,6 +495,7 @@ static int __init factory_adsp_init(void)
 		mutex_init(&data->raw_stream_lock[i]);
 		data->sysfs_created[i] = false;
 	}
+	mutex_init(&data->remove_sysfs_mutex);
 
 	pr_info("[FACTORY] %s: Timer Init\n", __func__);
 	return 0;
@@ -499,6 +509,7 @@ static void __exit factory_adsp_exit(void)
 		del_timer(&data->command_timer[i]);
 		mutex_destroy(&data->raw_stream_lock[i]);
 	}
+	mutex_destroy(&data->remove_sysfs_mutex);
 	pr_info("[FACTORY] %s\n", __func__);
 }
 

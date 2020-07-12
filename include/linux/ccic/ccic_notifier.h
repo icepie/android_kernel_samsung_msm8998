@@ -50,6 +50,7 @@ typedef enum {
 	CCIC_NOTIFY_ID_USB,
 	CCIC_NOTIFY_ID_POWER_STATUS,
 	CCIC_NOTIFY_ID_WATER,
+	CCIC_NOTIFY_ID_DRY,
 	CCIC_NOTIFY_ID_VCONN,
 	CCIC_NOTIFY_ID_DP_CONNECT,
 	CCIC_NOTIFY_ID_DP_HPD,
@@ -60,6 +61,7 @@ typedef enum {
 #ifdef CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET
 	CCIC_NOTIFY_ID_EARJACK,
 #endif
+	CCIC_NOTIFY_ID_ROLE_SWAP_FAIL,
 } ccic_notifier_id_t;
 
 typedef struct
@@ -181,8 +183,14 @@ extern int ccic_notifier_register(struct notifier_block *nb,
 		notifier_fn_t notifier, ccic_notifier_device_t listener);
 extern int ccic_notifier_unregister(struct notifier_block *nb);
 
+#ifdef CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET
+#define CCIC_NOTI_ID_NUM	(16)
+#else
+#define CCIC_NOTI_ID_NUM	(15)
+#endif
+
 extern char CCIC_NOTI_DEST_Print[9][10];
-extern char CCIC_NOTI_ID_Print[13][20];
+extern char CCIC_NOTI_ID_Print[CCIC_NOTI_ID_NUM][20];
 extern char CCIC_NOTI_RID_Print[8][15];
 extern char CCIC_NOTI_USB_STATUS_Print[5][20];
 

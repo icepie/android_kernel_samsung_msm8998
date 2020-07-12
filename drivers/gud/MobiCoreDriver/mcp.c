@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 TRUSTONIC LIMITED
+ * Copyright (c) 2013-2018 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -62,7 +62,7 @@ static struct {
 	/* Wait timeout */
 	u32			timeout;
 	/* Log of last MCP commands */
-#define MCP_LOG_SIZE 256
+#define MCP_LOG_SIZE 1024
 	struct mutex		last_mcp_cmds_mutex; /* Log protection */
 	struct mcp_command_info {
 		u64			cpu_clk;	/* Kernel time */
@@ -253,9 +253,9 @@ static inline int wait_mcp_notification(void)
 		int ret;
 
 		/*
-		* Wait non-interruptible to keep MCP synchronised even if caller
-		* is interrupted by signal.
-		*/
+		 * Wait non-interruptible to keep MCP synchronised even if
+		 * caller is interrupted by signal.
+		 */
 		ret = wait_for_completion_timeout(&l_ctx.complete, timeout);
 		if (ret > 0)
 			return 0;

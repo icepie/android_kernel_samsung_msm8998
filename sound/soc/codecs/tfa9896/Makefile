@@ -1,9 +1,14 @@
 # NXP audio amplifier - TFA9896
 
 TFA_VERSION              =tfa9896
-#TFADSP_32BITS            =0
+#TFADSP_32BITS           =0
 #TFADSP_DSP_MSG_APR_PACKET_STRATEGY=0
 TFADSP_DSP_BUFFER_POOL   =1
+#TFA_ACTIVATED_ASYNCHRONOUSLY=0
+TFA_USE_PSTREAM_ONLY     =1
+#TFA_USE_DEVICE_SPECIFIC_CONTROL=0
+#TFA_PROFILE_ON_DEVICE   =0
+TFA_NO_SND_FORMAT_CHECK  =0
 TFA_SRC_DIR              =sound/soc/codecs/$(TFA_VERSION)
 TFA98XX_FLAGS           := -DUSE_TFA9896
 
@@ -20,6 +25,21 @@ ccflags-y               += -Werror
 #endif
 ifdef TFADSP_DSP_BUFFER_POOL
 ccflags-y               += -DTFADSP_DSP_BUFFER_POOL
+endif
+ifdef TFA_ACTIVATED_ASYNCHRONOUSLY
+ccflags-y               += -DTFA_ACTIVATED_ASYNCHRONOUSLY
+endif
+ifdef TFA_USE_PSTREAM_ONLY
+ccflags-y               += -DTFA_USE_PSTREAM_ONLY
+endif
+ifdef TFA_USE_DEVICE_SPECIFIC_CONTROL
+ccflags-y               += -DTFA_USE_DEVICE_SPECIFIC_CONTROL
+endif
+ifdef TFA_PROFILE_ON_DEVICE
+ccflags-y               += -DTFA_PROFILE_ON_DEVICE
+endif
+ifdef TFA_NO_SND_FORMAT_CHECK
+ccflags-y               += -DTFA_NO_SND_FORMAT_CHECK
 endif
 
 # objs

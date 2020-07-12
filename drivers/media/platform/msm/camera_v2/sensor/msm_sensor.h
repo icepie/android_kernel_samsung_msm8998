@@ -181,4 +181,8 @@ long msm_sensor_subdev_fops_ioctl(struct file *file,
 	unsigned int cmd,
 	unsigned long arg);
 #endif
+#if defined(CONFIG_CAMERA_IRIS)
+extern void ir_led_on(int i);
+extern void ir_led_off(void);
+#endif
 #endif

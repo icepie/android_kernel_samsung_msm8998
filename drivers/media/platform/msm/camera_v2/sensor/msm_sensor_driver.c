@@ -394,6 +394,55 @@ static int32_t msm_sensor_fill_ois_subdevid_by_name(
 	return rc;
 }
 
+#if defined(CONFIG_SAMSUNG_APERTURE)
+static int32_t msm_sensor_fill_aperture_subdevid_by_name(
+				struct msm_sensor_ctrl_t *s_ctrl)
+{
+	int32_t rc = 0;
+	struct device_node *src_node = NULL;
+	uint32_t val = 0, aperture_name_len;
+	int32_t *aperture_subdev_id;
+	struct  msm_sensor_info_t *sensor_info;
+	struct device_node *of_node = s_ctrl->of_node;
+
+	if (!s_ctrl->sensordata->aperture_name || !of_node)
+		return -EINVAL;
+
+	aperture_name_len = strlen(s_ctrl->sensordata->aperture_name);
+	if (aperture_name_len >= MAX_SENSOR_NAME)
+		return -EINVAL;
+
+	sensor_info = s_ctrl->sensordata->sensor_info;
+	aperture_subdev_id = &sensor_info->subdev_id[SUB_MODULE_APERTURE];
+	/*
+	 * string for ois name is valid, set sudev id to -1
+	 * and try to found new id
+	 */
+	*aperture_subdev_id = -1;
+
+	if (0 == aperture_name_len)
+		return 0;
+
+	src_node = of_parse_phandle(of_node, "qcom,aperture-src", 0);
+	if (!src_node) {
+		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
+	} else {
+		rc = of_property_read_u32(src_node, "cell-index", &val);
+		CDBG("%s qcom,aperture cell index %d, rc %d\n", __func__,
+			val, rc);
+		if (rc < 0) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			return -EINVAL;
+		}
+		*aperture_subdev_id = val;
+		of_node_put(src_node);
+		src_node = NULL;
+	}
+
+	return rc;
+}
+#endif
+
 static int32_t msm_sensor_fill_slave_info_init_params(
 	struct msm_camera_sensor_slave_info *slave_info,
 	struct msm_sensor_info_t *sensor_info)
@@ -756,7 +805,10 @@ int32_t msm_sensor_driver_probe(void *setting,
 
 		strlcpy(slave_info->flash_name, slave_info32->flash_name,
 			sizeof(slave_info->flash_name));
-
+#if defined(CONFIG_SAMSUNG_APERTURE)
+        strlcpy(slave_info->aperture_name, slave_info32->aperture_name,
+            sizeof(slave_info->aperture_name));
+#endif
 		slave_info->addr_type = slave_info32->addr_type;
 		slave_info->camera_id = slave_info32->camera_id;
 
@@ -944,6 +996,9 @@ CSID_TG:
 	s_ctrl->sensordata->actuator_name = slave_info->actuator_name;
 	s_ctrl->sensordata->ois_name = slave_info->ois_name;
 	s_ctrl->sensordata->flash_name = slave_info->flash_name;
+#if defined(CONFIG_SAMSUNG_APERTURE)
+	s_ctrl->sensordata->aperture_name = slave_info->aperture_name;
+#endif
 	/*
 	 * Update eeporm subdevice Id by input eeprom name
 	 */
@@ -966,7 +1021,13 @@ CSID_TG:
 		pr_err("%s failed %d\n", __func__, __LINE__);
 		goto free_camera_info;
 	}
-
+#if defined(CONFIG_SAMSUNG_APERTURE)
+	rc = msm_sensor_fill_aperture_subdevid_by_name(s_ctrl);
+	if (rc < 0) {
+		pr_err("%s failed %d\n", __func__, __LINE__);
+		goto free_camera_info;
+	}
+#endif
 	rc = msm_sensor_fill_flash_subdevid_by_name(s_ctrl);
 	if (rc < 0) {
 		pr_err("%s failed %d\n", __func__, __LINE__);

@@ -36,10 +36,12 @@
 #include <linux/spinlock.h>
 #include <linux/uaccess.h>
 #include <linux/proc_fs.h>
+#include <linux/freezer.h>
 #include <linux/qcom/sec_debug.h>
 #include <linux/qcom/sec_debug_summary.h>
 //#include <mach/msm_iomap.h>
 #include <linux/of_address.h>
+#include <linux/kernel_stat.h>
 #ifdef CONFIG_SEC_DEBUG_LOW_LOG
 #include <linux/seq_file.h>
 #include <linux/fcntl.h>
@@ -90,11 +92,24 @@
 #define _TZ_DUMP_SECURITY_ALLOWS_MEM_DUMP_ID _TZ_SYSCALL_CREATE_SMC_ID(_TZ_OWNER_SIP, _TZ_SVC_DUMP, 0x10) 
 #define _TZ_DUMP_SECURITY_ALLOWS_MEM_DUMP_ID_PARAM_ID 0 
 
+#ifndef arch_irq_stat_cpu
+#define arch_irq_stat_cpu(cpu) 0
+#endif
+#ifndef arch_irq_stat
+#define arch_irq_stat() 0
+#endif
+#ifndef arch_idle_time
+#define arch_idle_time(cpu) 0
+#endif
+
+#define cputime64_add(__a, __b)		((__a) + (__b))
+
 enum sec_debug_upload_cause_t {
 	UPLOAD_CAUSE_INIT = 0xCAFEBABE,
 	UPLOAD_CAUSE_KERNEL_PANIC = 0x000000C8,
 	UPLOAD_CAUSE_POWER_LONG_PRESS = 0x00000085,
 	UPLOAD_CAUSE_FORCED_UPLOAD = 0x00000022,
+	UPLOAD_CAUSE_USER_FORCED_UPLOAD = 0x00009890,
 	UPLOAD_CAUSE_CP_ERROR_FATAL = 0x000000CC,
 	UPLOAD_CAUSE_MDM_ERROR_FATAL = 0x000000EE,
 	UPLOAD_CAUSE_USER_FAULT = 0x0000002F,
@@ -164,6 +179,20 @@ module_param_named(runtime_debug_val, runtime_debug_val, uint, 0644);
 module_param_named(rp_enabled, rp_enabled, uint, 0644);
 #ifdef CONFIG_SEC_SSR_DEBUG_LEVEL_CHK
 module_param_named(enable_cp_debug, enable_cp_debug, uint, 0644);
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_PWDT // checking platform watchdog
+static unsigned long pwdt_start_ms = 0;
+module_param_named(pwdt_start_ms, pwdt_start_ms, ulong, 0644);
+
+static unsigned long pwdt_end_ms = 0;
+module_param_named(pwdt_end_ms, pwdt_end_ms, ulong, 0644);
+
+static unsigned int pwdt_pid = 0;
+module_param_named(pwdt_pid, pwdt_pid, uint, 0644);
+
+static unsigned long pwdt_sync_cnt = 0;
+module_param_named(pwdt_sync_cnt, pwdt_sync_cnt, ulong, 0644);
 #endif
 
 module_param_named(pm8941_rev, pm8941_rev, uint, 0644);
@@ -269,6 +298,7 @@ static int simulate_secure_wdog_bite(void)
 						  SCM_SVC_SEC_WDOG_TRIG), &desc);
 	/* if we hit, scm_call has failed */
 	pr_emerg("simulation of secure watch dog bite failed\n");
+	simulate_apps_wdog_bite();
 	return ret;
 }
 #else
@@ -635,9 +665,9 @@ static ssize_t show_recovery_cause(struct device *dev,
 	char recovery_cause[256];
 
 	sec_get_param(param_index_reboot_recovery_cause, recovery_cause);
-	snprintf(buf, sizeof(recovery_cause), "%s", recovery_cause);
 	pr_info("%s: %s\n", __func__, recovery_cause);
-	return strlen(buf);
+
+	return scnprintf(buf, sizeof(recovery_cause), "%s", recovery_cause);
 }
 
 static ssize_t store_recovery_cause(struct device *dev,
@@ -647,12 +677,12 @@ static ssize_t store_recovery_cause(struct device *dev,
 
 	if (strlen(buf) > sizeof(recovery_cause)) {
 		pr_err("%s: input buffer length is out of range.\n", __func__);
-		return count;
+		return -EINVAL;
 	}
 	snprintf(recovery_cause, sizeof(recovery_cause), "%s:%d ", current->comm, task_pid_nr(current));
 	if (strlen(recovery_cause) + strlen(buf) >= sizeof(recovery_cause)) {
 		pr_err("%s: input buffer length is out of range.\n", __func__);
-		return count;
+		return -EINVAL;
 	}
 	strncat(recovery_cause, buf, strlen(buf));
 	sec_set_param(param_index_reboot_recovery_cause, recovery_cause);
@@ -663,7 +693,212 @@ static ssize_t store_recovery_cause(struct device *dev,
 
 static DEVICE_ATTR(recovery_cause, 0660, show_recovery_cause, store_recovery_cause);
 
+static struct device *sec_debug_dev;
+
+static int __init sec_debug_recovery_reason_init(void)
+{
+	int ret;
+
+	/* create sysfs for reboot_recovery_cause */
+	sec_debug_dev = device_create(sec_class, NULL, 0, NULL, "sec_debug");
+	if (IS_ERR(sec_debug_dev)) {
+		pr_info("%s: Failed to create device for sec_debug\n", __func__);
+		return PTR_ERR(sec_debug_dev);
+	}
+
+	ret = device_create_file(sec_debug_dev, &dev_attr_recovery_cause);
+	if (ret) {
+		pr_err("%s: Failed to create sysfs for sec_debug\n", __func__);
+		return ret;
+	}
+
+	return 0;
+}
 #endif
+
+void dump_one_task_info(struct task_struct *tsk, bool isMain)
+{
+	char stat_array[3] = {'R', 'S', 'D'};
+	char stat_ch;
+//	char *ptr_thread_info = tsk->stack;
+	stat_ch = tsk->state <= TASK_UNINTERRUPTIBLE ?
+	stat_array[tsk->state] : '?';
+	printk(KERN_INFO "%8d  %8d  %8d  %16llu  %c (%d)  %lx  %c %s\n",
+		tsk->pid, (int)(tsk->utime), (int)(tsk->stime),
+		tsk->se.exec_start, stat_ch, (int)(tsk->state),
+//		*(int *)(ptr_thread_info + GAFINFO.thread_info_struct_cpu),
+		 (unsigned long)tsk, isMain ? '*' : ' ', tsk->comm);
+	if (tsk->state == TASK_RUNNING || tsk->state == TASK_UNINTERRUPTIBLE)
+		show_stack(tsk, NULL);
+}
+
+void dump_all_task_info(void)
+{
+	struct task_struct *frst_tsk;
+	struct task_struct *curr_tsk;
+	struct task_struct *frst_thr;
+	struct task_struct *curr_thr;
+
+	printk(KERN_INFO "\n");
+	printk(KERN_INFO " current proc : %d %s\n", current->pid,
+	current->comm);
+	printk(KERN_INFO " ----------------------------------------------\n");
+	printk(KERN_INFO "     pid     uTime     sTime          exec(ns)"
+	" stat     cpu     task_struct\n");
+	printk(KERN_INFO " ----------------------------------------------\n");
+
+	/*processes   */
+	frst_tsk = &init_task;
+	curr_tsk = frst_tsk;
+
+	read_lock(&tasklist_lock);
+	while (curr_tsk != NULL) {
+		dump_one_task_info(curr_tsk,  true);
+		/*threads*/
+		if (curr_tsk->thread_group.next != NULL) {
+			frst_thr = container_of(curr_tsk->thread_group.next,
+			struct task_struct, thread_group);
+
+			curr_thr = frst_thr;
+
+			if (frst_thr != curr_tsk) {
+				while (curr_thr != NULL)  {
+					dump_one_task_info(curr_thr, false);
+					curr_thr = container_of(
+					curr_thr->thread_group.next,
+					struct task_struct, thread_group);
+
+					if (curr_thr == curr_tsk)
+						break;
+				}
+			}
+		}
+		curr_tsk = container_of(curr_tsk->tasks.next,
+		struct task_struct, tasks);
+
+		if (curr_tsk == frst_tsk)
+			break;
+	}
+	read_unlock(&tasklist_lock);
+
+	printk(KERN_INFO " ---------------------------------------------------"
+	"--------------------------------\n");
+}
+
+void dump_cpu_stat(void)
+{
+	int i, j;
+	unsigned long jif;
+	cputime64_t user, nice, system, idle, iowait, irq, softirq, steal;
+	cputime64_t guest, guest_nice;
+	u64 sum = 0;
+	u64 sum_softirq = 0;
+	unsigned int per_softirq_sums[NR_SOFTIRQS] = {0};
+	struct timespec boottime;
+	unsigned int per_irq_sum;
+
+	user = nice = system = idle = iowait =
+	irq = softirq = steal = 0;
+	guest = guest_nice = 0;
+	getboottime(&boottime);
+	jif = boottime.tv_sec;
+	for_each_possible_cpu(i) {
+		user = cputime64_add(user,
+				kcpustat_cpu(i).cpustat[CPUTIME_USER]);
+		nice = cputime64_add(nice,
+				kcpustat_cpu(i).cpustat[CPUTIME_NICE]);
+		system = cputime64_add(system,
+				kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM]);
+		idle = cputime64_add(idle,
+				kcpustat_cpu(i).cpustat[CPUTIME_IDLE]);
+		idle = cputime64_add(idle, arch_idle_time(i));
+		iowait = cputime64_add(iowait,
+				kcpustat_cpu(i).cpustat[CPUTIME_IOWAIT]);
+		irq = cputime64_add(irq,
+				kcpustat_cpu(i).cpustat[CPUTIME_IRQ]);
+		softirq = cputime64_add(softirq,
+				kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ]);
+		for_each_irq_nr(j) {
+			sum += kstat_irqs_cpu(j, i);
+		}
+		sum += arch_irq_stat_cpu(i);
+		for (j = 0; j < NR_SOFTIRQS; j++) {
+			unsigned int softirq_stat = kstat_softirqs_cpu(j, i);
+
+			per_softirq_sums[j] += softirq_stat;
+			sum_softirq += softirq_stat;
+		}
+	}
+	sum += arch_irq_stat();
+	printk(KERN_INFO "\n");
+	printk(KERN_INFO "cpuuser:%llu  nice:%llu  system:%llu  idle:%llu"
+	"iowait:%llu irq:%llu softirq:%llu %llu %llu"
+	"%llu\n",
+	(unsigned long long)cputime64_to_clock_t(user),
+	(unsigned long long)cputime64_to_clock_t(nice),
+	(unsigned long long)cputime64_to_clock_t(system),
+	(unsigned long long)cputime64_to_clock_t(idle),
+	(unsigned long long)cputime64_to_clock_t(iowait),
+	(unsigned long long)cputime64_to_clock_t(irq),
+	(unsigned long long)cputime64_to_clock_t(softirq),
+	(unsigned long long)0,
+	(unsigned long long)0,
+	(unsigned long long)0);
+	printk(KERN_INFO " ---------------------------------------------------"
+	"--------------------------------\n");
+	for_each_online_cpu(i) {
+		/* Copy values here to work around gcc-2.95.3, gcc-2.96 */
+		user = kcpustat_cpu(i).cpustat[CPUTIME_USER];
+		nice = kcpustat_cpu(i).cpustat[CPUTIME_NICE];
+		system = kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
+		idle = kcpustat_cpu(i).cpustat[CPUTIME_IDLE];
+		idle = cputime64_add(idle, arch_idle_time(i));
+		iowait = kcpustat_cpu(i).cpustat[CPUTIME_IOWAIT];
+		irq = kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
+		softirq = kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ];
+		printk(KERN_INFO " cpu%d user:%llu nice:%llu system:%llu"
+		"idle:%llu iowait:%llu  irq:%llu softirq:%llu %llu %llu "
+		"%llu\n",
+		i,
+		(unsigned long long)cputime64_to_clock_t(user),
+		(unsigned long long)cputime64_to_clock_t(nice),
+		(unsigned long long)cputime64_to_clock_t(system),
+		(unsigned long long)cputime64_to_clock_t(idle),
+		(unsigned long long)cputime64_to_clock_t(iowait),
+		(unsigned long long)cputime64_to_clock_t(irq),
+		(unsigned long long)cputime64_to_clock_t(softirq),
+		(unsigned long long)0,
+		(unsigned long long)0,
+		(unsigned long long)0);
+	}
+	printk(KERN_INFO " ----------------------------------------------"
+	"------\n");
+	printk(KERN_INFO "\n");
+	printk(KERN_INFO " irq : %llu", (unsigned long long)sum);
+	printk(KERN_INFO " ----------------------------------------------"
+	"------\n");
+	/* sum again ? it could be updated? */
+	for_each_irq_nr(j) {
+		per_irq_sum = 0;
+		for_each_possible_cpu(i)
+		per_irq_sum += kstat_irqs_cpu(j, i);
+		if (per_irq_sum)
+			printk(KERN_INFO " irq-%d : %u\n", j, per_irq_sum);
+	}
+	printk(KERN_INFO " ----------------------------------------------"
+	"-------------------------------------\n");
+	printk(KERN_INFO "\n");
+	printk(KERN_INFO " softirq : %llu", (unsigned long long)sum_softirq);
+	printk(KERN_INFO " ----------------------------------------------"
+	"-------------------------------------\n");
+	for (i = 0; i < NR_SOFTIRQS; i++)
+		if (per_softirq_sums[i])
+			printk(KERN_INFO " softirq-%d : %u", i,
+			 per_softirq_sums[i]);
+	printk(KERN_INFO " ----------------------------------------------"
+	"-------------------------------------\n");
+	return;
+}
 
 /* for sec debug level */
 static int __init sec_debug_level(char *str)
@@ -705,9 +940,11 @@ static int sec_debug_normal_reboot_handler(struct notifier_block *nb,
 
 	if (p != NULL) {
 		if ((l == SYS_RESTART) && !strncmp((char *)p, "recovery", 8)) {
-			show_recovery_cause(NULL, NULL, recovery_cause);
-			if  (!recovery_cause[0] || !strlen(recovery_cause))
-				store_recovery_cause(NULL, NULL, "", 0);
+			sec_get_param(param_index_reboot_recovery_cause, recovery_cause);
+			if  (!recovery_cause[0] || !strlen(recovery_cause)){
+				snprintf(recovery_cause, sizeof(recovery_cause), "%s:%d ", current->comm, task_pid_nr(current));
+				sec_set_param(param_index_reboot_recovery_cause, recovery_cause);
+			}
 		}
 	}
 
@@ -843,6 +1080,8 @@ static int sec_debug_panic_handler(struct notifier_block *nb,
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_USER_FAULT);
 	else if (!strncmp(buf, "Crash Key", len))
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_FORCED_UPLOAD);
+	else if (!strncmp(buf, "User Crash Key", len))
+		sec_debug_set_upload_cause(UPLOAD_CAUSE_USER_FORCED_UPLOAD);
 	else if (!strncmp(buf, "CP Crash", len))
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_CP_ERROR_FATAL);
 	else if (!strncmp(buf, "MDM Crash", len))
@@ -956,6 +1195,8 @@ static int long_press_pwrkey_timer_pending(void)
 	return timer_pending(&pwrkey_crash_timer);
 }
 
+extern void check_crash_keys_in_user(unsigned int code, int state);
+
 void long_press_pwrkey_timer_clear(void)
 {
 	del_timer(&pwrkey_crash_timer);
@@ -977,9 +1218,10 @@ void sec_debug_check_crash_key(unsigned int code, int value)
 			sec_debug_set_upload_cause(UPLOAD_CAUSE_INIT);
 	}
 
-	if (!enable)
+	if (!enable) {
+		check_crash_keys_in_user(code,value);
 		return;
-
+	}
 
 #if defined(CONFIG_TOUCHSCREEN_DUMP_MODE)
 	if(code == KEY_VOLUMEUP && !value){
@@ -2304,6 +2546,97 @@ static int __init sec_dbg_setup(char *str)
 
 __setup("sec_dbg=", sec_dbg_setup);
 
+#ifdef CONFIG_SEC_DEBUG_PWDT
+void sec_debug_check_pwdt(void)
+{
+	struct task_struct *wdt_tsk = NULL;
+
+	static unsigned long pwdt_sync_delay = 0;
+	static unsigned long pwdt_restart_delay = 0;
+	static unsigned long pwdt_init_delay = 0;
+	static unsigned long last_sync_cnt = 0;
+
+	if (__is_boot_recovery() || __is_boot_lpm()) {
+		return;
+	}
+
+	if (is_verifiedboot_state()) {
+		return;
+	}
+
+	pr_info("pid[%d], start_ms[%ld], sync_cnt[%ld], restart_delay[%ld], init_dealy[%ld], sync_delay[%ld]\n",
+			pwdt_pid, pwdt_start_ms, pwdt_sync_cnt, pwdt_restart_delay, pwdt_init_delay, pwdt_sync_delay);
+
+	// when pwdt is not initialized
+	if (pwdt_pid == 0 && pwdt_start_ms == 0)
+	{
+		// more than 2000secs
+		if (pwdt_init_delay++ >= SEC_DEBUG_MAX_PWDT_INIT_CNT) {
+			panic("Platform Watchdog couldnot be initialized");
+		}
+	}
+	// when pwdt is killed
+	else if (pwdt_pid != 0 && pwdt_start_ms == 0)
+	{
+		if (pwdt_restart_delay == 0)
+			pr_info("pwdt has been killed!!, start_ms[%ld], end_ms[%ld]\n", pwdt_start_ms, pwdt_end_ms);
+
+		// if pwdt cannot be restarted after 200 seconds since pwdt has been killed, kernel watchdog will trigger Panic
+		if (pwdt_restart_delay++ >= SEC_DEBUG_MAX_PWDT_RESTART_CNT) {
+			panic("Platform Watchdog couldnot be restarted");
+		}
+	}
+	// when pwdt is alive
+	else {
+		pwdt_init_delay = 0;
+		pwdt_restart_delay = 0;
+		rcu_read_lock();
+
+		wdt_tsk = find_task_by_vpid(pwdt_pid);
+
+		/* if cannot find platform watchdog thread, 
+		   it might be killed by system_crash or zygote, We ignored this case.
+		*/
+		if (wdt_tsk == NULL) {
+			rcu_read_unlock();
+			last_sync_cnt = pwdt_sync_cnt;
+			pwdt_sync_delay = 0;
+			pr_info("cannot find watchdog thread!!\n");
+			return;
+		}
+
+		get_task_struct(wdt_tsk);
+		rcu_read_unlock();
+
+		if (unlikely(frozen(wdt_tsk) || freezing(wdt_tsk))) {
+			// clear delay if watchdog thread is frozen or freezing
+			pr_info("wdt_task is frozen : [%d],[%d]\n", frozen(wdt_tsk), freezing(wdt_tsk));
+			last_sync_cnt = pwdt_sync_cnt;
+			pwdt_sync_delay = 0;
+		}
+		else {
+			if (last_sync_cnt == pwdt_sync_cnt) {
+				/* pwdt_sync_cnt is updated in every 30s, but sec_debug_check_pwdt is invoked in every 10s
+				   kernel watchdog will trigger Panic if platform watchdog couldnot update sync_cnt for 400secs
+				*/
+				if (pwdt_sync_delay++ >= SEC_DEBUG_MAX_PWDT_SYNC_CNT) {
+					put_task_struct(wdt_tsk);
+					panic("Platform Watchdog can't update sync_cnt");
+					return;
+				}
+			}
+			else {
+				last_sync_cnt = pwdt_sync_cnt;
+				pwdt_sync_delay = 0;
+			}
+		}
+		put_task_struct(wdt_tsk);
+	}
+
+	return;
+}
+#endif
+
 static void sec_user_fault_dump(void)
 {
 	if (enable == 1 && enable_user == 1)
@@ -2385,6 +2718,10 @@ static int sec_debug_device_probe(struct platform_device *pdev)
 	ret = sec_debug_reset_reason_init();
 	if (ret < 0)
 		dev_err(&pdev->dev, "sec_debug_reset_reason_init failed : %d\n", ret);
+
+	ret = sec_debug_recovery_reason_init();
+	if (ret < 0)
+		dev_err(&pdev->dev, "sec_debug_recovery_reason_init failed : %d\n", ret);
 #endif
 
 	ret = sec_debug_user_fault_init();
@@ -2393,11 +2730,6 @@ static int sec_debug_device_probe(struct platform_device *pdev)
 
 	if (sec_debug_parse_dt(&pdev->dev))
 		dev_err(&pdev->dev, "%s: Failed to get sec_debug dt\n", __func__);
-
-	/* create sysfs for reboot_recovery_cause */
-	ret = sysfs_create_file(&(&pdev->dev)->kobj, &dev_attr_recovery_cause.attr);
-	if (ret)
-		pr_err("%s: Failed to create sysfs group for sec_debug\n", __func__);
 
 	return ret;
 }

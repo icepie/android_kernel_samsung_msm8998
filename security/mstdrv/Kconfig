@@ -13,6 +13,7 @@
 
 config MST_LDO
 	bool "MST LDO kernel driver"
+	depends on !(SEC_GTS4LLTE_PROJECT || SEC_GTS4LWIFI_PROJECT)
 	default n
 	help
 	  This enables the MST LDO kernel driver.

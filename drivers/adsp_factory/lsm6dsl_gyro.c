@@ -17,6 +17,11 @@
 #include "adsp.h"
 #define VENDOR "STM"
 #define CHIP_ID "LSM6DSL"
+#define ST_PASS 1
+#define ST_FAIL 0
+#define ST_ZRO_MIN (-40)
+#define ST_ZRO_MAX 40
+#define SELFTEST_REVISED 1
 
 #define RAWDATA_TIMER_MS 200
 #define RAWDATA_TIMER_MARGIN_MS 20
@@ -32,6 +37,12 @@ static ssize_t gyro_name_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%s\n", CHIP_ID);
+}
+
+static ssize_t selftest_revised_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", SELFTEST_REVISED);
 }
 
 static ssize_t gyro_power_off(struct device *dev,
@@ -88,8 +99,8 @@ static ssize_t gyro_selftest_show(struct device *dev,
 	struct msg_data message;
 	int gyro_fifo_avg[3] = {0,}, gyro_self_zro[3] = {0,};
 	int gyro_self_bias[3] = {0,}, gyro_self_diff[3] = {0,};
-	int fifo_ret = 0;
-	int cal_ret = 0;
+	int st_diff_res = ST_FAIL;
+	int st_zro_res = ST_FAIL;
 	uint8_t cnt = 0;
 
 	message.sensor_type = ADSP_FACTORY_GYRO;
@@ -116,7 +127,7 @@ static ssize_t gyro_selftest_show(struct device *dev,
 			gyro_self_bias[0], gyro_self_bias[1],
 			gyro_self_bias[2], gyro_self_diff[0],
 			gyro_self_diff[1], gyro_self_diff[2],
-			fifo_ret, cal_ret);
+			ST_FAIL, ST_FAIL);
 	}
 
 	gyro_fifo_avg[0] = data->gyro_st_result.fifo_zro_x;
@@ -136,16 +147,21 @@ static ssize_t gyro_selftest_show(struct device *dev,
 	gyro_self_diff[2] = data->gyro_st_result.st_diff_z / 1000;
 
 	if (data->gyro_st_result.result1 == 0) {
-		fifo_ret = 1;
-		cal_ret = 1;
+		if (!data->gyro_st_result.result2)
+			st_diff_res = ST_PASS;
 
+		if (((ST_ZRO_MIN <= gyro_self_zro[0]) && (gyro_self_zro[0] <= ST_ZRO_MAX))
+			&& ((ST_ZRO_MIN <= gyro_self_zro[1]) && (gyro_self_zro[1] <= ST_ZRO_MAX))
+			&& ((ST_ZRO_MIN <= gyro_self_zro[2]) && (gyro_self_zro[2] <= ST_ZRO_MAX)))
+			st_zro_res = ST_PASS;
+        
 		pr_info("[FACTORY]: %s - "
 			"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", __func__,
 			gyro_fifo_avg[0], gyro_fifo_avg[1], gyro_fifo_avg[2],
 			gyro_self_zro[0], gyro_self_zro[1], gyro_self_zro[2],
 			gyro_self_bias[0], gyro_self_bias[1], gyro_self_bias[2],
 			gyro_self_diff[0], gyro_self_diff[1], gyro_self_diff[2],
-			fifo_ret, cal_ret);
+			st_diff_res, st_zro_res);
 
 		return snprintf(buf, PAGE_SIZE,
 			"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
@@ -153,7 +169,7 @@ static ssize_t gyro_selftest_show(struct device *dev,
 			gyro_self_zro[0], gyro_self_zro[1], gyro_self_zro[2],
 			gyro_self_bias[0], gyro_self_bias[1], gyro_self_bias[2],
 			gyro_self_diff[0], gyro_self_diff[1], gyro_self_diff[2],
-			fifo_ret, cal_ret);
+			st_diff_res, st_zro_res);
 	} else {
 		pr_info("[FACTORY] %s - failed(%d, %d)\n", __func__,
 			data->gyro_st_result.result1,
@@ -175,6 +191,8 @@ static DEVICE_ATTR(power_on, S_IRUGO, gyro_power_on, NULL);
 static DEVICE_ATTR(power_off, S_IRUGO, gyro_power_off, NULL);
 static DEVICE_ATTR(temperature, S_IRUSR | S_IRGRP,
 	gyro_temp_show, NULL);
+static DEVICE_ATTR(selftest_revised, S_IRUSR | S_IRGRP,
+    selftest_revised_show, NULL);
 
 static struct device_attribute *gyro_attrs[] = {
 	&dev_attr_name,
@@ -183,6 +201,7 @@ static struct device_attribute *gyro_attrs[] = {
 	&dev_attr_power_on,
 	&dev_attr_power_off,
 	&dev_attr_temperature,
+	&dev_attr_selftest_revised,
 	NULL,
 };
 

@@ -15,9 +15,9 @@
 
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
+#include <linux/migrate.h>
 
 #ifdef CONFIG_CMA_PINPAGE_MIGRATION
-#include <linux/migrate.h>
 #include <linux/mm_inline.h>
 #include <linux/mmu_notifier.h>
 #include <asm/tlbflush.h>
@@ -50,10 +50,12 @@ static bool __need_migrate_cma_page(struct page *page,
 					VM_STACK_INCOMPLETE_SETUP)
 		return false;
 
-	migrate_prep_local();
-
-	if (!PageLRU(page))
-		return false;
+	if (!PageLRU(page)) {
+		migrate_prep_local();
+		if (WARN_ON(!PageLRU(page))) {
+			return false;
+		}
+	}
 
 	return true;
 }
@@ -609,6 +611,9 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 	 */
 	if (!(gup_flags & FOLL_FORCE))
 		gup_flags |= FOLL_NUMA;
+
+	if ((gup_flags & FOLL_CMA) != 0)
+		migrate_prep();
 
 	do {
 		struct page *page;

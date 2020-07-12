@@ -572,21 +572,14 @@ out:
 }
 
 long ecryptfs_do_sdp_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
-	char filename[NAME_MAX+1] = {0};
 	void __user *ubuf = (void __user *)arg;
 	struct dentry *ecryptfs_dentry = file->f_path.dentry;
 	struct inode *inode = ecryptfs_dentry->d_inode;
 	struct ecryptfs_crypt_stat *crypt_stat =
 			&ecryptfs_inode_to_private(inode)->crypt_stat;
-	struct dentry *fp_dentry =
-			ecryptfs_inode_to_private(inode)->lower_file->f_path.dentry;
     struct ecryptfs_mount_crypt_stat *mount_crypt_stat  =
             &ecryptfs_superblock_to_private(inode->i_sb)->mount_crypt_stat;
     int rc;
-
-	if (fp_dentry->d_name.len <= NAME_MAX)
-			memcpy(filename, fp_dentry->d_name.name,
-					fp_dentry->d_name.len + 1);
 
 	DEK_LOGD("%s(%s)\n", __func__, ecryptfs_dentry->d_name.name);
 

@@ -32,6 +32,7 @@ struct msm_camera_sensor_slave_info32 {
 	char actuator_name[32];
 	char ois_name[32];
 	char flash_name[32];
+	char aperture_name[32];	
 	enum msm_sensor_camera_id_t camera_id;
 	uint16_t slave_addr;
 	enum i2c_freq_mode_t i2c_freq_mode;
@@ -214,6 +215,11 @@ struct msm_actuator_cfg_data32 {
 	} cfg;
 };
 
+struct msm_aperture_cfg_data32 {
+	int cfgtype;
+	int f_number;
+};
+
 struct csiphy_cfg_data32 {
 	enum csiphy_cfg_type_t cfgtype;
 	union {
@@ -255,6 +261,7 @@ struct msm_ois_cfg_data32 {
 	compat_uptr_t version;
 	compat_uptr_t image_shift_cal;
 	compat_uptr_t ois_cal_info;
+	compat_uptr_t ois_mode;
 	union {
 		struct msm_ois_set_info_t32 set_info;
 		compat_uptr_t settings;
@@ -364,6 +371,9 @@ struct msm_phone_fw_data_t32 {
 
 #define VIDIOC_MSM_PHONE_FW_INFO32 \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 17, struct msm_phone_fw_data_t32)
+
+#define VIDIOC_MSM_APERTURE_CFG32 \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 18, struct msm_aperture_cfg_data32)
 
 #endif
 

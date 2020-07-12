@@ -95,19 +95,19 @@
 
 
 
-#define T_H_LB		4			/* us */
+#define T_H_LB		5		/* us */
 
-#define T_L_LB		T_H_LB*3	/* us*/
+#define T_L_LB		T_H_LB*16	/* us*/
 
-#define T_H_HB		T_L_HB*3	/* us */
+#define T_H_HB		T_L_HB*16	/* us */
 
-#define T_L_HB		4			/* us*/
+#define T_L_HB		5		/* us*/
 
-#define T_SOD		15			/* us */
+#define T_SOD		15		/* us */
 
-#define T_EOD_L		4			/* us */
+#define T_EOD_L		4		/* us */
 
-#define T_EOD_H		400			/* us */
+#define T_EOD_H		400		/* us */
 
 
 
@@ -276,6 +276,8 @@ struct ktd2692_platform_data {
 	int sysfs_input_data;
 
 	int flash_control;
+ 
+        int flash_control_iris;
 
 	struct workqueue_struct *wqueue;
 
@@ -295,6 +297,12 @@ struct ktd2692_platform_data {
 
 	enum ktd2692_mode_control_t mode_status;
 
+};
+
+enum flash_control {
+       FLASH_OFF, 
+       FLASH_ON,
+       TORCH_ON,
 };
 
 #endif

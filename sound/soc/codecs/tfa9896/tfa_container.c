@@ -1728,7 +1728,7 @@ unsigned int tfa98xx_get_profile_sr(int dev_idx, unsigned int prof_idx)
 		if (prof->list[i].type == dsc_default)
 			break;
 
-		/* check for profile settingd (AUDFS) */
+		/* check for profile setting (AUDFS) */
 		if (prof->list[i].type == dsc_bit_field) {
 			bitf = (struct tfa_bitfield *)
 				(prof->list[i].offset+(uint8_t *)g_cont);
@@ -1765,13 +1765,81 @@ unsigned int tfa98xx_get_profile_sr(int dev_idx, unsigned int prof_idx)
 	}
 
 	pr_debug("%s - default fs: 0x%x = %dHz (%d - %d)\n",
-		 __func__, fs_profile,
-					tfa98xx_sr_from_field(fs_profile),
-					dev_idx, prof_idx);
+		__func__, fs_profile,
+		tfa98xx_sr_from_field(fs_profile),
+		dev_idx, prof_idx);
 	if (fs_profile != -1)
 		return tfa98xx_sr_from_field(fs_profile);
 
 	return 48000;
+}
+
+unsigned int tfa98xx_get_profile_chsa(int dev_idx, unsigned int prof_idx)
+{
+	struct tfa_bitfield *bitf;
+	unsigned int i;
+	struct tfa_device_list *dev;
+	struct tfa_profile_list *prof;
+	int chsa_profile = -1;
+
+	/* bypass case in Max1 */
+	if (tfa98xx_dev_family(dev_idx) != 1)
+		return 0;
+
+	dev = tfa_cont_device(dev_idx);
+	if (!dev)
+		return 0;
+
+	prof = tfa_cont_profile(dev_idx, prof_idx);
+	if (!prof)
+		return 0;
+
+	/* Check profile fields first */
+	for (i = 0; i < prof->length; i++) {
+		if (prof->list[i].type == dsc_default)
+			break;
+
+		/* check for profile setting (CHSA) */
+		if (prof->list[i].type == dsc_bit_field) {
+			bitf = (struct tfa_bitfield *)
+				(prof->list[i].offset+(uint8_t *)g_cont);
+			if (bitf->field == TFA1_BF_CHSA) {
+				chsa_profile = bitf->value;
+				break;
+			}
+		}
+	}
+
+	pr_debug("%s - profile chsa: 0x%x (%d - %d)\n", __func__,
+		 chsa_profile, dev_idx, prof_idx);
+	if (chsa_profile != -1)
+		return chsa_profile;
+
+	/* Check for container default setting */
+	/* process the list until a patch, file of profile is encountered */
+	for (i = 0; i < dev->length; i++) {
+		if (dev->list[i].type == dsc_patch
+			|| dev->list[i].type == dsc_file
+			|| dev->list[i].type == dsc_profile)
+			break;
+
+		if (dev->list[i].type == dsc_bit_field) {
+			bitf = (struct tfa_bitfield *)
+				(dev->list[i].offset+(uint8_t *)g_cont);
+			if (bitf->field == TFA1_BF_CHSA) {
+				chsa_profile = bitf->value;
+				break;
+			}
+		}
+		/* Ignore register case */
+	}
+
+	pr_debug("%s - default chsa: 0x%x (%d - %d)\n", __func__,
+		chsa_profile, dev_idx, prof_idx);
+	if (chsa_profile != -1)
+		return chsa_profile;
+
+	return tfa_get_bf(dev_idx, TFA1_BF_CHSA);
 }
 
 enum tfa98xx_error
@@ -2341,6 +2409,42 @@ int tfa_cont_is_tap_profile(int dev_idx, int prof_idx)
 		!= NULL) {
 		pr_debug("Using Tap profile: '%s'\n",
 			 tfa_cont_profile_name(dev_idx, prof_idx));
+		return 1;
+	}
+
+	return 0;
+}
+
+/**
+ * Is the profile specific to device ?
+ * @param dev_idx the index of the device
+ * @param prof_idx the index of the profile
+ * @return 1 if the profile belongs to device or 0 if not
+ */
+int tfa_cont_is_dev_specific_profile(int dev_idx, int prof_idx)
+{
+	char dev_substring[100] = {0};
+	char *pch;
+	int prof_name_len;
+
+	if ((dev_idx < 0) || (dev_idx >= tfa98xx_cnt_max_device()))
+		return 0;
+
+	prof_name_len = strlen(tfa_cont_profile_name(dev_idx, prof_idx));
+	pch = strchr(tfa_cont_profile_name(dev_idx, prof_idx), '.');
+	if (!pch)
+		return 0;
+
+	snprintf(dev_substring, 100, ".%s", tfa_cont_device_name(dev_idx));
+	if (prof_name_len < strlen(dev_substring))
+		return 0;
+
+	/* Check if next profile is tap profile */
+	if (strnstr(tfa_cont_profile_name(dev_idx, prof_idx),
+		dev_substring, prof_name_len) != NULL) {
+		pr_debug("dev profile: '%s' of device '%s'\n",
+			tfa_cont_profile_name(dev_idx, prof_idx),
+			dev_substring);
 		return 1;
 	}
 

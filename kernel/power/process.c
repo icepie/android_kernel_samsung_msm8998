@@ -19,6 +19,7 @@
 #include <linux/kmod.h>
 #include <trace/events/power.h>
 #include <linux/wakeup_reason.h>
+#include <linux/cpuset.h>
 
 #ifdef CONFIG_SEC_BSP
 #include <linux/sec_bsp.h>
@@ -146,7 +147,9 @@ int freeze_processes(void)
 	pm_wakeup_clear();
 	pr_info("Freezing user space processes ... ");
 	pm_freezing = true;
+#ifdef CONFIG_SEC_BSP
 	sec_suspend_resume_add("Freeze User Process+");
+#endif
 	error = try_to_freeze_tasks(true);
 	if (!error) {
 		__usermodehelper_set_disable_depth(UMH_DISABLED);
@@ -214,6 +217,8 @@ void thaw_processes(void)
 
 	__usermodehelper_set_disable_depth(UMH_FREEZING);
 	thaw_workqueues();
+
+	cpuset_wait_for_hotplug();
 
 	read_lock(&tasklist_lock);
 	for_each_process_thread(g, p) {

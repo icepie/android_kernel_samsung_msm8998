@@ -1,8 +1,5 @@
 /*
- * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
- *
- * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
- *
+ * Copyright (c) 2011-2018 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -20,12 +17,6 @@
  */
 
 /*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
- */
-
-/*
  * DOC: sme_rrm.c
  *
  * Implementation for SME RRM APIs
@@ -35,6 +26,7 @@
 #include "sme_inside.h"
 #include "sme_api.h"
 #include "cfg_api.h"
+#include "cds_regdomain.h"
 
 #ifdef FEATURE_WLAN_DIAG_SUPPORT
 #include "host_diag_core_event.h"
@@ -172,7 +164,8 @@ sme_rrm_send_beacon_report_xmit_ind(tpAniSirGlobal mac_ctx,
 {
 	tpSirBssDescription bss_desc = NULL;
 	tpSirBeaconReportXmitInd beacon_rep;
-	uint16_t length, ie_len, tot_len;
+	uint16_t length;
+	uint32_t size;
 	uint8_t  i = 0, j = 0, counter = 0;
 	tCsrScanResultInfo *cur_result = NULL;
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
@@ -207,18 +200,13 @@ sme_rrm_send_beacon_report_xmit_ind(tpAniSirGlobal mac_ctx,
 			bss_desc = &cur_result->BssDescriptor;
 			if (bss_desc == NULL)
 				break;
-			ie_len = GET_IE_LEN_IN_BSS(bss_desc->length);
-			tot_len = ie_len + sizeof(*bss_desc);
-			beacon_rep->pBssDescription[i] =
-				qdf_mem_malloc(tot_len);
+			size =  bss_desc->length + sizeof(bss_desc->length);
+			beacon_rep->pBssDescription[i] = qdf_mem_malloc(size);
 			if (NULL ==
 				beacon_rep->pBssDescription[i])
 				break;
 			qdf_mem_copy(beacon_rep->pBssDescription[i],
-				bss_desc, sizeof(tSirBssDescription));
-			qdf_mem_copy(
-				&beacon_rep->pBssDescription[i]->ieFields[0],
-				bss_desc->ieFields, ie_len);
+				bss_desc, size);
 			bss_desc_to_free[i] =
 				beacon_rep->pBssDescription[i];
 			sme_debug("RRM Result Bssid = " MAC_ADDRESS_STR
@@ -229,6 +217,8 @@ sme_rrm_send_beacon_report_xmit_ind(tpAniSirGlobal mac_ctx,
 				beacon_rep->pBssDescription[i]->rssi * (-1));
 			beacon_rep->numBssDesc++;
 			if (++i >= SIR_BCN_REPORT_MAX_BSS_DESC)
+				break;
+			if (i + j >= bss_count)
 				break;
 			cur_result =
 				result_arr[j + i];
@@ -306,9 +296,11 @@ static QDF_STATUS sme_ese_send_beacon_req_scan_results(
 	if (result_arr)
 		cur_result = result_arr[bss_counter];
 
-	qdf_mem_zero(&bcn_rpt_rsp, sizeof(tSirEseBcnReportRsp));
 	do {
 		cur_meas_req = NULL;
+		/* memset bcn_rpt_rsp for each iteration */ 
+		qdf_mem_zero(&bcn_rpt_rsp, sizeof(bcn_rpt_rsp)); 
+		
 		for (i = 0; i < rrm_ctx->eseBcnReqInfo.numBcnReqIe; i++) {
 			if (rrm_ctx->eseBcnReqInfo.bcnReq[i].channel ==
 				channel) {
@@ -367,7 +359,9 @@ static QDF_STATUS sme_ese_send_beacon_req_scan_results(
 			bcn_report->numBss++;
 			if (++j >= SIR_BCN_REPORT_MAX_BSS_DESC)
 				break;
-			cur_result = result_arr[j];
+			if ((bss_counter + j) >= bss_count)
+				break;
+			cur_result = result_arr[bss_counter + j];
 		}
 
 		bss_counter += j;
@@ -421,16 +415,16 @@ static QDF_STATUS sme_rrm_send_scan_result(tpAniSirGlobal mac_ctx,
 	tCsrScanResultFilter filter;
 	tScanResultHandle result_handle;
 	tCsrScanResultInfo *scan_results, *next_result;
-	tCsrScanResultInfo *scanresults_arr[SIR_BCN_REPORT_MAX_BSS_DESC];
+	tCsrScanResultInfo **scanresults_arr = NULL;
+	struct scan_result_list *result_list;
 	QDF_STATUS status;
-	uint8_t counter = 0;
+	uint8_t num_scan_results, counter = 0;
 	tpRrmSMEContext rrm_ctx = &mac_ctx->rrm.rrmSmeContext;
 	uint32_t session_id;
 	tCsrRoamInfo *roam_info;
+	tSirScanType scan_type;
 
 	qdf_mem_zero(&filter, sizeof(filter));
-	qdf_mem_zero(scanresults_arr,
-			sizeof(next_result) * SIR_BCN_REPORT_MAX_BSS_DESC);
 	filter.BSSIDs.numOfBSSIDs = 1;
 	filter.BSSIDs.bssid = (struct qdf_mac_addr *)&rrm_ctx->bssId;
 
@@ -514,7 +508,23 @@ static QDF_STATUS sme_rrm_send_scan_result(tpAniSirGlobal mac_ctx,
 			status = sme_rrm_send_beacon_report_xmit_ind(mac_ctx,
 						NULL, measurementdone, 0);
 	}
-	counter = 0;
+
+	result_list = (struct scan_result_list *)result_handle;
+	num_scan_results = csr_ll_count(&result_list->List);
+	if (!num_scan_results) {
+		sme_err("num_scan_results is %d", num_scan_results);
+		status = QDF_STATUS_E_FAILURE;
+		goto rrm_send_scan_results_done;
+	}
+
+	sme_debug("num_scan_results %d", num_scan_results);
+	scanresults_arr = qdf_mem_malloc(num_scan_results *
+					 sizeof(next_result));
+	if (!scanresults_arr) {
+		sme_err("Failed to allocate scanresults_arr");
+		status = QDF_STATUS_E_NOMEM;
+		goto rrm_send_scan_results_done;
+	}
 
 	roam_info = qdf_mem_malloc(sizeof(*roam_info));
 	if (NULL == roam_info) {
@@ -523,11 +533,43 @@ static QDF_STATUS sme_rrm_send_scan_result(tpAniSirGlobal mac_ctx,
 		goto rrm_send_scan_results_done;
 	}
 
+	if (eRRM_MSG_SOURCE_ESE_UPLOAD == rrm_ctx->msgSource ||
+	    eRRM_MSG_SOURCE_LEGACY_ESE == rrm_ctx->msgSource)
+		scan_type = rrm_ctx->measMode[rrm_ctx->currentIndex];
+	else
+		scan_type = rrm_ctx->measMode[0];
+
 	while (scan_results) {
+		/*
+		 * In passive scan, sta listens beacon. Connected AP beacon
+		 * is offloaded to firmware. Firmware will discard
+		 * connected AP beacon except that special IE exists.
+		 * Connected AP beacon will not be sent to host. Hence, timer
+		 * of connected AP in scan results is not updated and can
+		 * not meet "pScanResult->timer >= RRM_scan_timer".
+		 */
+		tCsrRoamSession *session;
+		uint8_t is_conn_bss_found = false;
+
+		if (scan_type == eSIR_PASSIVE_SCAN) {
+			session = CSR_GET_SESSION(mac_ctx, session_id);
+			if (session) {
+				if (csr_is_conn_state_connected_infra(mac_ctx,
+				    session_id) &&
+				    (NULL != session->pConnectBssDesc) &&
+				    (csr_is_duplicate_bss_description(mac_ctx,
+				     &scan_results->BssDescriptor,
+				     session->pConnectBssDesc))) {
+					is_conn_bss_found = true;
+					sme_debug("Connected BSS in scan results");
+				}
+			}
+		}
 		next_result = sme_scan_result_get_next(mac_ctx, result_handle);
 		sme_debug("Scan res timer:%lu, rrm scan timer:%llu",
 				scan_results->timer, rrm_scan_timer);
-		if (scan_results->timer >= rrm_scan_timer) {
+		if ((scan_results->timer >= rrm_scan_timer) ||
+		    (is_conn_bss_found == true)) {
 			roam_info->pBssDesc = &scan_results->BssDescriptor;
 			csr_roam_call_callback(mac_ctx, session_id, roam_info,
 						0, eCSR_ROAM_UPDATE_SCAN_RESULT,
@@ -535,7 +577,7 @@ static QDF_STATUS sme_rrm_send_scan_result(tpAniSirGlobal mac_ctx,
 			scanresults_arr[counter++] = scan_results;
 		}
 		scan_results = next_result;
-		if (counter >= SIR_BCN_REPORT_MAX_BSS_DESC)
+		if (counter >= num_scan_results)
 			break;
 	}
 	qdf_mem_free(roam_info);
@@ -565,7 +607,11 @@ static QDF_STATUS sme_rrm_send_scan_result(tpAniSirGlobal mac_ctx,
 	}
 
 rrm_send_scan_results_done:
+	if (scanresults_arr)
+		qdf_mem_free(scanresults_arr);
+
 	sme_scan_result_purge(mac_ctx, result_handle);
+
 	return status;
 }
 
@@ -646,25 +692,26 @@ static QDF_STATUS sme_rrm_scan_request_callback(tHalHandle halHandle,
  */
 static QDF_STATUS sme_rrm_issue_scan_req(tpAniSirGlobal mac_ctx)
 {
-	/* Issue scan request. */
-	tCsrScanRequest scan_req;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	tpRrmSMEContext sme_rrm_ctx = &mac_ctx->rrm.rrmSmeContext;
-	uint32_t session_id, scan_req_id;
-	uint32_t max_chan_time;
+	uint32_t session_id;
 	tSirScanType scan_type;
-	uint64_t current_time;
 
 	status = csr_roam_get_session_id_from_bssid(mac_ctx,
 			&sme_rrm_ctx->sessionBssId, &session_id);
 	if (status != QDF_STATUS_SUCCESS) {
-		sme_err("Invalid sme Session ID");
-		return QDF_STATUS_E_FAILURE;
+		sme_err("sme session ID not found for bssid= "MAC_ADDRESS_STR,
+			MAC_ADDR_ARRAY(sme_rrm_ctx->sessionBssId.bytes));
+		status = QDF_STATUS_E_FAILURE;
+		goto free_ch_lst;
 	}
 
 	if ((sme_rrm_ctx->currentIndex) >=
-			sme_rrm_ctx->channelList.numOfChannels)
-		return status;
+			sme_rrm_ctx->channelList.numOfChannels) {
+		sme_rrm_send_beacon_report_xmit_ind(mac_ctx, NULL, true, 0);
+		sme_debug("done with the complete ch lt. finish and fee now");
+		goto free_ch_lst;
+	}
 
 	if (eRRM_MSG_SOURCE_ESE_UPLOAD == sme_rrm_ctx->msgSource ||
 		eRRM_MSG_SOURCE_LEGACY_ESE == sme_rrm_ctx->msgSource)
@@ -674,6 +721,11 @@ static QDF_STATUS sme_rrm_issue_scan_req(tpAniSirGlobal mac_ctx)
 
 	if ((eSIR_ACTIVE_SCAN == scan_type) ||
 			(eSIR_PASSIVE_SCAN == scan_type)) {
+		tCsrScanRequest scan_req;
+		uint32_t scan_req_id;
+		uint32_t max_chan_time;
+		uint64_t current_time;
+
 		qdf_mem_zero(&scan_req, sizeof(scan_req));
 		/* set scan_type, active or passive */
 		scan_req.bcnRptReqScan = true;
@@ -767,12 +819,15 @@ static QDF_STATUS sme_rrm_issue_scan_req(tpAniSirGlobal mac_ctx)
 		scan_req.requestType = eCSR_SCAN_RRM;
 		wma_get_scan_id(&scan_req_id);
 		scan_req.scan_id = scan_req_id;
+		scan_req.scan_requestor_id = USER_SCAN_REQUESTOR_ID;
 		status = sme_scan_request(mac_ctx, (uint8_t) session_id,
 					&scan_req,
 					&sme_rrm_scan_request_callback, NULL);
 
 		if (sme_rrm_ctx->ssId.length)
 			qdf_mem_free(scan_req.SSIDs.SSIDList);
+
+		return status;
 	} else if (eSIR_BEACON_TABLE == scan_type) {
 		/*
 		 * In beacon table mode, scan results are taken directly from
@@ -793,6 +848,7 @@ static QDF_STATUS sme_rrm_issue_scan_req(tpAniSirGlobal mac_ctx)
 #ifdef FEATURE_WLAN_ESE
 			sme_rrm_ctx->eseBcnReqInProgress = false;
 #endif
+			return status;
 		} else {
 			/*
 			 * Done with the measurement. Clean up all context and
@@ -801,7 +857,7 @@ static QDF_STATUS sme_rrm_issue_scan_req(tpAniSirGlobal mac_ctx)
 			sme_rrm_send_scan_result(mac_ctx, 1,
 				&sme_rrm_ctx->channelList.ChannelList[
 					sme_rrm_ctx->currentIndex], true);
-			qdf_mem_free(sme_rrm_ctx->channelList.ChannelList);
+			goto free_ch_lst;
 		}
 	} else {
 		sme_err("Unknown beacon report req mode(%d)", scan_type);
@@ -811,7 +867,12 @@ static QDF_STATUS sme_rrm_issue_scan_req(tpAniSirGlobal mac_ctx)
 		 * and PE will not handle subsequent Beacon requests
 		 */
 		sme_rrm_send_beacon_report_xmit_ind(mac_ctx, NULL, true, 0);
+		goto free_ch_lst;
 	}
+
+free_ch_lst:
+	qdf_mem_free(sme_rrm_ctx->channelList.ChannelList);
+	sme_rrm_ctx->channelList.ChannelList = NULL;
 	return status;
 }
 
@@ -833,10 +894,18 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(tpAniSirGlobal pMac,
 	tpSirBeaconReportReqInd pBeaconReq = (tpSirBeaconReportReqInd) pMsgBuf;
 	tpRrmSMEContext pSmeRrmContext = &pMac->rrm.rrmSmeContext;
 	uint32_t len = 0, i = 0;
-	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	uint8_t temp = 0;
 
 	sme_debug("Received Beacon report request ind Channel = %d",
 		pBeaconReq->channelInfo.channelNum);
+
+	if (pBeaconReq->channelList.numChannels >
+	    SIR_ESE_MAX_MEAS_IE_REQS) {
+		sme_err("Beacon report request numChannels:%u exceeds max num channels",
+			pBeaconReq->channelList.numChannels);
+		return QDF_STATUS_E_INVAL;
+	}
+
 	/* section 11.10.8.1 (IEEE Std 802.11k-2008) */
 	/* channel 0 and 255 has special meaning. */
 	if ((pBeaconReq->channelInfo.channelNum == 0) ||
@@ -851,7 +920,23 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(tpAniSirGlobal pMac,
 		}
 		csr_get_cfg_valid_channels(pMac, pSmeRrmContext->channelList.
 					ChannelList, &len);
-		pSmeRrmContext->channelList.numOfChannels = (uint8_t) len;
+		/* List all the channels in the requested RC */
+		cds_reg_dmn_get_channel_from_opclass(
+				pMac->scan.countryCodeCurrent,
+				pBeaconReq->channelInfo.regulatoryClass);
+
+		for (i = 0; i < len; i++) {
+			if (cds_reg_dmn_get_opclass_from_channel(
+			    pMac->scan.countryCodeCurrent,
+			    pSmeRrmContext->channelList.ChannelList[i],
+			    BWALL) ==
+			    pBeaconReq->channelInfo.regulatoryClass) {
+				pSmeRrmContext->channelList.ChannelList[temp] =
+				  pSmeRrmContext->channelList.ChannelList[i];
+				temp++;
+			}
+		}
+		pSmeRrmContext->channelList.numOfChannels = (uint8_t) temp;
 	} else {
 		len = 0;
 		pSmeRrmContext->channelList.numOfChannels = 0;
@@ -925,9 +1010,7 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(tpAniSirGlobal pMac,
 		pSmeRrmContext->token, pSmeRrmContext->regClass,
 		pSmeRrmContext->randnIntvl, pSmeRrmContext->msgSource);
 
-	status = sme_rrm_issue_scan_req(pMac);
-
-	return status;
+	return sme_rrm_issue_scan_req(pMac);
 }
 
 /**

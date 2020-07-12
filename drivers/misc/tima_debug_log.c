@@ -8,6 +8,7 @@
 #include <linux/highmem.h>
 #include <linux/io.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 
 #define DEBUG_LOG_START (0x9f900000)
 #define	DEBUG_LOG_SIZE	(1<<20)
@@ -38,21 +39,35 @@ unsigned long *tima_debug_log_addr = 0;
 
 ssize_t	tima_read(struct file *filep, char __user *buf, size_t size, loff_t *offset)
 {
-	/* First check is to get rid of integer overflow exploits */
-	if (size > DEBUG_LOG_SIZE || (*offset) + size > DEBUG_LOG_SIZE) {
-		printk(KERN_ERR"Extra read\n");
-		return -EINVAL;
-	}
-	if( !strcmp(filep->f_path.dentry->d_iname, "tima_debug_log")) {
-		tima_log_addr = tima_debug_log_addr;
-		memcpy_fromio(buf, (const char *)tima_log_addr + (*offset), size);
-		*offset += size;
-		return size;
-	}
-	else {
-		printk(KERN_ERR"NO tima*log\n");
-		return -1;
-	}
+    char *localbuf = NULL;
+
+    /* First check is to get rid of integer overflow exploits */
+    if (size > DEBUG_LOG_SIZE || (*offset) + size > DEBUG_LOG_SIZE) {
+        printk(KERN_ERR"Extra read\n");
+        return -EINVAL;
+    }
+
+    localbuf = kzalloc(size, GFP_KERNEL);
+    if(localbuf == NULL)
+        return -ENOMEM;
+
+    if( !strcmp(filep->f_path.dentry->d_iname, "tima_debug_log")) {
+        tima_log_addr = tima_debug_log_addr;
+        memcpy_fromio(localbuf, (const char *)tima_log_addr + (*offset), size);
+        if (copy_to_user(buf, localbuf, size)) {
+            printk(KERN_ERR"Copy to user failed\n");
+            kfree(localbuf);
+            return -1;
+        } else {
+            *offset += size;
+            kfree(localbuf);
+            return size;
+        }
+    } else {
+        printk(KERN_ERR"NO tima*log\n");
+        kfree(localbuf);
+        return -1;
+    }
 }
 
 static const struct file_operations tima_proc_fops = {

@@ -51,6 +51,7 @@
 #include <linux/delay.h>
 
 static bool debug_en_checklist = true;
+static int is_charger_ready;
 
 enum act_function_num {
 	FUNC_TA_TO_PREPARE,
@@ -499,27 +500,52 @@ static void s2mu004_mpnack_irq_mask(struct s2mu004_muic_data *muic_data, int ena
 		s2mu004_muic_hv_update_reg(muic_data->i2c, 0x05, 0x08, 0x08, 0);
 }
 
-static void s2mu004_hv_muic_set_afc_after_prepare
-					(struct s2mu004_muic_data *muic_data)
+void s2mu004_hv_muic_set_afc_after_prepare(struct s2mu004_muic_data *muic_data)
 {
+#if !defined(CONFIG_SEC_FACTORY)
+        struct muic_interface_t *muic_if = (struct muic_interface_t *)muic_data->if_data;                          
+#endif
 	pr_info("%s HV charger is detected\n", __func__);
 
-	muic_data->retry_cnt = 0;
-	s2mu004_mpnack_irq_mask(muic_data, 0);
-	s2mu004_hv_muic_write_reg(muic_data->i2c, 0x5f, 0x05);
-	s2mu004_hv_muic_write_reg(muic_data->i2c, 0x4A, 0x0e);
-	schedule_delayed_work(&muic_data->afc_send_mpnack, msecs_to_jiffies(2000));
-	schedule_delayed_work(&muic_data->afc_control_ping_retry, msecs_to_jiffies(50));
+	if (!is_charger_ready) {
+		pr_info("%s charger is not ready\n", __func__);
+		return;
+	}
+
+#if defined(CONFIG_SEC_FACTORY)
+	if (1) { 
+#else
+	if (muic_if->is_ccic_rp56_enable) { 
+#endif
+		muic_data->pdata->attached_dev = ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC;
+		muic_notifier_attach_attached_dev(ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC);
+
+		muic_data->retry_cnt = 0;
+		s2mu004_mpnack_irq_mask(muic_data, 0);
+		s2mu004_hv_muic_write_reg(muic_data->i2c, 0x5f, 0x05);
+		s2mu004_hv_muic_write_reg(muic_data->i2c, 0x4A, 0x0e);
+		schedule_delayed_work(&muic_data->afc_send_mpnack, msecs_to_jiffies(2000));
+		schedule_delayed_work(&muic_data->afc_control_ping_retry, msecs_to_jiffies(50));
+	}
 }
 
 void s2mu004_muic_afc_after_prepare(struct work_struct *work)
 {
 	struct s2mu004_muic_data *muic_data =
 		container_of(work, struct s2mu004_muic_data, afc_after_prepare.work);
+	int vbvolt;
+
 	pr_info("%s\n ", __func__);
-	mutex_lock(&muic_data->afc_mutex);
-	s2mu004_hv_muic_set_afc_after_prepare(muic_data);
-	mutex_unlock(&muic_data->afc_mutex);
+
+	vbvolt = s2mu004_muic_get_vbus_state(muic_data);
+	
+	if (vbvolt) {
+		mutex_lock(&muic_data->afc_mutex);
+		s2mu004_hv_muic_set_afc_after_prepare(muic_data);
+		mutex_unlock(&muic_data->afc_mutex);
+	} else
+		pr_info("%s No VBUS, just return\n", __func__);
+
 }
 
 #define RETRY_QC_CNT 3
@@ -599,6 +625,7 @@ static int s2mu004_hv_muic_handle_attach
 
 	switch (new_afc_data->function_num) {
 	case FUNC_TA_TO_PREPARE:
+		new_dev = ATTACHED_DEV_AFC_CHARGER_5V_MUIC;
 		schedule_delayed_work(&muic_data->afc_after_prepare, msecs_to_jiffies(60));
 		muic_data->afc_count = 0;
 		break;
@@ -764,14 +791,8 @@ static int s2mu004_hv_muic_handle_attach
 		new_dev == ATTACHED_DEV_AFC_CHARGER_ERR_V_DUPLI_MUIC)
 		noti = false;
 
-	if (noti) {
-		if (new_dev == ATTACHED_DEV_AFC_CHARGER_5V_MUIC) {
-			pr_err("%s: AFC CHARGER 5V MUIC delay cable noti\n", __func__);
-			schedule_delayed_work(&muic_data->afc_cable_type_work, msecs_to_jiffies(80));
-		} else {
-			muic_notifier_attach_attached_dev(new_dev);
-		}
-	}
+	if (noti)
+		muic_notifier_attach_attached_dev(new_dev);
 
 	muic_pdata->attached_dev = new_dev;
 out:
@@ -1066,9 +1087,24 @@ static void s2mu004_hv_muic_detect_dev(struct s2mu004_muic_data *muic_data, int 
 	muic_data->status4 = chgt;
 
 	/* check TA type */
+#if defined(CONFIG_MUIC_KEYBOARD)
+	if ((muic_pdata->attached_dev == ATTACHED_DEV_TA_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_AFC_CHARGER_PREPARE_DUPLI_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_AFC_CHARGER_5V_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_AFC_CHARGER_5V_DUPLI_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_AFC_CHARGER_9V_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_QC_CHARGER_PREPARE_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_QC_CHARGER_5V_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_QC_CHARGER_9V_MUIC)
+		)
+		muic_dev_ta = true;
+#else
 	muic_dev_ta = muic_check_dev_ta(muic_data);
+#endif
+
 	if (!muic_dev_ta) {
-		pr_err("%s device type is not TA!\n", __func__);
+		pr_err("%s device type is not TA!, attached_dev: %d\n", __func__, muic_pdata->attached_dev);
 		return;
 	}
 
@@ -1265,31 +1301,22 @@ static void s2mu004_hv_muic_detect_after_charger_init(struct work_struct *work)
 	struct afc_init_data_s *init_data =
 	    container_of(work, struct afc_init_data_s, muic_afc_init_work);
 	struct s2mu004_muic_data *muic_data = init_data->muic_data;
-	int ret;
-	u8 status3;
+	struct muic_platform_data *muic_pdata = muic_data->pdata;
 
 	pr_info("%s\n", __func__);
 
 	mutex_lock(&muic_data->muic_mutex);
 
-	/* check vdnmon status value */
-	ret = s2mu004_read_reg(muic_data->i2c, S2MU004_REG_AFC_STATUS, &status3);
-	if (ret) {
-		pr_err("%s fail to read muic reg(%d)\n",
-				__func__, ret);
-		return;
-	}
-	pr_info("%s STATUS3:0x%02x\n", __func__, status3);
-
-	if (muic_data->is_afc_muic_ready) {
-		if (muic_data->is_afc_muic_prepare)
-			s2mu004_hv_muic_detect_dev(muic_data, -1);
+	if ((muic_pdata->attached_dev == ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC)
+		|| (muic_pdata->attached_dev == ATTACHED_DEV_AFC_CHARGER_5V_MUIC))
+	{
+		s2mu004_hv_muic_set_afc_after_prepare(muic_data);
 	}
 
 	mutex_unlock(&muic_data->muic_mutex);
 }
 
-#ifdef CONFIG_HV_MUIC_VOLTAGE_CTRL
+#if defined(CONFIG_MUIC_HV)
 void hv_muic_change_afc_voltage(int tx_data)
 {
 	struct i2c_client *i2c = afc_init_data.muic_data->i2c;
@@ -1337,12 +1364,14 @@ int muic_afc_set_voltage(int vol)
 
 	return 1;
 }
-#endif /* CONFIG_HV_MUIC_VOLTAGE_CTRL */
+#endif /* CONFIG_MUIC_HV */
 
 void s2mu004_hv_muic_charger_init(void)
 {
 	pr_info("%s\n", __func__);
 
+	is_charger_ready = true;
+	
 	if (afc_init_data.muic_data) {
 		afc_init_data.muic_data->is_charger_ready = true;
 		schedule_work(&afc_init_data.muic_afc_init_work);
@@ -1364,7 +1393,7 @@ static irqreturn_t s2mu004_muic_hv_irq(int irq, void *data)
 {
 	struct s2mu004_muic_data *muic_data = data;
 	int ret;
-	u8 val_vbadc;
+	u8 val_vbadc, vbvolt, read_val;
 
 	mutex_lock(&muic_data->muic_mutex);
 	if (muic_data->is_afc_muic_ready == false)
@@ -1378,6 +1407,19 @@ static irqreturn_t s2mu004_muic_hv_irq(int irq, void *data)
 			__func__, (muic_data->pdata->afc_disable ? 'T' : 'F'));
 	else {
 		muic_data->afc_irq = irq;
+
+		/* Read Vbus */
+		read_val = s2mu004_i2c_read_byte(muic_data->i2c, S2MU004_REG_MUIC_DEVICE_APPLE);
+		vbvolt = !!(read_val & DEV_TYPE_APPLE_VBUS_WAKEUP);
+		pr_err("%s: vbvolt: %d\n", __func__, vbvolt);
+
+		if (!vbvolt) {
+			pr_err("%s: No vbvolt, just return!\n", __func__);
+
+			mutex_unlock(&muic_data->muic_mutex);
+
+			return IRQ_HANDLED;
+		}
 
 		/* Re-check vbadc voltage, if vbadc 9v interrupt does not occur when send pings. */
 		if (irq == muic_data->irq_vbadc && muic_data->afc_count >= 2) {

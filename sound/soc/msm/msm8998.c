@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -413,6 +413,8 @@ static char const *slim_sample_rate_text[] = {"KHZ_8", "KHZ_16",
 					"KHZ_88P2", "KHZ_96", "KHZ_176P4",
 					"KHZ_192", "KHZ_352P8", "KHZ_384"};
 static char const *bt_sample_rate_text[] = {"KHZ_8", "KHZ_16", "KHZ_48"};
+static char const *bt_sample_rate_rx_text[] = {"KHZ_8", "KHZ_16", "KHZ_48"};
+static char const *bt_sample_rate_tx_text[] = {"KHZ_8", "KHZ_16", "KHZ_48"};
 static const char *const usb_ch_text[] = {"One", "Two", "Three", "Four",
 					   "Five", "Six", "Seven",
 					   "Eight"};
@@ -466,6 +468,8 @@ static SOC_ENUM_SINGLE_EXT_DECL(slim_0_tx_sample_rate, slim_sample_rate_text);
 static SOC_ENUM_SINGLE_EXT_DECL(slim_5_rx_sample_rate, slim_sample_rate_text);
 static SOC_ENUM_SINGLE_EXT_DECL(slim_6_rx_sample_rate, slim_sample_rate_text);
 static SOC_ENUM_SINGLE_EXT_DECL(bt_sample_rate, bt_sample_rate_text);
+static SOC_ENUM_SINGLE_EXT_DECL(bt_sample_rate_rx, bt_sample_rate_rx_text);
+static SOC_ENUM_SINGLE_EXT_DECL(bt_sample_rate_tx, bt_sample_rate_tx_text);
 static SOC_ENUM_SINGLE_EXT_DECL(usb_rx_sample_rate, usb_sample_rate_text);
 static SOC_ENUM_SINGLE_EXT_DECL(usb_tx_sample_rate, usb_sample_rate_text);
 static SOC_ENUM_SINGLE_EXT_DECL(ext_disp_rx_sample_rate,
@@ -503,6 +507,7 @@ static SOC_ENUM_SINGLE_EXT_DECL(quat_mi2s_tx_chs, mi2s_ch_text);
 static SOC_ENUM_SINGLE_EXT_DECL(mi2s_rx_format, bit_format_text);
 static SOC_ENUM_SINGLE_EXT_DECL(mi2s_tx_format, bit_format_text);
 static SOC_ENUM_SINGLE_EXT_DECL(hifi_function, hifi_text);
+static SOC_ENUM_SINGLE_EXT_DECL(slim_8_tx_chs, slim_tx_ch_text);
 
 static struct platform_device *spdev;
 static int msm_hifi_control;
@@ -767,6 +772,8 @@ static int slim_get_port_idx(struct snd_kcontrol *kcontrol)
 		port_id = SLIM_TX_0;
 	else if (strnstr(kcontrol->id.name, "SLIM_1_TX", sizeof("SLIM_1_TX")))
 		port_id = SLIM_TX_1;
+	else if (strnstr(kcontrol->id.name, "SLIM_8_TX", sizeof("SLIM_8_TX")))
+		port_id = SLIM_TX_8;
 	else {
 		pr_err("%s: unsupported channel: %s",
 			__func__, kcontrol->id.name);
@@ -1053,6 +1060,94 @@ static int msm_bt_sample_rate_put(struct snd_kcontrol *kcontrol,
 		 slim_rx_cfg[SLIM_RX_7].sample_rate,
 		 slim_tx_cfg[SLIM_TX_7].sample_rate,
 		 ucontrol->value.enumerated.item[0]);
+
+	return 0;
+}
+
+static int msm_bt_sample_rate_rx_get(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (slim_rx_cfg[SLIM_RX_7].sample_rate) {
+	case SAMPLING_RATE_48KHZ:
+		ucontrol->value.integer.value[0] = 2;
+		break;
+	case SAMPLING_RATE_16KHZ:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SAMPLING_RATE_8KHZ:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: sample rate = %d", __func__,
+		slim_rx_cfg[SLIM_RX_7].sample_rate);
+
+	return 0;
+}
+
+static int msm_bt_sample_rate_rx_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		slim_rx_cfg[SLIM_RX_7].sample_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 2:
+		slim_rx_cfg[SLIM_RX_7].sample_rate = SAMPLING_RATE_48KHZ;
+		break;
+	case 0:
+	default:
+		slim_rx_cfg[SLIM_RX_7].sample_rate = SAMPLING_RATE_8KHZ;
+		break;
+	}
+	pr_debug("%s: sample rates: slim7_rx = %d, value = %d\n",
+		 __func__,
+		slim_rx_cfg[SLIM_RX_7].sample_rate,
+		ucontrol->value.enumerated.item[0]);
+
+	return 0;
+}
+
+static int msm_bt_sample_rate_tx_get(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (slim_tx_cfg[SLIM_TX_7].sample_rate) {
+	case SAMPLING_RATE_48KHZ:
+		ucontrol->value.integer.value[0] = 2;
+		break;
+	case SAMPLING_RATE_16KHZ:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+	case SAMPLING_RATE_8KHZ:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+	pr_debug("%s: sample rate = %d", __func__,
+		slim_tx_cfg[SLIM_TX_7].sample_rate);
+
+	return 0;
+}
+
+static int msm_bt_sample_rate_tx_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	switch (ucontrol->value.integer.value[0]) {
+	case 1:
+		slim_tx_cfg[SLIM_TX_7].sample_rate = SAMPLING_RATE_16KHZ;
+		break;
+	case 2:
+		slim_tx_cfg[SLIM_TX_7].sample_rate = SAMPLING_RATE_48KHZ;
+		break;
+	case 0:
+	default:
+		slim_tx_cfg[SLIM_TX_7].sample_rate = SAMPLING_RATE_8KHZ;
+		break;
+	}
+	pr_debug("%s: sample rates: slim7_tx = %d, value = %d\n",
+		 __func__,
+		slim_tx_cfg[SLIM_TX_7].sample_rate,
+		ucontrol->value.enumerated.item[0]);
 
 	return 0;
 }
@@ -2654,6 +2749,12 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 	SOC_ENUM_EXT("BT SampleRate", bt_sample_rate,
 			msm_bt_sample_rate_get,
 			msm_bt_sample_rate_put),
+	SOC_ENUM_EXT("BT SampleRate RX", bt_sample_rate_rx,
+			msm_bt_sample_rate_rx_get,
+			msm_bt_sample_rate_rx_put),
+	SOC_ENUM_EXT("BT SampleRate TX", bt_sample_rate_tx,
+			msm_bt_sample_rate_tx_get,
+			msm_bt_sample_rate_tx_put),
 	SOC_ENUM_EXT("USB_AUDIO_RX SampleRate", usb_rx_sample_rate,
 			usb_audio_rx_sample_rate_get,
 			usb_audio_rx_sample_rate_put),
@@ -2820,6 +2921,8 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			msm_mi2s_tx_format_get, msm_mi2s_tx_format_put),
 	SOC_ENUM_EXT("HiFi Function", hifi_function, msm_hifi_get,
 			msm_hifi_put),
+	SOC_ENUM_EXT("SLIM_8_TX Channels", slim_8_tx_chs,
+			msm_slim_tx_ch_get, msm_slim_tx_ch_put),
 };
 
 static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec,
@@ -5555,6 +5658,38 @@ static struct snd_soc_dai_link msm_tavil_fe_dai_links[] = {
 		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
 		.ops = &msm_slimbus_2_be_ops,
 	},
+#ifdef CONFIG_SND_SOC_TDM_INTF
+	{
+		.name = "Tertiary TDM RX 0 Hostless",
+		.stream_name = "Tertiary TDM0 Hostless Playback",
+		.cpu_dai_name = "TERT_TDM_RX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Tertiary TDM TX 0 Hostless",
+		.stream_name = "Tertiary TDM0 Hostless Capture",
+		.cpu_dai_name = "TERT_TDM_TX_0_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+#else
 	{
 		.name = "Tertiary MI2S RX_Hostless",
 		.stream_name = "Tertiary MI2S_RX Hostless Playback",
@@ -5585,6 +5720,7 @@ static struct snd_soc_dai_link msm_tavil_fe_dai_links[] = {
 		.codec_dai_name = "snd-soc-dummy-dai",
 		.codec_name = "snd-soc-dummy",
 	},
+#endif
 	{
 		.name = "QUAT_AUXPCM Hostless",
 		.stream_name = "QUAT_AUXPCM Hostless",

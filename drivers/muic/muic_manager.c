@@ -35,6 +35,10 @@
 #endif
 
 #include <linux/muic/muic.h>
+#include <linux/ccic/s2mm005.h>
+#include <linux/muic/s2mu004-muic.h>
+#include <linux/muic/s2mu004-muic-hv.h>
+
 #if defined(CONFIG_IFCONN_NOTIFIER)
 #include <linux/ifconn/ifconn_notifier.h>
 #endif
@@ -49,10 +53,6 @@
 
 #if defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
 #include <linux/usb/manager/usb_typec_manager_notifier.h>
-#endif
-
-#if defined(CONFIG_MUIC_HV)
-#include "muic_hv.h"
 #endif
 
 #define MUIC_CCIC_NOTI_ATTACH (1)
@@ -118,9 +118,6 @@ static void _muic_manager_switch_usb_path(struct muic_interface_t *muic_if, int 
 
 static int muic_manager_switch_path(struct muic_interface_t *muic_if, int path)
 {
-#if defined(CONFIG_MUIC_HV)
-	hv_clear_hvcontrol(muic_if->phv);
-#endif
 	switch (path) {
 	case MUIC_PATH_OPEN:
 		muic_if->set_com_to_open_with_vbus(muic_if->muic_data);
@@ -131,7 +128,11 @@ static int muic_manager_switch_path(struct muic_interface_t *muic_if, int path)
 		_muic_manager_switch_usb_path(muic_if, muic_if->pdata->usb_path);
 		break;
 	case MUIC_PATH_UART_AP:
+		muic_if->pdata->uart_path = MUIC_PATH_UART_AP;
+		_muic_manager_switch_uart_path(muic_if, muic_if->pdata->uart_path);
+		break;
 	case MUIC_PATH_UART_CP:
+		muic_if->pdata->uart_path = MUIC_PATH_UART_CP;
 		_muic_manager_switch_uart_path(muic_if, muic_if->pdata->uart_path);
 		break;
 
@@ -207,9 +208,6 @@ void muic_manager_handle_ccic_detach(struct muic_interface_t *muic_if)
 
 	pr_info("%s\n", __func__);
 
-#if defined(CONFIG_MUIC_HV)
-	hv_do_detach(muic_if->phv);
-#endif
 	if (ccic->ccic_evt_rprd) {
 		/* FIXME : pvendor
 		 * if (pvendor && pvendor->enable_chgdet)
@@ -228,6 +226,8 @@ void muic_manager_handle_ccic_detach(struct muic_interface_t *muic_if)
 	if (pdata->jig_uart_cb)
 		pdata->jig_uart_cb(0);
 
+	muic_if->reset_hvcontrol_reg(muic_if->muic_data);
+
 	/* Reset status & flags */
 	ccic->attached_dev = 0;
 	ccic->ccic_evt_rid = 0;
@@ -236,12 +236,13 @@ void muic_manager_handle_ccic_detach(struct muic_interface_t *muic_if)
 	ccic->ccic_evt_dcdcnt = 0;
 	ccic->ccic_evt_attached = MUIC_CCIC_NOTI_UNDEFINED;
 
+	muic_if->is_ccic_rp56_enable = false;
 	muic_if->legacy_dev = 0;
 	muic_if->attached_dev = 0;
-#if defined(CONFIG_MUIC_HV)
-	muic_if->phv->attached_dev = 0;
-#endif
+	
 	muic_if->is_dcdtmr_intr = false;
+
+	pdata->attached_dev = 0;
 }
 
 void muic_manager_set_legacy_dev(struct muic_interface_t *muic_if, int new_dev)
@@ -378,6 +379,35 @@ static bool muic_manager_is_valid_rid_open(struct muic_interface_t *muic_if, int
 	return 0;
 }
 
+static int muic_check_is_enable_afc(struct muic_interface_t *muic_if)
+{
+	struct s2mu004_muic_data *muic_data = (struct s2mu004_muic_data *)muic_if->muic_data;
+
+	if (muic_if->afc_water_disable) {
+			pr_info("%s: AFC is disable by water detection.\n", __func__);
+			return 0;
+	}
+
+	switch (muic_if->pdata->attached_dev) {
+	case ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC:
+	case ATTACHED_DEV_AFC_CHARGER_5V_MUIC:
+		pr_info("%s: 9V HV Charging Try!\n", __func__);
+		s2mu004_hv_muic_set_afc_after_prepare(muic_data);
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static void muic_manager_handle_role_swap_fail(struct muic_interface_t *muic_if)
+{
+	pr_info("%s: Re detect the attached cable!\n", __func__);
+
+	muic_if->muic_detect_dev(muic_if->muic_data);
+}
+
 static int muic_manager_handle_ccic_attach(struct muic_interface_t *muic_if, void *data)
 {
 	struct ccic_desc_t *ccic = muic_if->ccic;
@@ -400,6 +430,43 @@ static int muic_manager_handle_ccic_attach(struct muic_interface_t *muic_if, voi
 	if (ccic->ccic_evt_attached == MUIC_CCIC_NOTI_ATTACH) {
 		pr_info("%s: Attach\n", __func__);
 
+		switch (pnoti->cable_type) {
+		case Rp_56K:
+			pr_info("%s: Rp_56K.\n", __func__);
+			if (!muic_if->is_ccic_rp56_enable) {
+				muic_if->is_ccic_rp56_enable = true;
+
+				muic_check_is_enable_afc(muic_if);
+			}
+			break;
+		case Rp_10K:
+			pr_info("%s: Rp_10K, just return.\n", __func__);
+			break;
+		case Rp_Abnormal:
+#if IS_ENABLED(CONFIG_SEC_FACTORY)
+			pr_info("%s: CC or SBU short.(Factory Mode)\n", __func__);
+			muic_check_is_enable_afc(muic_if);
+			break;
+#else
+			pr_info("%s: CC or SBU short.\n", __func__);
+			/* Chgtype re-detect for AFC detach -> TA attach */
+			switch (muic_if->pdata->attached_dev) {
+			case ATTACHED_DEV_AFC_CHARGER_5V_MUIC:
+			case ATTACHED_DEV_AFC_CHARGER_9V_MUIC:
+			case ATTACHED_DEV_QC_CHARGER_5V_MUIC:
+			case ATTACHED_DEV_QC_CHARGER_9V_MUIC:
+				pr_info("%s: CC or SBU short. Chgdet Re-run.\n", __func__);
+				muic_if->reset_hvcontrol_reg(muic_if->muic_data);
+				muic_if->refresh_dev(muic_if->muic_data, ATTACHED_DEV_TA_MUIC);
+				break;
+			default:
+				break;
+			}
+#endif
+		default:
+			break;
+		}
+		
 		if (ccic->ccic_evt_roleswap) {
 			pr_info("%s: roleswap event, attach USB\n", __func__);
 			ccic->ccic_evt_roleswap = 0;
@@ -437,6 +504,7 @@ static int muic_manager_handle_ccic_attach(struct muic_interface_t *muic_if, voi
 			muic_if->afc_water_disable = false;
 		}
 
+#if !defined(CONFIG_MUIC_KEYBOARD)
 		/* W/A for Incomplete insertion case */
 		ccic->ccic_evt_dcdcnt = 0;
 		if (muic_if->is_dcdtmr_intr && vbus) {
@@ -450,7 +518,7 @@ static int muic_manager_handle_ccic_attach(struct muic_interface_t *muic_if, voi
 			if (muic_if->set_dcd_rescan != NULL)
 				muic_if->set_dcd_rescan(muic_if->muic_data);
 		}
-
+#endif
 	} else {
 		if (pnoti->rprd) {
 			/* Role swap detach: attached=0, rprd=1 */
@@ -506,6 +574,13 @@ static int muic_manager_handle_ccic_factory_jig(struct muic_interface_t *muic_if
 
 		ccic->attached_dev = attached_dev;
 		muic_if->set_cable_state(muic_if->muic_data, ccic->attached_dev);
+#if defined(CONFIG_MUIC_KEYBOARD)
+		if (muic_if->rid_detection == false) {
+			pr_info("%s, Enable rid detection\n", __func__);
+			s2mu004_muic_control_rid_adc(muic_if->muic_data, S2MU004_ENABLE);
+			muic_if->rid_detection = true;
+		}
+#endif
 		MUIC_SEND_NOTI_ATTACH(attached_dev);
 	}
 
@@ -598,9 +673,6 @@ static int muic_manager_handle_ccic_water(struct muic_interface_t *muic_if, void
 	pr_info("%s: src:%d dest:%d id:%d attach:%d cable_type:%d rprd:%d\n", __func__,
 		pnoti->src, pnoti->dest, pnoti->id, pnoti->attach, pnoti->cable_type, pnoti->rprd);
 
-	muic_if->afc_water_disable = pnoti->attach ? true : false;
-	muic_if->set_water_detect(muic_if->muic_data, muic_if->afc_water_disable);
-
 	pr_info("%s: Water detect : %s\n", __func__, pnoti->attach ? "en":"dis");
 
 	return 0;
@@ -628,6 +700,8 @@ static int muic_manager_handle_notification(struct notifier_block *nb,
 	int attach = CCIC_NOTIFY_ID_ATTACH;
 	int rid = CCIC_NOTIFY_ID_RID;
 	int water = CCIC_NOTIFY_ID_WATER;
+	int dry	= CCIC_NOTIFY_ID_DRY;
+	int swap_fail = CCIC_NOTIFY_ID_ROLE_SWAP_FAIL;
 #ifdef CONFIG_USB_TYPEC_MANAGER_NOTIFIER
 	if (pnoti->dest != CCIC_NOTIFY_DEV_MUIC) {
 		pr_info("%s destination id is invalid\n", __func__);
@@ -641,6 +715,8 @@ static int muic_manager_handle_notification(struct notifier_block *nb,
 
 	muic_manager_show_status(muic_if);
 
+	mutex_lock(&muic_if->cable_priority_mutex);
+
 	if (pnoti->id == attach) {
 		pr_info("%s: NOTIFY_ID_ATTACH: %s\n", __func__,
 			pnoti->sub1 ? "Attached" : "Detached");
@@ -650,12 +726,21 @@ static int muic_manager_handle_notification(struct notifier_block *nb,
 		muic_manager_handle_ccic_rid(muic_if, data);
 	} else if (pnoti->id == water) {
 		pr_info("%s: NOTIFY_ID_WATER\n", __func__);
+		muic_if->afc_water_disable = true;
 		muic_manager_handle_ccic_water(muic_if, data);
+	} else if (pnoti->id == dry) {
+		pr_info("%s: NOTIFY_ID_DRY\n", __func__);
+		muic_if->afc_water_disable = false;
+	} else if (pnoti->id == swap_fail) {
+		pr_info("%s: NOTIFY_ROLE_SWAP_FAIL\n", __func__);
+		muic_manager_handle_role_swap_fail(muic_if);
 	} else {
 		pr_info("%s: Undefined Noti. ID\n", __func__);
 	}
 
 	muic_manager_show_status(muic_if);
+
+	mutex_unlock(&muic_if->cable_priority_mutex);
 
 	return NOTIFY_DONE;
 }
@@ -749,6 +834,7 @@ struct muic_interface_t *muic_manager_init(void *pdata, void *drv_data)
 	muic_if->opmode = get_ccic_info() & 0xF;
 	muic_if->is_dcdtmr_intr = false;
 	muic_if->is_afc_pdic_ready = false;
+	muic_if->is_ccic_rp56_enable = false;
 #ifdef CONFIG_IFCONN_NOTIFIER
 	ret = ifconn_notifier_register(&muic_if->nb,
 				       muic_manager_handle_notification,

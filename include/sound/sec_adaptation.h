@@ -93,7 +93,7 @@ struct afe_dsm_filter_set_params_t {
 struct afe_dsm_spkr_prot_set_command {
 	struct apr_hdr hdr;
 	struct afe_port_cmd_set_param_v2 param;
-	struct afe_port_param_data_v2 pdata;
+	struct param_hdr_v3 pdata;
 	struct afe_dsm_filter_set_params_t set_config;
 } __packed;
 
@@ -164,14 +164,14 @@ struct afe_dsm_filter_get_params_t {
 
 struct afe_dsm_spkr_prot_get_command {
 	struct apr_hdr hdr;
-	struct afe_port_cmd_get_param_v2 get_param;
-	struct afe_port_param_data_v2 pdata;
+	struct mem_mapping_hdr mem_hdr;
+	struct param_hdr_v1 pdata;
 	struct afe_dsm_filter_get_params_t res_cfg;
 } __packed;
 
 struct afe_dsm_spkr_prot_response_data {
 	uint32_t status;
-	struct afe_port_param_data_v2 pdata;
+	struct param_hdr_v1 pdata;
 	struct afe_dsm_filter_get_params_t res_cfg;
 } __packed;
 
@@ -185,14 +185,14 @@ struct afe_dsm_filter_get_log_params_t {
 
 struct afe_dsm_spkr_prot_get_log_command {
 	struct apr_hdr hdr;
-	struct afe_port_cmd_get_param_v2 get_param;
-	struct afe_port_param_data_v2 pdata;
+	struct mem_mapping_hdr mem_hdr;
+	struct param_hdr_v1 pdata;
 	struct afe_dsm_filter_get_log_params_t res_log_cfg;
 } __packed;
 
 struct afe_dsm_spkr_prot_response_log_data {
 	uint32_t status;
-	struct afe_port_param_data_v2 pdata;
+	struct param_hdr_v1 pdata;
 	struct afe_dsm_filter_get_log_params_t res_log_cfg;
 } __packed;
 
@@ -219,35 +219,32 @@ static inline int maxim_dsm_read(int offset, int size, void *dsm_data)
 /****************************************************************************/
 /*//////////////////////////// AUDIO SOLUTION //////////////////////////////*/
 /****************************************************************************/
-#define ADM_MODULE_ID_PP_SS_REC             0x10001050
-#define ADM_PARAM_ID_PP_SS_REC_GETPARAMS    0x10001052
+#define MODULE_ID_PP_SS_REC             0x10001050
+#define PARAM_ID_PP_SS_REC_GETPARAMS    0x10001052
 
-#define ASM_MODULE_ID_PP_SA                 0x10001fa0
-#define ASM_PARAM_ID_PP_SA_PARAMS           0x10001fa1
+#define MODULE_ID_PP_SA                 0x10001fa0
+#define PARAM_ID_PP_SA_PARAMS           0x10001fa1
 
-#define ASM_MODULE_ID_PP_SA_VSP             0x10001fb0
-#define ASM_PARAM_ID_PP_SA_VSP_PARAMS       0x10001fb1
+#define MODULE_ID_PP_SA_VSP             0x10001fb0
+#define PARAM_ID_PP_SA_VSP_PARAMS       0x10001fb1
 
-#define ASM_MODULE_ID_PP_ADAPTATION_SOUND		 0x10001fc0
-#define ASM_PARAM_ID_PP_ADAPTATION_SOUND_PARAMS  0x10001fc1
+#define MODULE_ID_PP_ADAPTATION_SOUND		 0x10001fc0
+#define PARAM_ID_PP_ADAPTATION_SOUND_PARAMS  0x10001fc1
 
-#define ASM_MODULE_ID_PP_LRSM               0x10001fe0
-#define ASM_PARAM_ID_PP_LRSM_PARAMS         0x10001fe1
+#define MODULE_ID_PP_LRSM               0x10001fe0
+#define PARAM_ID_PP_LRSM_PARAMS         0x10001fe1
 
-#define ASM_MODULE_ID_PP_SA_MSP             0x10001ff0
-#define ASM_MODULE_ID_PP_SA_MSP_PARAM       0x10001ff1
+#define MODULE_ID_PP_SA_MSP             0x10001ff0
+#define MODULE_ID_PP_SA_MSP_PARAM       0x10001ff1
 
-#define ASM_MODULE_ID_PP_SB                 0x10001f01
-#define ASM_PARAM_ID_PP_SB_PARAM            0x10001f04
+#define MODULE_ID_PP_SB                 0x10001f01
+#define PARAM_ID_PP_SB_PARAM            0x10001f04
+#define PARAM_ID_PP_SB_ROTATION_PARAM	0x10001f02
 
-#define ASM_MODULE_ID_PP_SA_UPSCALER_COLOR            0x10001f20
-#define ASM_PARAM_ID_PP_SA_UPSCALER_COLOR_PARAMS      0x10001f21
+#define MODULE_ID_PP_SA_UPSCALER_COLOR            0x10001f20
+#define PARAM_ID_PP_SA_UPSCALER_COLOR_PARAMS      0x10001f21
 
 struct asm_stream_cmd_set_pp_params_sa {
-	struct apr_hdr	hdr;
-	struct asm_stream_cmd_set_pp_params_v2 param;
-	struct asm_stream_param_data_v2 data;
-
 	int16_t OutDevice;
 	int16_t Preset;
 	int32_t EqLev[9];
@@ -269,56 +266,74 @@ struct asm_stream_cmd_set_pp_params_sa {
 } __packed;
 
 struct asm_stream_cmd_set_pp_params_vsp {
-	struct apr_hdr	hdr;
-	struct asm_stream_cmd_set_pp_params_v2 param;
-	struct asm_stream_param_data_v2 data;
-
 	uint32_t speed_int;
 } __packed;
 
 struct asm_stream_cmd_set_pp_params_adaptation_sound {
-	struct apr_hdr	hdr;
-	struct asm_stream_cmd_set_pp_params_v2 param;
-	struct asm_stream_param_data_v2 data;
-
 	int32_t enable;
 	int16_t gain[2][6];
 	int16_t device;
 } __packed;
 
 struct asm_stream_cmd_set_pp_params_lrsm {
-	struct apr_hdr	hdr;
-	struct asm_stream_cmd_set_pp_params_v2 param;
-	struct asm_stream_param_data_v2 data;
-
 	int16_t sm;
 	int16_t lr;
 } __packed;
 
 struct asm_stream_cmd_set_pp_params_msp {
-	struct apr_hdr	hdr;
-	struct asm_stream_cmd_set_pp_params_v2 param;
-	struct asm_stream_param_data_v2 data;
-
 	uint32_t msp_int;
 } __packed;
 
 struct asm_stream_cmd_set_pp_params_sb {
-	struct apr_hdr	hdr;
-	struct asm_stream_cmd_set_pp_params_v2 param;
-	struct asm_stream_param_data_v2 data;
-
 	uint32_t sb_enable;
 } __packed;
 
 struct asm_stream_cmd_set_pp_params_upscaler {
-	struct apr_hdr	hdr;
-	struct asm_stream_cmd_set_pp_params_v2 param;
-	struct asm_stream_param_data_v2 data;
-
 	uint32_t upscaler_enable;
 } __packed;
 
+struct asm_stream_cmd_set_pp_params_sb_rotation {
+	uint32_t sb_rotation;
+} __packed;
+
+/*  Payload an #ADM_CMD_GET_PP_PARAMS_V5 command.
+*/
+struct adm_cmd_get_pp_params_v5 {
+	struct apr_hdr hdr;
+	u32                  data_payload_addr_lsw;
+	/* LSW of parameter data payload address.*/
+
+	u32                  data_payload_addr_msw;
+	/* MSW of parameter data payload address.*/
+
+	/* If the mem_map_handle is non zero,
+	 * on ACK, the ParamData payloads begin at
+	 * the address specified (out-of-band).
+	 */
+
+	u32                  mem_map_handle;
+	/* Memory map handle returned
+	 * by ADM_CMD_SHARED_MEM_MAP_REGIONS command.
+	 * If the mem_map_handle is 0, it implies that
+	 * the ACK's payload will contain the ParamData (in-band).
+	 */
+
+	u32                  module_id;
+	/* Unique ID of the module. */
+
+	u32                  param_id;
+	/* Unique ID of the parameter. */
+
+	u16                  param_max_size;
+	/* Maximum data size of the parameter
+	 *ID/module ID combination. This
+	 * field is a multiple of 4 bytes.
+	 */
+	u16                  reserved;
+	/* Reserved for future enhancements.
+	 * This field must be set to zero.
+	 */
+} __packed;
 /****************************************************************************/
 /*//////////////////////////// VOICE SOLUTION //////////////////////////////*/
 /****************************************************************************/
@@ -330,6 +345,7 @@ struct asm_stream_cmd_set_pp_params_upscaler {
 #define VOICE_TX_DIAMONDVOICE_FVSAM_SM      0x1000110B
 #define VOICE_TX_DIAMONDVOICE_FVSAM_DM      0x1000110A
 #define VOICE_TX_DIAMONDVOICE_FVSAM_QM      0x10001109
+#define VOICE_TX_DIAMONDVOICE_FRSAM_DM      0x1000110C
 
 #define VOICEPROC_MODULE_VENC				0x00010F07
 #define VOICE_PARAM_LOOPBACK_ENABLE			0x00010E18
@@ -345,6 +361,15 @@ struct asm_stream_cmd_set_pp_params_upscaler {
 
 #define VOICE_MODULE_SET_DEVICE				0x10041000
 #define VOICE_MODULE_SET_DEVICE_PARAM		0x10041001
+
+struct vss_icommon_cmd_set_ui_property_enable_t {
+	uint32_t module_id;
+	uint32_t param_id;
+	uint16_t param_size;
+	uint16_t reserved;
+	uint16_t enable;
+	uint16_t reserved_field;
+};
 
 struct vss_icommon_cmd_set_loopback_enable_t {
 	uint32_t module_id;
@@ -390,6 +415,21 @@ struct cvp_adaptation_sound_parm_send_cmd {
 	uint32_t mem_address_msw;
 	uint32_t mem_size;
 	struct cvp_adaptation_sound_parm_send_t adaptation_sound_data;
+} __packed;
+
+struct cvp_set_nbmode_enable_cmd {
+	struct apr_hdr hdr;
+	struct vss_icommon_cmd_set_ui_property_enable_t cvp_set_nbmode;
+} __packed;
+
+struct cvp_set_spkmode_enable_cmd {
+	struct apr_hdr hdr;
+	struct vss_icommon_cmd_set_ui_property_enable_t cvp_set_spkmode;
+} __packed;
+
+struct cvp_set_device_info_cmd {
+	struct apr_hdr hdr;
+	struct vss_icommon_cmd_set_ui_property_enable_t cvp_set_device_info;
 } __packed;
 
 void voice_sec_loopback_start_cmd(u32 session_id);

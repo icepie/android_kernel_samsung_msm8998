@@ -942,8 +942,8 @@ static ssize_t store_nad_qmvs_main(struct device *dev,
 			if (ret != 1)
 				return -EINVAL;
 
-		if(running_time==9999)
-			main_reboot = 1;
+		main_reboot = 1;
+
 		nad_test_mode = MAIN_QMVS;
 
 		do_qmvs(MAIN_QMVS);

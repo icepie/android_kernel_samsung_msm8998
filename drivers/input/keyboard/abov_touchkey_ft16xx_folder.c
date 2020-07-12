@@ -143,7 +143,7 @@ struct light_info tkey_light_voltage_table[LIGHT_TABLE_MAX] =
 /**************************************************/
 
 #ifdef CONFIG_SAMSUNG_LPM_MODE
-extern int lpcharge;
+extern unsigned int lpcharge;
 #endif
 extern unsigned int system_rev;
 extern struct class *sec_class;

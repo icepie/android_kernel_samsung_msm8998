@@ -140,6 +140,14 @@ enum tfa98xx_error tfa_cont_write_files(int dev_idx);
 unsigned int tfa98xx_get_profile_sr(int dev_idx, unsigned int prof_idx);
 
 /**
+ * Get channel selection from passed profile index
+ * @param dev_idx the index of the device
+ * @param prof_idx the index of the profile
+ * @return CHSA value (Max1)
+ */
+unsigned int tfa98xx_get_profile_chsa(int dev_idx, unsigned int prof_idx);
+
+/**
  * Open the specified device after looking up the target address.
  * @param dev_idx the index of the device
  * @return Tfa98xx_Error
@@ -181,6 +189,14 @@ int tfa_cont_get_cal_profile(int dev_idx);
  * @return 1 if the profile is a tap profile or 0 if not
  */
 int tfa_cont_is_tap_profile(int dev_idx, int prof_idx);
+
+/**
+ * Is the profile specific to device ?
+ * @param dev_idx the index of the device
+ * @param prof_idx the index of the profile
+ * @return 1 if the profile belongs to device or 0 if not
+ */
+int tfa_cont_is_dev_specific_profile(int dev_idx, int prof_idx);
 
 /**
  * Get the name of the profile at certain index for a device in container file

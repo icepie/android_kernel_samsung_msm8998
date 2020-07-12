@@ -254,7 +254,7 @@ if [ -n "${CONFIG_RKP_CFP}" ]; then
 	"${srctree}/scripts/rkp_cfp/instrument.py" --vmlinux "${objtree}/vmlinux" --config "${objtree}/.config"  --inplace
 fi
 
-if [ -n "${CONFIG_RELOCATABLE_KERNEL}" ]; then
+if [ -n "${CONFIG_RELOCATABLE_KERNEL}" ] || [ -n "${CONFIG_RANDOMIZE_BASE}" ] ; then
     if [ -n "${CONFIG_CRYPTO_FIPS}" ] && [ -n "${CONFIG_FIPS_FMP}" ] ; then
 	echo '  FIPS with KALSR : Generating hmac of crypto and fmp, then update vmlinux... '
 	${CONFIG_SHELL} "${srctree}/scripts/kaslr_fips_fmp_hmac.sh" "${objtree}/vmlinux" "${objtree}/System.map"

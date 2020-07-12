@@ -38,6 +38,14 @@ struct regulator *ana_reg;
 #define CDBG(fmt, args...) do { } while (0)
 #endif
 
+#if defined(CONFIG_SEC_GREATQLTE_PROJECT)
+#define I2C_ADAPTER_LOCK //add i2c lock for avoided i2c conflict with nfc
+#endif
+
+#ifdef I2C_ADAPTER_LOCK
+extern struct i2c_adapter *g_msm_ois_i2c_adapter;
+#endif
+
 int sensor_power_on_cnt;
 bool g_shared_gpio;
 int g_shared_gpio_cnt;
@@ -445,7 +453,23 @@ int msm_sensor_get_sub_module_index(struct device_node *of_node,
 		of_node_put(src_node);
 		src_node = NULL;
 	}
-
+#if defined(CONFIG_SAMSUNG_APERTURE)
+	src_node = of_parse_phandle(of_node, "qcom,aperture-src", 0);
+	if (!src_node) {
+		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
+	} else {
+		rc = of_property_read_u32(src_node, "cell-index", &val);
+		pr_err("[APE_DBG]%s qcom,aperture cell index %d, rc %d\n", __func__,
+			val, rc);
+		if (rc < 0) {
+			pr_err("%s failed %d\n", __func__, __LINE__);
+			goto ERROR;
+		}
+		sensor_info->subdev_id[SUB_MODULE_APERTURE] = val;
+		of_node_put(src_node);
+		src_node = NULL;
+	}
+#endif
 	src_node = of_parse_phandle(of_node, "qcom,eeprom-src", 0);
 	if (!src_node) {
 		CDBG("%s:%d eeprom src_node NULL\n", __func__, __LINE__);
@@ -1526,7 +1550,7 @@ ERROR:
 int msm_camera_get_dt_camera_info(struct device_node *of_node, char *buf)
 {
 	int rc = 0, val = 0;
-	char camera_info[100] = {0, };
+	char camera_info[150] = {0, };
 
 	rc = of_property_read_u32(of_node, "cam,isp",
 			&val);
@@ -1713,7 +1737,7 @@ int msm_camera_get_dt_camera_info(struct device_node *of_node, char *buf)
 			break;
 	}
 
-    rc = of_property_read_u32(of_node, "cam,valid",
+	rc = of_property_read_u32(of_node, "cam,valid",
 			&val);
 	if (rc < 0) {
 		pr_err("%s failed %d\n", __func__, __LINE__);
@@ -1731,6 +1755,27 @@ int msm_camera_get_dt_camera_info(struct device_node *of_node, char *buf)
 			strcat(camera_info, "NULL;");
 			break;
 	}
+
+#if defined (CONFIG_SEC_GREATQLTE_PROJECT)
+	rc = of_property_read_u32(of_node, "cam,dual_open",
+			&val);
+	if (rc < 0) {
+		pr_err("%s failed %d\n", __func__, __LINE__);
+		goto ERROR1;
+	}
+	strcat(camera_info, "DUALOPEN=");
+	switch(val) {
+		case CAM_INFO_DUAL_NONE :
+			strcat(camera_info, "N;");
+			break;
+		case CAM_INFO_DUAL_USE :
+			strcat(camera_info, "Y;");
+			break;
+		default :
+			strcat(camera_info, "NULL;");
+			break;
+	}
+#endif
 
 	snprintf(buf, sizeof(camera_info), "%s", camera_info);
 	return 0;
@@ -2054,6 +2099,13 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 	struct msm_sensor_power_setting *power_setting = NULL;
 	bool skip_gpio = false;
 	int i;
+#ifdef I2C_ADAPTER_LOCK
+	struct i2c_adapter *adapter = NULL;
+	if (g_msm_ois_i2c_adapter)
+		adapter = g_msm_ois_i2c_adapter;
+	else
+		pr_err("%s: g_msm_ois_i2c_adapter is NULL\n", __func__);
+#endif
 
 	pr_info("%s:%d [POWER_DBG] : E requested by %d sub deivce\n",
 		__func__, __LINE__, sub_device);
@@ -2211,10 +2263,27 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 						break;
 					}
 				}
+#ifdef I2C_ADAPTER_LOCK
+				// only for expander gpio 14
+				if (adapter &&
+					ctrl->gpio_conf->gpio_num_info->gpio_num[power_setting->seq_val] == 314) {
+					pr_info("%s: i2c_lock_adapter\n", __func__);
+					i2c_lock_adapter(adapter);
+				}
+#endif
 				gpio_set_value_cansleep(
 					ctrl->gpio_conf->gpio_num_info->gpio_num
 					[power_setting->seq_val],
 					(int) power_setting->config_val);
+#ifdef I2C_ADAPTER_LOCK
+				// only for expander gpio 14
+				if (adapter &&
+					ctrl->gpio_conf->gpio_num_info->gpio_num[power_setting->seq_val] == 314) {
+					usleep_range(1500, 2000);
+					i2c_unlock_adapter(adapter);
+					pr_info("%s: i2c_unlock_adapter\n", __func__);
+				}
+#endif
 			}
 			break;
 		case SENSOR_VREG:
@@ -2489,6 +2558,13 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 	struct msm_sensor_power_setting *ps;
 	bool skip_gpio = false;
 	int i;
+#ifdef I2C_ADAPTER_LOCK
+	struct i2c_adapter *adapter = NULL;
+	if (g_msm_ois_i2c_adapter)
+		adapter = g_msm_ois_i2c_adapter;
+	else
+		pr_err("%s: g_msm_ois_i2c_adapter is NULL\n", __func__);
+#endif
 
 	pr_info("%s:%d [POWER_DBG] : E\n", __func__, __LINE__);
 	if (!ctrl || !sensor_i2c_client) {
@@ -2569,10 +2645,27 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 					    break;
 					}
 				}
+#ifdef I2C_ADAPTER_LOCK
+				// only for expander gpio 14
+				if (adapter &&
+					ctrl->gpio_conf->gpio_num_info->gpio_num[pd->seq_val] == 314) {
+					pr_info("%s: i2c_lock_adapter\n", __func__);
+					i2c_lock_adapter(adapter);
+				}
+#endif
 				gpio_set_value_cansleep(
 					ctrl->gpio_conf->gpio_num_info->gpio_num
 					[pd->seq_val],
 					(int) pd->config_val);
+#ifdef I2C_ADAPTER_LOCK
+				// only for expander gpio 14
+				if (adapter &&
+					ctrl->gpio_conf->gpio_num_info->gpio_num[pd->seq_val] == 314) {
+					usleep_range(1500, 2000);
+					i2c_unlock_adapter(adapter);
+					pr_info("%s: i2c_unlock_adapter\n", __func__);
+				}
+#endif
 			}
 			break;
 		case SENSOR_VREG:

@@ -372,6 +372,11 @@ static int msm_companion_read_cal_tbl(struct companion_device *companion_dev, ui
 	struct msm_camera_i2c_client *client = &companion_dev->companion_i2c_client;
 	int rc = 0;
 
+	if ((companion_dev->device_type != MSM_CAMERA_SPI_DEVICE) ||
+		(client->spi_client == NULL)) {
+		return rc;
+	}
+
 	rc = client->i2c_func_tbl->i2c_write(
 	client, 0x642C, (offset & 0xFFFF0000) >> 16, MSM_CAMERA_I2C_WORD_DATA);
 	if (rc < 0)
@@ -1974,6 +1979,11 @@ static int msm_companion_read_stats2(struct companion_device *companion_dev, uin
 
 	CDBG("[syscamera][%s::%d] Enter\n", __FUNCTION__, __LINE__);
 
+	if ((companion_dev->device_type != MSM_CAMERA_SPI_DEVICE) ||
+		(client->spi_client == NULL)) {
+		return rc;
+	}
+
 	rc = client->i2c_func_tbl->i2c_write(
 		client, 0x642c, STAT2_READREG_ADDR_MSB, MSM_CAMERA_I2C_WORD_DATA);
 	rc = client->i2c_func_tbl->i2c_write(
@@ -2230,6 +2240,113 @@ static int32_t msm_companion_get_subdev_id(struct companion_device *companion_de
 	CDBG("[syscamera][%s::%d]subdev_id %d\n", __FUNCTION__, __LINE__, *subdev_id);
 	return 0;
 }
+
+#if defined (CONFIG_CAMERA_SYSFS_CAMFW_ALL)
+int camera_fw_show_sub(char *path, char *buf, int startPos, int readsize)
+{
+	struct file *fp = NULL;
+	long fsize, nread;
+	int ret = 0;
+
+        CDBG("%s, %d: path %s", __func__, __LINE__, path);
+	fp = filp_open(path, O_RDONLY, 0660);
+	if (IS_ERR(fp)) {
+		pr_err("%s, %d: Camera: Failed open phone firmware", __func__, __LINE__);
+		ret = -EIO;
+		goto ERROR;
+	}
+
+	fsize = fp->f_path.dentry->d_inode->i_size;
+
+	if (startPos < 0) {
+		fp->f_pos = fsize + startPos;
+	} else {
+		fp->f_pos = startPos;
+	}
+
+	fsize = readsize;
+	nread = vfs_read(fp, (char __user *)buf, fsize, &fp->f_pos);
+	if (nread != fsize) {
+		pr_err("failed to read firmware file, %ld Bytes", nread);
+		ret = -EIO;
+	}
+
+ERROR:
+	if (fp) {
+		filp_close(fp, current->files);
+		fp = NULL;
+	}
+
+	return ret;
+}
+
+static ssize_t msm_companion_get_fw_all(char *buf)
+{
+        #define VER_MAX_SIZE 100
+	int ret;
+	mm_segment_t old_fs;
+	char fw_ver[VER_MAX_SIZE] = {0, };
+	char output[64] = {0, };
+	char path[128] = {0, };
+	int cnt = 0, loop = 0, i;
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	loop = sizeof(companion_fw_list) / sizeof(char *);
+	for(i = 0; i < loop; i++) {
+		sprintf(path, CAMERA_SYSTEM_FW_PATH"/%s", companion_fw_list[i]);
+		ret = camera_fw_show_sub(path, fw_ver,
+						(-16), 11);
+		if (ret == 0) {
+			if (cnt++ > 0)
+				strcat(output, ",");
+			strcat(output, fw_ver);
+			pr_err("%s, %d: fw_ver %s", __func__, __LINE__, fw_ver);
+			memset(fw_ver, 0, sizeof(fw_ver));
+		}
+	}
+	set_fs(old_fs);
+
+	return sprintf(buf, ";[COMPANION]%s", output);
+}
+
+static long msm_companion_fw_info(struct companion_device *companion_dev, void __user *arg)
+{
+	struct msm_phone_fw_data_t32 *data32 = (struct msm_phone_fw_data_t32 *)arg;
+	struct msm_phone_fw_data_t cfg;
+	int rc = 0;
+	int16_t valid = 0;
+	char fw[MAX_COMPANION_FW_INFO] = {0, };
+
+	if (!companion_dev || !data32) {
+		pr_err("[syscamera][%s::%d]companion_dev %p, data %p\n", __FUNCTION__, __LINE__,
+			companion_dev, data32);
+		return -EINVAL;
+	}
+
+	rc = msm_companion_get_fw_all(fw);
+	if (rc < 0) {
+		pr_err("[syscamera][%s::%d] error rc = %d\n", __FUNCTION__, __LINE__, rc);
+	} else {
+		cfg.companion_fw_all = compat_ptr(data32->companion_fw_all);
+		if (copy_to_user(cfg.companion_fw_all, fw, strlen(fw))) {
+			pr_err("[syscamera][%s::%d] copy_to_user failed\n", __FUNCTION__, __LINE__);
+			rc = -EFAULT;
+		} else {
+			valid = 1;
+			cfg.valid_companion_fw_info = compat_ptr(data32->valid_companion_fw_info);
+			if (copy_to_user(cfg.valid_companion_fw_info, &valid, sizeof(valid))) {
+				pr_err("[syscamera][%s::%d] copy_to_user failed\n", __FUNCTION__, __LINE__);
+				rc = -EFAULT;
+			}
+		}
+	}
+
+	pr_info("[syscamera][%s::%d] fw %s\n", __FUNCTION__, __LINE__, cfg.companion_fw_all);
+        return rc;
+}
+#endif
 
 static long msm_companion_subdev_ioctl(struct v4l2_subdev *sd,
 			unsigned int cmd, void *arg)
@@ -2833,6 +2950,12 @@ static long msm_companion_subdev_ioctl32(struct v4l2_subdev *sd,
 	case VIDIOC_MSM_COMPANION_IO_CFG: //203
 		rc = msm_companion_cmd32(companion_dev, arg);
 		break;
+#if defined (CONFIG_CAMERA_SYSFS_CAMFW_ALL)
+	case  VIDIOC_MSM_PHONE_FW_INFO:
+		pr_err("[syscamera][%s::%d]VIDIOC_MSM_PHONE_FW_INFO\n", __FUNCTION__, __LINE__);
+		rc = msm_companion_fw_info(companion_dev, arg);
+		break;
+#endif
 	case MSM_SD_SHUTDOWN:
 		rc = msm_companion_release(companion_dev);
 		break;
@@ -2854,6 +2977,8 @@ static long msm_companion_subdev_do_ioctl32(
 	CDBG("[syscamera][%s::%d] Enter cmd(%d)\n", __FUNCTION__, __LINE__, _IOC_NR(cmd));
 	if (cmd == VIDIOC_MSM_COMPANION_IO_CFG32)
 		cmd = VIDIOC_MSM_COMPANION_IO_CFG;
+	if (cmd == VIDIOC_MSM_PHONE_FW_INFO32)
+		cmd = VIDIOC_MSM_PHONE_FW_INFO;
 
 	return msm_companion_subdev_ioctl32(sd, cmd, arg);
 #else

@@ -130,6 +130,30 @@ char *companion_fw_name[] = {
 #define GPIO_LEVEL_HIGH       1
 #define GPIO_COMP_RSTN        315
 
+#if defined (CONFIG_CAMERA_SYSFS_CAMFW_ALL)
+#define CAMERA_SYSTEM_FW_PATH  "/system/etc/firmware"
+
+#define COMPANION_FW_QS	       "G12QS_Isp0_imx333.bin"
+#define COMPANION_FW_QY	       "G12QY_Isp0_imx333.bin"
+#define COMPANION_FW_QL        "G12QL_Isp0_s5k2l2sa.bin"
+#define COMPANION_FW_QX        "G12QX_Isp0_s5k2l2sa.bin"
+
+char *companion_fw_list[] = {
+#ifdef COMPANION_FW_QS
+	COMPANION_FW_QS,
+#endif
+#ifdef COMPANION_FW_QY
+	COMPANION_FW_QY,
+#endif
+#ifdef COMPANION_FW_QL
+	COMPANION_FW_QL,
+#endif
+#ifdef COMPANION_FW_QX
+	COMPANION_FW_QX
+#endif
+};
+#endif
+
 enum companion_state_t {
 	COMP_POWER_DOWN,
 	COMP_POWER_UP,

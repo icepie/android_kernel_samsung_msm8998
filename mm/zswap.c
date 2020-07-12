@@ -161,7 +161,7 @@ struct zswap_pool {
 	struct crypto_comp * __percpu *tfm;
 	struct kref kref;
 	struct list_head list;
-	struct rcu_head rcu_head;
+	struct work_struct work;
 	struct notifier_block notifier;
 	char tfm_name[CRYPTO_MAX_ALG_NAME];
 };
@@ -172,6 +172,7 @@ struct zswap_pool {
  * This structure contains the metadata for tracking a single compressed
  * page within zswap.
  *
+ * #ifndef CONFIG_ZSWAP_SAME_PAGE_SHARING
  * rbnode - links the entry into red-black tree for the appropriate swap type
  * offset - the swap offset for the entry.  Index into the red-black tree.
  * refcount - the number of outstanding reference to the entry. This is needed
@@ -180,31 +181,37 @@ struct zswap_pool {
  *            for the zswap_tree structure that contains the entry must
  *            be held while changing the refcount.  Since the lock must
  *            be held, there is no reason to also make refcount atomic.
- * pool - the zswap_pool the entry's data is in
- * #ifdef CONFIG_ZSWAP_SAME_PAGE_SHARING
- * zhandle - pointer to struct zswap_handle
- * #else
  * length - the length in bytes of the compressed page data.  Needed during
  *          decompression
+ * pool - the zswap_pool the entry's data is in
  * handle - zpool allocation handle that stores the compressed page data
- * #endif
  * zero_flag - the flag indicating the page for the zswap_entry is a zero page.
  *            zswap does not store the page during compression.
  *            It memsets the page with 0 during decompression.
+ * #else
+ * zhandle - pointer to struct zswap_handle where length and handle are moved into.
+ * #endif
  */
+#ifndef CONFIG_ZSWAP_SAME_PAGE_SHARING
+struct zswap_entry {
+	struct rb_node rbnode;
+	pgoff_t offset;
+	int refcount;
+	unsigned int length;
+	struct zswap_pool *pool;
+	unsigned long handle;
+	unsigned char zero_flag;
+};
+#else
 struct zswap_entry {
 	struct rb_node rbnode;
 	pgoff_t offset;
 	int refcount;
 	struct zswap_pool *pool;
-#ifdef CONFIG_ZSWAP_SAME_PAGE_SHARING
 	struct zswap_handle *zhandle;
-#else
-	unsigned int length;
-	unsigned long handle;
-#endif
 	unsigned char zero_flag;
 };
+#endif
 
 #ifdef CONFIG_ZSWAP_ENABLE_WRITEBACK
 struct zswap_header {
@@ -888,9 +895,11 @@ static int __must_check zswap_pool_get(struct zswap_pool *pool)
 	return kref_get_unless_zero(&pool->kref);
 }
 
-static void __zswap_pool_release(struct rcu_head *head)
+static void __zswap_pool_release(struct work_struct *work)
 {
-	struct zswap_pool *pool = container_of(head, typeof(*pool), rcu_head);
+	struct zswap_pool *pool = container_of(work, typeof(*pool), work);
+
+	synchronize_rcu();
 
 	/* nobody should have been able to get a kref... */
 	WARN_ON(kref_get_unless_zero(&pool->kref));
@@ -910,7 +919,9 @@ static void __zswap_pool_empty(struct kref *kref)
 	WARN_ON(pool == zswap_pool_current());
 
 	list_del_rcu(&pool->list);
-	call_rcu(&pool->rcu_head, __zswap_pool_release);
+
+	INIT_WORK(&pool->work, __zswap_pool_release);
+	schedule_work(&pool->work);
 
 	spin_unlock(&zswap_pools_lock);
 }
@@ -969,17 +980,21 @@ static int __zswap_param_set(const char *val, const struct kernel_param *kp,
 	pool = zswap_pool_find_get(type, compressor);
 	if (pool) {
 		zswap_pool_debug("using existing", pool);
+		WARN_ON(pool == zswap_pool_current());
 		list_del_rcu(&pool->list);
-	} else {
-		spin_unlock(&zswap_pools_lock);
-		pool = zswap_pool_create(type, compressor);
-		spin_lock(&zswap_pools_lock);
 	}
+
+	spin_unlock(&zswap_pools_lock);
+
+	if (!pool)
+		pool = zswap_pool_create(type, compressor);
 
 	if (pool)
 		ret = param_set_charp(s, kp);
 	else
 		ret = -EINVAL;
+
+	spin_lock(&zswap_pools_lock);
 
 	if (!ret) {
 		put_pool = zswap_pool_current();

@@ -4,14 +4,14 @@
  * This file describes the payloads of event log entries that are data buffers
  * rather than formatted string entries. The contents are generally XTLVs.
  *
- * Copyright (C) 1999-2018, Broadcom Corporation
- * 
+ * Copyright (C) 1999-2019, Broadcom.
+ *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
  * under the terms of the GNU General Public License version 2 (the "GPL"),
  * available at http://www.broadcom.com/licenses/GPLv2.php, with the
  * following added to such license:
- * 
+ *
  *      As a special exception, the copyright holders of this software give you
  * permission to link this software with independent modules, and to copy and
  * distribute the resulting executable under terms of your choice, provided that
@@ -19,7 +19,7 @@
  * the license of that module.  An independent module is a module which is not
  * derived from this software.  The special exception does not apply to any
  * modifications of the software.
- * 
+ *
  *      Notwithstanding the above, under no circumstances may you combine this
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
@@ -27,7 +27,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: event_log_payload.h 700076 2017-05-17 14:42:22Z $
+ * $Id: event_log_payload.h 768232 2018-06-19 05:28:22Z $
  */
 
 #ifndef _EVENT_LOG_PAYLOAD_H_
@@ -124,7 +124,6 @@ typedef struct scb_subq_summary {
 #define SCBDATA_APPS_F_OFF_PEND         0x00000100
 #define SCBDATA_APPS_F_OFF_BLOCKED      0x00000200
 #define SCBDATA_APPS_F_OFF_IN_PROG      0x00000400
-
 
 /**
  * Summary for tx datapath AMPDU SCB cubby
@@ -281,47 +280,60 @@ typedef struct wl_chansw_event_log_record {
 	int32 dwell_time;
 } wl_chansw_event_log_record_t;
 
+typedef struct wl_chansw_event_log_record_v2 {
+	uint32 time;			/* Time in us */
+	uint32 old_chanspec;		/* Old channel spec */
+	uint32 new_chanspec;		/* New channel spec */
+	uint32 chansw_reason;		/* Reason for channel change */
+	int32 dwell_time;
+	uint32 core;
+	int32 phychanswtime;		/* channel switch time */
+} wl_chansw_event_log_record_v2_t;
+
 /* Sub-block type for EVENT_LOG_TAG_AMPDU_DUMP */
-#define WL_AMPDU_STATS_TYPE_RXMCSx1	0	/* RX MCS rate (Nss = 1) */
-#define WL_AMPDU_STATS_TYPE_RXMCSx2	1
-#define WL_AMPDU_STATS_TYPE_RXMCSx3	2
-#define WL_AMPDU_STATS_TYPE_RXMCSx4	3
-#define WL_AMPDU_STATS_TYPE_RXVHTx1	4	/* RX VHT rate (Nss = 1) */
-#define WL_AMPDU_STATS_TYPE_RXVHTx2	5
-#define WL_AMPDU_STATS_TYPE_RXVHTx3	6
-#define WL_AMPDU_STATS_TYPE_RXVHTx4	7
-#define WL_AMPDU_STATS_TYPE_TXMCSx1	8	/* TX MCS rate (Nss = 1) */
-#define WL_AMPDU_STATS_TYPE_TXMCSx2	9
-#define WL_AMPDU_STATS_TYPE_TXMCSx3	10
-#define WL_AMPDU_STATS_TYPE_TXMCSx4	11
-#define WL_AMPDU_STATS_TYPE_TXVHTx1	12	/* TX VHT rate (Nss = 1) */
-#define WL_AMPDU_STATS_TYPE_TXVHTx2	13
-#define WL_AMPDU_STATS_TYPE_TXVHTx3	14
-#define WL_AMPDU_STATS_TYPE_TXVHTx4	15
-#define WL_AMPDU_STATS_TYPE_RXMCSSGI	16	/* RX SGI usage (for all MCS rates) */
-#define WL_AMPDU_STATS_TYPE_TXMCSSGI	17	/* TX SGI usage (for all MCS rates) */
-#define WL_AMPDU_STATS_TYPE_RXVHTSGI	18	/* RX SGI usage (for all VHT rates) */
-#define WL_AMPDU_STATS_TYPE_TXVHTSGI	19	/* TX SGI usage (for all VHT rates) */
-#define WL_AMPDU_STATS_TYPE_RXMCSPER	20	/* RX PER (for all MCS rates) */
-#define WL_AMPDU_STATS_TYPE_TXMCSPER	21	/* TX PER (for all MCS rates) */
-#define WL_AMPDU_STATS_TYPE_RXVHTPER	22	/* RX PER (for all VHT rates) */
-#define WL_AMPDU_STATS_TYPE_TXVHTPER	23	/* TX PER (for all VHT rates) */
-#define WL_AMPDU_STATS_TYPE_RXDENS	24	/* RX AMPDU density */
-#define WL_AMPDU_STATS_TYPE_TXDENS	25	/* TX AMPDU density */
-#define WL_AMPDU_STATS_TYPE_RXMCSOK	26	/* RX all MCS rates */
-#define WL_AMPDU_STATS_TYPE_RXVHTOK	27	/* RX all VHT rates */
-#define WL_AMPDU_STATS_TYPE_TXMCSALL	28	/* TX all MCS rates */
-#define WL_AMPDU_STATS_TYPE_TXVHTALL	29	/* TX all VHT rates */
-#define WL_AMPDU_STATS_TYPE_TXMCSOK	30	/* TX all MCS rates */
-#define WL_AMPDU_STATS_TYPE_TXVHTOK	31	/* TX all VHT rates */
-
-#define WL_AMPDU_STATS_MAX_CNTS		64
-
+typedef enum {
+	WL_AMPDU_STATS_TYPE_RXMCSx1 = 0,	/* RX MCS rate (Nss = 1) */
+	WL_AMPDU_STATS_TYPE_RXMCSx2 = 1,
+	WL_AMPDU_STATS_TYPE_RXMCSx3 = 2,
+	WL_AMPDU_STATS_TYPE_RXMCSx4 = 3,
+	WL_AMPDU_STATS_TYPE_RXVHTx1 = 4, /* RX VHT rate (Nss = 1) */
+	WL_AMPDU_STATS_TYPE_RXVHTx2 = 5,
+	WL_AMPDU_STATS_TYPE_RXVHTx3 = 6,
+	WL_AMPDU_STATS_TYPE_RXVHTx4 = 7,
+	WL_AMPDU_STATS_TYPE_TXMCSx1 = 8, /* TX MCS rate (Nss = 1) */
+	WL_AMPDU_STATS_TYPE_TXMCSx2 = 9,
+	WL_AMPDU_STATS_TYPE_TXMCSx3 = 10,
+	WL_AMPDU_STATS_TYPE_TXMCSx4 = 11,
+	WL_AMPDU_STATS_TYPE_TXVHTx1 = 12,	/* TX VHT rate (Nss = 1) */
+	WL_AMPDU_STATS_TYPE_TXVHTx2 = 13,
+	WL_AMPDU_STATS_TYPE_TXVHTx3 = 14,
+	WL_AMPDU_STATS_TYPE_TXVHTx4 = 15,
+	WL_AMPDU_STATS_TYPE_RXMCSSGI = 16,	/* RX SGI usage (for all MCS rates) */
+	WL_AMPDU_STATS_TYPE_TXMCSSGI = 17,	/* TX SGI usage (for all MCS rates) */
+	WL_AMPDU_STATS_TYPE_RXVHTSGI = 18,	/* RX SGI usage (for all VHT rates) */
+	WL_AMPDU_STATS_TYPE_TXVHTSGI = 19,	/* TX SGI usage (for all VHT rates) */
+	WL_AMPDU_STATS_TYPE_RXMCSPER = 20,	/* RX PER (for all MCS rates) */
+	WL_AMPDU_STATS_TYPE_TXMCSPER = 21,	/* TX PER (for all MCS rates) */
+	WL_AMPDU_STATS_TYPE_RXVHTPER = 22,	/* RX PER (for all VHT rates) */
+	WL_AMPDU_STATS_TYPE_TXVHTPER = 23,	/* TX PER (for all VHT rates) */
+	WL_AMPDU_STATS_TYPE_RXDENS = 24,	/* RX AMPDU density */
+	WL_AMPDU_STATS_TYPE_TXDENS = 25,	/* TX AMPDU density */
+	WL_AMPDU_STATS_TYPE_RXMCSOK = 26,	/* RX all MCS rates */
+	WL_AMPDU_STATS_TYPE_RXVHTOK = 27,	/* RX all VHT rates */
+	WL_AMPDU_STATS_TYPE_TXMCSALL = 28,	/* TX all MCS rates */
+	WL_AMPDU_STATS_TYPE_TXVHTALL = 29,	/* TX all VHT rates */
+	WL_AMPDU_STATS_TYPE_TXMCSOK = 30,	/* TX all MCS rates */
+	WL_AMPDU_STATS_TYPE_TXVHTOK = 31,	/* TX all VHT rates */
+	WL_AMPDU_STATS_MAX_CNTS = 64
+} wl_ampdu_stat_enum_t;
 typedef struct {
 	uint16	type;		/* AMPDU statistics sub-type */
 	uint16	len;		/* Number of 32-bit counters */
 	uint32	counters[WL_AMPDU_STATS_MAX_CNTS];
 } wl_ampdu_stats_generic_t;
+
+typedef wl_ampdu_stats_generic_t wl_ampdu_stats_rx_t;
+typedef wl_ampdu_stats_generic_t wl_ampdu_stats_tx_t;
 
 typedef struct {
 	uint16	type;		/* AMPDU statistics sub-type */
@@ -669,5 +681,119 @@ typedef struct msch_register_params	{
 	uint32 chanspec_cnt;
 	uint16 chanspec_list[WL_MSCH_NUMCHANNELS];
 } msch_register_params_t;
+
+typedef struct {
+	uint32	txallfrm;	/**< total number of frames sent, incl. Data, ACK, RTS, CTS,
+				* Control Management (includes retransmissions)
+				*/
+	uint32	rxrsptmout;	/**< number of response timeouts for transmitted frames
+				* expecting a response
+				*/
+	uint32	rxstrt;		/**< number of received frames with a good PLCP */
+	uint32  rxbadplcp;	/**< number of parity check of the PLCP header failed */
+	uint32  rxcrsglitch;	/**< PHY was able to correlate the preamble but not the header */
+	uint32  rxnodelim;	/**< number of no valid delimiter detected by ampdu parser */
+	uint32  bphy_badplcp;	/**< number of bad PLCP reception on BPHY rate */
+	uint32  bphy_rxcrsglitch;	/**< PHY count of bphy glitches */
+	uint32  rxbadfcs;	/**< number of frames for which the CRC check failed in the MAC */
+	uint32	rxanyerr;	/**< Any RX error that is not counted by other counters. */
+	uint32	rxbeaconmbss;	/**< beacons received from member of BSS */
+	uint32	rxdtucastmbss;	/**< number of received DATA frames with good FCS and matching RA */
+	uint32	rxdtocast;	/**< number of received DATA frames (good FCS and no matching RA) */
+	uint32  rxtoolate;	/**< receive too late */
+	uint32  goodfcs;        /**< Good fcs counters  */
+	uint32  rxf0ovfl;	/** < Rx FIFO0 overflow counters information */
+	uint32  rxf1ovfl;	/** < Rx FIFO1 overflow counters information */
+} phy_periodic_counters_v1_t;
+
+typedef struct phycal_log_cmn {
+	uint16 chanspec; /* Current phy chanspec */
+	uint8  last_cal_reason;  /* Last Cal Reason */
+	uint8  pad1;  /* Padding byte to align with word */
+	uint   last_cal_time; /* Last cal time in sec */
+} phycal_log_cmn_t;
+
+typedef struct phycal_log_core {
+	uint16 ofdm_txa; /* OFDM Tx IQ Cal a coeff */
+	uint16 ofdm_txb; /* OFDM Tx IQ Cal b coeff */
+	uint16 ofdm_txd; /* contain di & dq */
+	uint16 bphy_txa; /* BPHY Tx IQ Cal a coeff */
+	uint16 bphy_txb; /* BPHY Tx IQ Cal b coeff */
+	uint16 bphy_txd; /* contain di & dq */
+
+	uint16 rxa; /* Rx IQ Cal A coeffecient */
+	uint16 rxb; /* Rx IQ Cal B coeffecient */
+	int32 rxs;  /* FDIQ Slope coeffecient */
+
+	uint8 baseidx; /* TPC Base index */
+	uint8 adc_coeff_cap0_adcI; /* ADC CAP Cal Cap0 I */
+	uint8 adc_coeff_cap1_adcI; /* ADC CAP Cal Cap1 I */
+	uint8 adc_coeff_cap2_adcI; /* ADC CAP Cal Cap2 I */
+	uint8 adc_coeff_cap0_adcQ; /* ADC CAP Cal Cap0 Q */
+	uint8 adc_coeff_cap1_adcQ; /* ADC CAP Cal Cap1 Q */
+	uint8 adc_coeff_cap2_adcQ; /* ADC CAP Cal Cap2 Q */
+	uint8 pad; /* Padding byte to align with word */
+} phycal_log_core_t;
+
+#define PHYCAL_LOG_VER1         (1u)
+
+typedef struct phycal_log_v1 {
+	uint8  version; /* Logging structure version */
+	uint8  numcores; /* Numbe of cores for which core specific data present */
+	uint16 length;  /* Length of the entire structure */
+	phycal_log_cmn_t phycal_log_cmn; /* Logging common structure */
+	/* This will be a variable length based on the numcores field defined above */
+	phycal_log_core_t phycal_log_core[1];
+} phycal_log_v1_t;
+
+typedef struct phy_periodic_log_cmn {
+	uint16  chanspec; /* Current phy chanspec */
+	uint16  vbatmeas; /* Measured VBAT sense value */
+	uint16  featureflag; /* Currently active feature flags */
+	int8    chiptemp; /* Chip temparature */
+	int8    femtemp;  /* Fem temparature */
+
+	uint32  nrate; /* Current Tx nrate */
+
+	uint8   cal_phase_id; /* Current Multi phase cal ID */
+	uint8   rxchain; /* Rx Chain */
+	uint8   txchain; /* Tx Chain */
+	uint8   ofdm_desense; /* OFDM desense */
+
+	uint8   bphy_desense; /* BPHY desense */
+	uint8   pll_lockstatus; /* PLL Lock status */
+	uint8   pad1; /* Padding byte to align with word */
+	uint8   pad2; /* Padding byte to align with word */
+
+	uint32 duration;	/**< millisecs spent sampling this channel */
+	uint32 congest_ibss;	/**< millisecs in our bss (presumably this traffic will */
+				/**<  move if cur bss moves channels) */
+	uint32 congest_obss;	/**< traffic not in our bss */
+	uint32 interference;	/**< millisecs detecting a non 802.11 interferer. */
+
+} phy_periodic_log_cmn_t;
+
+typedef struct phy_periodic_log_core {
+	uint8	baseindxval; /* TPC Base index */
+	int8	tgt_pwr; /* Programmed Target power */
+	int8	estpwradj; /* Current Est Power Adjust value */
+	int8	crsmin_pwr; /* CRS Min/Noise power */
+	int8	rssi_per_ant; /* RSSI Per antenna */
+	int8	snr_per_ant; /* SNR Per antenna */
+	int8	pad1; /* Padding byte to align with word */
+	int8	pad2; /* Padding byte to align with word */
+} phy_periodic_log_core_t;
+
+#define PHY_PERIODIC_LOG_VER1         (1u)
+
+typedef struct phy_periodic_log_v1 {
+	uint8  version; /* Logging structure version */
+	uint8  numcores; /* Numbe of cores for which core specific data present */
+	uint16 length;  /* Length of the entire structure */
+	phy_periodic_log_cmn_t phy_perilog_cmn;
+	phy_periodic_counters_v1_t counters_peri_log;
+	/* This will be a variable length based on the numcores field defined above */
+	phy_periodic_log_core_t phy_perilog_core[1];
+} phy_periodic_log_v1_t;
 
 #endif /* _EVENT_LOG_PAYLOAD_H_ */

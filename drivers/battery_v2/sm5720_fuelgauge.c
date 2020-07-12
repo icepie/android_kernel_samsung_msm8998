@@ -2939,8 +2939,8 @@ static int sm5720_fg_get_property(struct power_supply *psy,
         return -ENODATA;
 #endif
     case POWER_SUPPLY_PROP_CHARGE_COUNTER:
-	val->intval = sm5720_read_word(fuelgauge->i2c, SM5720_FG_REG_Q_EST);
-	val->intval = val->intval * (1000 * 1000 / 2048); //uAh
+	val->intval =
+		fuelgauge->battery_data->Capacity * fuelgauge->raw_capacity; //uAh
 	break;
     default:
         return -EINVAL;

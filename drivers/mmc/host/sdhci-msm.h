@@ -231,6 +231,7 @@ struct sdhci_msm_host {
 	const struct sdhci_msm_offset *offset;
 	bool core_3_0v_support;
 	bool pltfm_init_done;
+	u8 phase_on_tuning;
 };
 
 extern char *saved_command_line;

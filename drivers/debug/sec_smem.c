@@ -229,7 +229,7 @@ uint8_t get_ddr_wr_eyeHeight(uint32_t ch, uint32_t cs, uint32_t dq)
 
 	return vendor1->ddr_training.wr_dqdqs_eye.height[ch][cs][dq];
 }
-EXPORT_SYMBOL(get_ddr_wr_eyeRect);
+EXPORT_SYMBOL(get_ddr_wr_eyeHeight);
 
 uint8_t get_ddr_wr_eyeWidth(uint32_t ch, uint32_t cs, uint32_t dq)
 {
@@ -246,7 +246,7 @@ uint8_t get_ddr_wr_eyeWidth(uint32_t ch, uint32_t cs, uint32_t dq)
 
 	return vendor1->ddr_training.wr_dqdqs_eye.width[ch][cs][dq];
 }
-EXPORT_SYMBOL(get_ddr_wr_eyeVref);
+EXPORT_SYMBOL(get_ddr_wr_eyeWidth);
 
 uint8_t get_ddr_rcw_tDQSCK(uint32_t ch, uint32_t cs, uint32_t dq)
 {

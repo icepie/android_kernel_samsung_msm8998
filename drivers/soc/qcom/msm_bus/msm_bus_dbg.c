@@ -820,11 +820,11 @@ void msm_bus_dbg_client_data(struct msm_bus_scale_pdata *pdata, int index,
 	struct dentry *file = NULL;
 
 	if (index == MSM_BUS_DBG_REGISTER) {
-		msm_bus_dbg_record_client(pdata, index, clid, file);
 		if (!pdata->name) {
 			MSM_BUS_DBG("Cannot create debugfs entry. Null name\n");
 			return;
-		}
+		}	
+		msm_bus_dbg_record_client(pdata, index, clid, file);
 	} else if (index == MSM_BUS_DBG_UNREGISTER) {
 		msm_bus_dbg_free_client(clid);
 		MSM_BUS_DBG("Client %d unregistered\n", clid);
@@ -863,10 +863,6 @@ static int __init msm_bus_debugfs_init(void)
 	struct msm_bus_fab_list *fablist;
 	struct msm_bus_cldata *cldata = NULL;
 	uint64_t val = 0;
-
-#ifdef CONFIG_MACH_GTS4LLTE_XX
-	return 0;
-#endif
 
 	dir = debugfs_create_dir("msm-bus-dbg", NULL);
 	if ((!dir) || IS_ERR(dir)) {

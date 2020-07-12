@@ -77,6 +77,7 @@ struct dbmdx_platform_data {
 #ifdef DBMDX_VA_NS_SUPPORT
 	unsigned int			va_ns_supported;
 	unsigned int			va_ns_cfg_values;
+	unsigned int			va_ns_num_of_configs;
 	u32				*va_ns_cfg_value;
 #endif
 

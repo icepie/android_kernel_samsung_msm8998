@@ -1786,8 +1786,12 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
 	u32 temp;
 	bool bl_notify = false;
 
-	if (mfd->unset_bl_level == U32_MAX)
+	if (mfd->unset_bl_level == U32_MAX) {
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		mfd->allow_bl_update = true;
+#endif
 		return;
+	}
 	mutex_lock(&mfd->bl_lock);
 	if (!mfd->allow_bl_update) {
 		pdata = dev_get_platdata(&mfd->pdev->dev);
@@ -3093,7 +3097,33 @@ static int __mdss_fb_wait_for_fence_sub(struct msm_sync_pt_data *sync_pt_data,
 					wait_ms);
 
 		ret = sync_fence_wait(fences[i], wait_ms);
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		if (ret == -ETIME) {
+			struct sync_pt *pt = container_of(fences[i]->cbs[0].sync_pt, struct sync_pt, base);
+			struct sync_timeline *timeline = NULL;
 
+			pr_warn("%s: sync_fence_wait timed out! ",
+					fences[i]->name);
+			pr_cont("Waiting %ld.%ld more seconds\n",
+				(wait_ms/MSEC_PER_SEC), (wait_ms%MSEC_PER_SEC));
+
+			if (sync_pt_data && mdp5_data && mdp5_data->vsync_timeline) {
+				pr_err("sync_pt_timeline val=%d commit_cnt=%d vsync timeline value =%d,retire count =%d\n",
+						sync_pt_data->timeline_value, atomic_read(&sync_pt_data->commit_cnt),
+						mdp5_data->vsync_timeline->value, mdp5_data->retire_cnt);
+			}
+
+			if (pt)
+				timeline = sync_pt_parent(pt);
+
+			if (timeline->name)
+				ss_inc_ftout_debug(timeline->name);
+
+			if (sync_pt_data)
+				mdss_fb_signal_timeline(sync_pt_data);
+		}
+		ret = sync_fence_wait(fences[i], wait_ms);
+#endif
 		if (ret == -ETIME) {
 			wait_jf = timeout - jiffies;
 			wait_ms = jiffies_to_msecs(wait_jf);
@@ -3113,23 +3143,9 @@ static int __mdss_fb_wait_for_fence_sub(struct msm_sync_pt_data *sync_pt_data,
 						sync_pt_data->timeline_value, atomic_read(&sync_pt_data->commit_cnt),
 						mdp5_data->vsync_timeline->value, mdp5_data->retire_cnt);
 			}
+			MDSS_XLOG_TOUT_HANDLER("mdp");
 			ret = sync_fence_wait(fences[i], wait_ms);
 
-#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
-			if (ret == -ETIME) {
-				struct sync_pt *pt = container_of(fences[i]->cbs[0].sync_pt, struct sync_pt, base);
-				struct sync_timeline *timeline = NULL;
-
-				if (pt)
-					timeline = sync_pt_parent(pt);
-				if (timeline->name)
-					ss_inc_ftout_debug(timeline->name);
-
-				/* Signal MDP pending fence if had any */
-				if (sync_pt_data)
-					mdss_fb_signal_timeline(sync_pt_data);
-			}
-#endif
 			if (ret == -ETIME)
 				break;
 		}
@@ -3137,8 +3153,10 @@ static int __mdss_fb_wait_for_fence_sub(struct msm_sync_pt_data *sync_pt_data,
 	}
 
 	if (ret < 0) {
-		pr_err("%s: sync_fence_wait failed! ret = %x\n",
-				sync_pt_data->fence_name, ret);
+		if (sync_pt_data)
+			pr_err("%s: sync_fence_wait failed! ret = %x\n",
+					sync_pt_data->fence_name, ret);
+		MDSS_XLOG_TOUT_HANDLER("mdp", "panic");
 		for (; i < fence_cnt; i++)
 			sync_fence_put(fences[i]);
 	}
@@ -3886,9 +3904,8 @@ skip_commit:
 
 		if ((mfd->panel.type == MIPI_CMD_PANEL) &&
 			(mfd->mdp.signal_retire_fence))
-			mfd->mdp.signal_retire_fence(mfd);
+			mfd->mdp.signal_retire_fence(mfd, 1);
 	}
-
 	if (dynamic_dsi_switch) {
 		MDSS_XLOG(mfd->index, mfd->split_mode, new_dsi_mode,
 			XLOG_FUNC_EXIT);
@@ -4802,6 +4819,7 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	struct mdp_destination_scaler_data *ds_data = NULL;
 	struct mdp_destination_scaler_data __user *ds_data_user;
 	struct msm_fb_data_type *mfd;
+	struct mdss_overlay_private *mdp5_data = NULL;
 
 	ret = copy_from_user(&commit, argp, sizeof(struct mdp_layer_commit));
 	if (ret) {
@@ -4813,9 +4831,20 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	if (!mfd)
 		return -EINVAL;
 
+	mdp5_data = mfd_to_mdp5_data(mfd);
+
 	if (mfd->panel_info->panel_dead) {
 		pr_debug("early commit return\n");
 		MDSS_XLOG(mfd->panel_info->panel_dead);
+		/*
+		 * In case of an ESD attack, since we early return from the
+		 * commits, we need to signal the outstanding fences.
+		 */
+		mdss_fb_release_fences(mfd);
+		if ((mfd->panel.type == MIPI_CMD_PANEL) &&
+			mfd->mdp.signal_retire_fence && mdp5_data)
+			mfd->mdp.signal_retire_fence(mfd,
+						mdp5_data->retire_cnt);
 		return 0;
 	}
 

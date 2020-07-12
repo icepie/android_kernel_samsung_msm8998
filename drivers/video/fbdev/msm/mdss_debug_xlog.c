@@ -50,7 +50,7 @@
  * number must be greater than print entry to prevent out of bound xlog
  * entry array access.
  */
-#define MDSS_XLOG_ENTRY	(MDSS_XLOG_PRINT_ENTRY * 8)
+#define MDSS_XLOG_ENTRY	(MDSS_XLOG_PRINT_ENTRY * 16)
 #define MDSS_XLOG_MAX_DATA 15
 #define MDSS_XLOG_BUF_MAX 512
 #define MDSS_XLOG_BUF_ALIGN 32
@@ -659,7 +659,9 @@ static void mdss_xlog_dump_array(struct mdss_debug_base *blk_arr[],
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 	struct samsung_display_driver_data *vdd = samsung_get_vdd();
 
-	if (mdss_samsung_dsi_te_check(vdd)) {
+	pr_err("%s : blank_mode = %d\n", __func__, vdd->vdd_blank_mode[DISPLAY_1]);
+	if (mdss_samsung_dsi_te_check(vdd) && 
+		(vdd->vdd_blank_mode[DISPLAY_1] != FB_BLANK_POWERDOWN)) {
 		pr_err("%s : recovery need..\n", __func__);
 		mdss_fb_report_panel_dead(pstatus_data->mfd);
 		return;

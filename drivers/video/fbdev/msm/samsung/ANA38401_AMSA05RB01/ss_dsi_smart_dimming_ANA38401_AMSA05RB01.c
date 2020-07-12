@@ -30,9 +30,30 @@ Copyright (C) 2012, Samsung Electronics. All rights reserved.
  *
 */
 #include "ss_dsi_smart_dimming_ANA38401_AMSA05RB01.h"
-//#define SMART_DIMMING_DEBUG
+/*#define SMART_DIMMING_DEBUG*/
 
 static char max_lux_table[GAMMA_SET_MAX];
+
+static char max_lux_table2[GAMMA_SET_MAX] = {
+	0x80, 0x80,	/* V11[7:0],  V23[7:0]	Red */
+	0x80, 0x80,	/* V35[7:0],  V51[7:0]	Red */
+	0x80, 0x80,	/* V87[7:0],  V151[7:0]	Red */
+	0x80, 0x00,	/* V203[7:0], V255[7:0]	Red */
+	0x80, 0x80,	/* V3[7:0], V255[8]:V0[6:0]Red */
+	0x00,		/* VT[3:0]		Red */
+	0x80, 0x80,	/* V11[7:0],  V23[7:0]	Green */
+	0x80, 0x80,	/* V35[7:0],  V51[7:0]	Green */
+	0x80, 0x80,	/* V87[7:0],  V151[7:0]	Green */
+	0x80, 0x00,	/* V203[7:0], V255[7:0]	Green */
+	0x80, 0x80,	/* V3[7:0], V255[8]:V0[6:0]Green */
+	0x00,		/* VT[3:0]		Green */
+	0x80, 0x80,	/* V11[7:0],  V23[7:0]	Blue */
+	0x80, 0x80,	/* V35[7:0],  V51[7:0]	Blue */
+	0x80, 0x80,	/* V87[7:0],  V151[7:0]	Blue */
+	0x80, 0x00,	/* V203[7:0], V255[7:0]	Blue */
+	0x80, 0x80,	/* V3[7:0], V255[8]:V0[6:0]Blue */
+	0x00		/* VT[3:0]		Blue */
+};
 
 /*
 *	To support different center cell gamma setting
@@ -109,43 +130,43 @@ static int char_to_int_v255(char data1, char data2)
 
 static void print_RGB_offset(struct SMART_DIM *pSmart)
 {
-	pr_info("%s MTP Offset VT R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset VT R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_1),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_1),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_1));
-	pr_info("%s MTP Offset V3 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V3 R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_3),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_3),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_3));
-	pr_info("%s MTP Offset V11 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V11 R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_11),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_11),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_11));
-	pr_info("%s MTP Offset V23 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V23 R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_23),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_23),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_23));
-	pr_info("%s MTP Offset V35 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V35 R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_35),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_35),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_35));
-	pr_info("%s MTP Offset V51 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V51 R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_51),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_51),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_51));
-	pr_info("%s MTP Offset V87 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V87 R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_87),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_87),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_87));
-	pr_info("%s MTP Offset V151 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V151 R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_151),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_151),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_151));
-	pr_info("%s MTP Offset V203 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V203 R:%d G:%d B:%d\n",
 			char_to_int(pSmart->MTP.R_OFFSET.OFFSET_203),
 			char_to_int(pSmart->MTP.G_OFFSET.OFFSET_203),
 			char_to_int(pSmart->MTP.B_OFFSET.OFFSET_203));
-	pr_info("%s MTP Offset V255 R:%d G:%d B:%d\n", __func__,
+	LCD_INFO("MTP Offset V255 R:%d G:%d B:%d\n",
 			char_to_int_v255(pSmart->MTP.R_OFFSET.OFFSET_255_MSB,
 				pSmart->MTP.R_OFFSET.OFFSET_255_LSB),
 			char_to_int_v255(pSmart->MTP.G_OFFSET.OFFSET_255_MSB,
@@ -154,7 +175,7 @@ static void print_RGB_offset(struct SMART_DIM *pSmart)
 				pSmart->MTP.B_OFFSET.OFFSET_255_LSB));
 }
 
-static void print_lux_table(struct SMART_DIM *psmart)
+static void print_lux_table(struct SMART_DIM *psmart, char* type)
 {
 	int lux_loop;
 	int cnt;
@@ -162,11 +183,15 @@ static void print_lux_table(struct SMART_DIM *psmart)
 	memset(pBuffer, 0x00, 256);
 
 	for (lux_loop = 0; lux_loop < psmart->lux_table_max; lux_loop++) {
-		for (cnt = 0; cnt < GAMMA_SET_MAX; cnt++)
-			snprintf(pBuffer + strnlen(pBuffer, 256), 256, " %d",
+		for (cnt = 0; cnt < GAMMA_SET_MAX; cnt++) {
+			if (!strcmp(type,"DEC"))
+				snprintf(pBuffer + strnlen(pBuffer, 256), 256, " %03d",
+					psmart->gen_table[lux_loop].gamma_setting[cnt]);
+			else
+				snprintf(pBuffer + strnlen(pBuffer, 256), 256, " %02x",
 				psmart->gen_table[lux_loop].gamma_setting[cnt]);
-
-		pr_info("lux : %3d  %s\n", psmart->plux_table[lux_loop], pBuffer);
+		}
+		LCD_INFO("lux : %3d  %s\n", psmart->plux_table[lux_loop], pBuffer);
 		memset(pBuffer, 0x00, 256);
 	}
 }
@@ -175,8 +200,8 @@ static void print_hbm_lux_table(struct SMART_DIM *psmart, char* type)
 {
 	int i,j;
 	char pBuffer[256];
-	memset(pBuffer, 0x00, 256);
 
+	memset(pBuffer, 0x00, 256);
 	for (i = 0; i < HBM_INTERPOLATION_STEP; i++) {
 		for (j = 0; j < GAMMA_SET_MAX; j++) {
 			if (!strcmp(type,"DEC"))
@@ -186,7 +211,7 @@ static void print_hbm_lux_table(struct SMART_DIM *psmart, char* type)
 				snprintf(pBuffer + strnlen(pBuffer, 256), 256, " %02x",
 					psmart->hbm_interpolation_table[i].gamma_setting[j]);
 		}
-		pr_err("hbm[%3d]  %s\n", hbm_interpolation_candela_table[i], pBuffer);
+		LCD_INFO("hbm[%3d]  %s\n", hbm_interpolation_candela_table[i], pBuffer);
 		memset(pBuffer, 0x00, 256);
 	}
 }
@@ -194,7 +219,9 @@ static void print_hbm_lux_table(struct SMART_DIM *psmart, char* type)
 static void print_aid_log(struct smartdim_conf *conf)
 {
 	print_RGB_offset(conf->psmart);
-	print_lux_table(conf->psmart);
+
+	print_lux_table(conf->psmart, "DEC");
+	print_lux_table(conf->psmart, "HEX");
 
 	print_hbm_lux_table(conf->psmart, "DEC");
 	print_hbm_lux_table(conf->psmart, "HEX");
@@ -1345,6 +1372,7 @@ static int generate_gray_scale(struct SMART_DIM *pSmart)
 #endif
 	return 0;
 }
+
 #if 0
 static char offset_cal(int offset,  int value)
 {
@@ -1420,6 +1448,7 @@ static void mtp_offset_substraction(struct SMART_DIM *pSmart, int *str)
 	str[29] = offset_cal(char_to_int(pSmart->MTP.B_OFFSET.OFFSET_3), str[29]);
 }
 #endif
+
 static int searching_function(long long candela, int *index, int gamma_curve)
 {
 	long long delta_1 = 0, delta_2 = 0;
@@ -1632,7 +1661,8 @@ static void gamma_init_revA(struct SMART_DIM *pSmart, char *str, int size)
 	}
 
 	/*subtration MTP_OFFSET value from generated gamma table*/
-	/*mtp_offset_substraction(pSmart, gamma_setting);*/
+	/* mtp_offset_substraction is not need because Change Gamma Offset Index [4] is used. */
+	/* mtp_offset_substraction(pSmart, gamma_setting); */
 
 	/* To avoid overflow */
 	for (cnt = 0; cnt < GAMMA_SET_MAX; cnt++)
@@ -1756,6 +1786,88 @@ static void gamma_cell_determine(int ldi_revision)
 	max_lux_table[32] = VT_300CD_B = VT_300CD_B_20;
 }
 
+static void gamma_cell_determine_max(struct SMART_DIM *pSmart)
+{
+#ifdef SMART_DIMMING_DEBUG
+	int i;
+	char log_buf[256];
+#endif
+	int temp = 0; /* MAX_V255 */
+
+	/* RED */
+	max_lux_table2[0]  = 128 + char_to_int(pSmart->MTP.R_OFFSET.OFFSET_11);
+	max_lux_table2[1]  = 128 + char_to_int(pSmart->MTP.R_OFFSET.OFFSET_23);
+	max_lux_table2[2]  = 128 + char_to_int(pSmart->MTP.R_OFFSET.OFFSET_35);
+	max_lux_table2[3]  = 128 + char_to_int(pSmart->MTP.R_OFFSET.OFFSET_51);
+	max_lux_table2[4]  = 128 + char_to_int(pSmart->MTP.R_OFFSET.OFFSET_87);
+	max_lux_table2[5]  = 128 + char_to_int(pSmart->MTP.R_OFFSET.OFFSET_151);
+	max_lux_table2[6]  = 128 + char_to_int(pSmart->MTP.R_OFFSET.OFFSET_203);
+
+	temp = 256 + char_to_int_v255(pSmart->MTP.R_OFFSET.OFFSET_255_MSB, pSmart->MTP.R_OFFSET.OFFSET_255_LSB);
+	if (temp >= 256)
+		max_lux_table2[7]  = temp - 256;
+	else
+		max_lux_table2[7]  = temp;
+	max_lux_table2[8]  = 128 + char_to_int(pSmart->MTP.R_OFFSET.OFFSET_3);
+
+	if (temp >= 256)
+		max_lux_table2[9]  = 0x80; /* V255[8] bit */
+	else
+		max_lux_table2[9]  = 0;
+	max_lux_table2[10] = 0;
+
+	/* GREEN */
+	max_lux_table2[11] = 128 + char_to_int(pSmart->MTP.G_OFFSET.OFFSET_11);
+	max_lux_table2[12] = 128 + char_to_int(pSmart->MTP.G_OFFSET.OFFSET_23);
+	max_lux_table2[13] = 128 + char_to_int(pSmart->MTP.G_OFFSET.OFFSET_35);
+	max_lux_table2[14] = 128 + char_to_int(pSmart->MTP.G_OFFSET.OFFSET_51);
+	max_lux_table2[15] = 128 + char_to_int(pSmart->MTP.G_OFFSET.OFFSET_87);
+	max_lux_table2[16] = 128 + char_to_int(pSmart->MTP.G_OFFSET.OFFSET_151);
+	max_lux_table2[17] = 128 + char_to_int(pSmart->MTP.G_OFFSET.OFFSET_203);
+
+	temp = 256 + char_to_int_v255(pSmart->MTP.G_OFFSET.OFFSET_255_MSB, pSmart->MTP.G_OFFSET.OFFSET_255_LSB);
+	if (temp >= 256)
+		max_lux_table2[18]  = temp - 256;
+	else
+		max_lux_table2[18]  = temp;
+	max_lux_table2[19] = 128 + char_to_int(pSmart->MTP.G_OFFSET.OFFSET_3);
+
+	if (temp >= 256)
+		max_lux_table2[20]  = 0x80;
+	else
+		max_lux_table2[20]  = 0;
+	max_lux_table2[21] = 0;
+
+	/* BLUE */
+	max_lux_table2[22] = 128 + char_to_int(pSmart->MTP.B_OFFSET.OFFSET_11);
+	max_lux_table2[23] = 128 + char_to_int(pSmart->MTP.B_OFFSET.OFFSET_23);
+	max_lux_table2[24] = 128 + char_to_int(pSmart->MTP.B_OFFSET.OFFSET_35);
+	max_lux_table2[25] = 128 + char_to_int(pSmart->MTP.B_OFFSET.OFFSET_51);
+	max_lux_table2[26] = 128 + char_to_int(pSmart->MTP.B_OFFSET.OFFSET_87);
+	max_lux_table2[27] = 128 + char_to_int(pSmart->MTP.B_OFFSET.OFFSET_151);
+	max_lux_table2[28] = 128 + char_to_int(pSmart->MTP.B_OFFSET.OFFSET_203);
+
+	temp = 256 + char_to_int_v255(pSmart->MTP.B_OFFSET.OFFSET_255_MSB, pSmart->MTP.B_OFFSET.OFFSET_255_LSB);
+	if (temp >= 256)
+		max_lux_table2[29]  = temp - 256;
+	else
+		max_lux_table2[29]  = temp;
+	max_lux_table2[30] = 128 + char_to_int(pSmart->MTP.B_OFFSET.OFFSET_3);
+
+	if (temp >= 256)
+		max_lux_table2[31]  = 0x80;
+	else
+		max_lux_table2[31]  = 0;
+	max_lux_table2[32] = 0;
+
+#ifdef SMART_DIMMING_DEBUG
+	memset(log_buf, 0x00, 256);
+	for (i = 0; i < GAMMA_SET_MAX; i++)
+		snprintf(log_buf + strnlen(log_buf, 256), 256, " %03d", max_lux_table2[i]);
+	LCD_INFO(" %s\n", log_buf);
+#endif
+}
+
 static char offeset_add(int offset,  int value)
 {
 	if (value + offset < 0)
@@ -1776,6 +1888,7 @@ static void gamma_command_sorting_post(struct SMART_DIM *psmart)
 	int loop, loop2;
 	char gamma_temp[GAMMA_SET_MAX];
 	char *pfrom;
+
 	pfrom = (char *)&(psmart->MTP_ORIGN);
 
 	for (loop = 0; loop < LUMINANCE_MAX; loop++) {
@@ -1815,40 +1928,173 @@ static void hbm_interpolation_init(struct SMART_DIM *pSmart)
 	int hbm_gamma[HBM_GAMMA_SET_CNT];
 	int max_gamma[HBM_GAMMA_SET_CNT];
 	char *hbm_payload;
+	int i;
+	char log_buf[256];
+	char V255_R_MSB;
+	char V255_R_LSB;
+	int  V255_R;	/* V255_RED [8:0]*/
+	char V255_G_MSB;
+	char V255_G_LSB;
+	int  V255_G;	/* V255_GREEN [8:0]*/
+	char V255_B_MSB;
+	char V255_B_LSB;
+	int  V255_B;	/* V255_BLUE [8:0]*/
 	int hbm_interpolation_gamma[HBM_INTERPOLATION_STEP][HBM_GAMMA_SET_CNT];
 	int normal_max_candela = pSmart->gen_table[LUMINANCE_MAX-1].lux;
-	hbm_payload = pSmart->hbm_payload;
 
+	hbm_payload = pSmart->hbm_payload;
 	if (!hbm_payload) {
-		pr_err("%s : no hbm_payload..\n", __func__);
+		LCD_ERR("no hbm_payload..\n");
 		return;
 	}
 
+	/* 1. Generate HBM GAMMA */
+	/* 1-1. Read From D4 Register */
 	for (loop = 0, gamma_index = 0; gamma_index < HBM_GAMMA_SET_CNT;) {
 		hbm_gamma[loop++] = hbm_payload[gamma_index];
 		gamma_index++;
 	}
+#ifdef SMART_DIMMING_DEBUG
+	memset(log_buf, 0x00, 256);
+	for (i = 0; i < GAMMA_SET_MAX; i++)
+		snprintf(log_buf + strnlen(log_buf, 256), 256, " %02x", hbm_gamma[i]);
+	LCD_INFO("BEFORE Calculate hbm_gamma HEX : %s\n", log_buf);
+#endif
+	memset(log_buf, 0x00, 256);
+	for (i = 0; i < GAMMA_SET_MAX; i++)
+		snprintf(log_buf + strnlen(log_buf, 256), 256, " %03d", hbm_gamma[i]);
+	LCD_INFO("BEFORE Calculate hbm_gamma DEC: %s\n", log_buf);
 
+	/* 1-2. Calculate : D4 + OFFSET */
+	/* RED */
+	V255_R_MSB = hbm_gamma[9] >> 7;
+	V255_R_LSB = hbm_gamma[7];
+	V255_R = char_to_int(V255_R_MSB << 8 | V255_R_LSB)
+		+ char_to_int_v255(pSmart->MTP.R_OFFSET.OFFSET_255_MSB, pSmart->MTP.R_OFFSET.OFFSET_255_LSB);
+	if (V255_R_MSB >= 1 )
+		V255_R = V255_R + 256; 	/* V255_RED [8:0] */
+
+	LCD_INFO("V255_R_MSB=0x(%x) V255_R_LSB=0x(%x) V255_R=0x(%x)(%d)\n", V255_R_MSB, V255_R_LSB, V255_R, V255_R);
+	hbm_gamma[0] += char_to_int(pSmart->MTP.R_OFFSET.OFFSET_11);
+	hbm_gamma[1] += char_to_int(pSmart->MTP.R_OFFSET.OFFSET_23);
+	hbm_gamma[2] += char_to_int(pSmart->MTP.R_OFFSET.OFFSET_35);
+	hbm_gamma[3] += char_to_int(pSmart->MTP.R_OFFSET.OFFSET_51);
+	hbm_gamma[4] += char_to_int(pSmart->MTP.R_OFFSET.OFFSET_87);
+	hbm_gamma[5] += char_to_int(pSmart->MTP.R_OFFSET.OFFSET_151);
+	hbm_gamma[6] += char_to_int(pSmart->MTP.R_OFFSET.OFFSET_203);
+	hbm_gamma[7] = V255_R;
+	hbm_gamma[8] += char_to_int(pSmart->MTP.R_OFFSET.OFFSET_3);
+
+	if ( V255_R_MSB >= 1 )
+		hbm_gamma[9] = 0x80;
+	else
+		hbm_gamma[9] = 0x00;
+	hbm_gamma[10] = 0x00;
+
+	/* GREEN */
+	V255_G_MSB = hbm_gamma[20] >> 7;
+	V255_G_LSB = hbm_gamma[18];
+	V255_G = char_to_int(V255_G_MSB << 8 | V255_G_LSB)
+		+ char_to_int_v255(pSmart->MTP.G_OFFSET.OFFSET_255_MSB, pSmart->MTP.G_OFFSET.OFFSET_255_LSB);
+	if (V255_G_MSB >= 1 )
+		V255_G = V255_G + 256; 	/* V255_GREEN [8:0] */
+
+	LCD_INFO("V255_G_MSB=0x(%x) V255_G_LSB=0x(%x) V255_G=0x(%x)(%d)\n", V255_G_MSB, V255_G_LSB, V255_G, V255_G);
+	hbm_gamma[11] += char_to_int(pSmart->MTP.G_OFFSET.OFFSET_11);
+	hbm_gamma[12] += char_to_int(pSmart->MTP.G_OFFSET.OFFSET_23);
+	hbm_gamma[13] += char_to_int(pSmart->MTP.G_OFFSET.OFFSET_35);
+	hbm_gamma[14] += char_to_int(pSmart->MTP.G_OFFSET.OFFSET_51);
+	hbm_gamma[15] += char_to_int(pSmart->MTP.G_OFFSET.OFFSET_87);
+	hbm_gamma[16] += char_to_int(pSmart->MTP.G_OFFSET.OFFSET_151);
+	hbm_gamma[17] += char_to_int(pSmart->MTP.G_OFFSET.OFFSET_203);
+	hbm_gamma[18] = V255_G;
+	hbm_gamma[19] += char_to_int(pSmart->MTP.G_OFFSET.OFFSET_3);
+
+	if ( V255_G_MSB >= 1 )
+		hbm_gamma[20] = 0x80;
+	else
+		hbm_gamma[20] = 0x00;
+	hbm_gamma[21] = 0x00;
+
+	/* BLUE */
+	V255_B_MSB = hbm_gamma[31] >> 7;
+	V255_B_LSB = hbm_gamma[29];
+	V255_B = char_to_int(V255_B_MSB << 8 | V255_B_LSB)
+		+ char_to_int_v255(pSmart->MTP.B_OFFSET.OFFSET_255_MSB, pSmart->MTP.B_OFFSET.OFFSET_255_LSB);
+	if (V255_B_MSB >= 1 )
+		V255_B = V255_B + 256; 	/* V255_BLUE [8:0] */
+
+	LCD_INFO("V255_B_MSB=0x(%x) V255_B_LSB=0x(%x) V255_B=0x(%x)(%d)\n", V255_B_MSB, V255_B_LSB, V255_B, V255_B);
+	hbm_gamma[22] += char_to_int(pSmart->MTP.B_OFFSET.OFFSET_11);
+	hbm_gamma[23] += char_to_int(pSmart->MTP.B_OFFSET.OFFSET_23);
+	hbm_gamma[24] += char_to_int(pSmart->MTP.B_OFFSET.OFFSET_35);
+	hbm_gamma[25] += char_to_int(pSmart->MTP.B_OFFSET.OFFSET_51);
+	hbm_gamma[26] += char_to_int(pSmart->MTP.B_OFFSET.OFFSET_87);
+	hbm_gamma[27] += char_to_int(pSmart->MTP.B_OFFSET.OFFSET_151);
+	hbm_gamma[28] += char_to_int(pSmart->MTP.B_OFFSET.OFFSET_203);
+	hbm_gamma[29] = V255_B;
+	hbm_gamma[30] += char_to_int(pSmart->MTP.B_OFFSET.OFFSET_3);
+
+	if ( V255_B_MSB >= 1 )
+		hbm_gamma[31] = 0x80;
+	else
+		hbm_gamma[31] = 0x00;
+	hbm_gamma[32] = 0x00;
+
+#ifdef SMART_DIMMING_DEBUG
+	memset(log_buf, 0x00, 256);
+	for (i = 0; i < GAMMA_SET_MAX; i++)
+		snprintf(log_buf + strnlen(log_buf, 256), 256, " %02x", hbm_gamma[i]);
+	LCD_INFO("AFTER Calculate hbm_gamma HEX : %s\n", log_buf);
+#endif
+	memset(log_buf, 0x00, 256);
+	for (i = 0; i < GAMMA_SET_MAX; i++)
+		snprintf(log_buf + strnlen(log_buf, 256), 256, " %03d", hbm_gamma[i]);
+	LCD_INFO("AFTER Calculate hbm_gamma DEC : %s\n", log_buf);
+
+	/* 2. Generate MAX GAMMA */
+	/* 2-1. Set Max gamma from gamma_setting Table */
 	for (loop = 0, gamma_index = 0; gamma_index < HBM_GAMMA_SET_CNT;) {
 		max_gamma[loop++] = pSmart->gen_table[LUMINANCE_MAX-1].gamma_setting[gamma_index];
 		gamma_index++;
 	}
 
-	/* generate interpolation hbm gamma */
+	/* 2-2. MAX GAMMA V255 process : max_gamma = V255[8] | V255[7:0] */
+	if ( max_gamma[9] >=  0x80 )
+		max_gamma[7] += 256; 	/* V255_RED [8:0] */
+
+	if ( max_gamma[20] >=  0x80 )
+		max_gamma[18] += 256; 	/* V255_GREEN [8:0] */
+
+	if ( max_gamma[31] >=  0x80 )
+		max_gamma[29] += 256; 	/* V255_BLUE [8:0] */
+
+	/* 3. Generate interpolation hbm gamma */
+	/* 3-1. Divide 8 Step */
 	for (loop = 0 ; loop < HBM_INTERPOLATION_STEP; loop++) {
 		rate = ((hbm_interpolation_candela_table[loop] - normal_max_candela) * BIT_SHFIT_MUL) / (HBM_CANDELA - normal_max_candela);
-		for (gamma_index = 0; gamma_index < HBM_GAMMA_SET_CNT; gamma_index++)
+		for (gamma_index = 0; gamma_index < HBM_GAMMA_SET_CNT; gamma_index++) {
 			hbm_interpolation_gamma[loop][gamma_index] = max_gamma[gamma_index] +
 				((hbm_gamma[gamma_index] - max_gamma[gamma_index]) * rate) / BIT_SHFIT_MUL;
+
+			/* 3-2.  Addtional process : hbm_interpolation_gamma (After Divide 8 Step) is more than 256 */
+			if ( gamma_index == 9 || gamma_index == 20 || gamma_index == 31 ) {
+				if (hbm_interpolation_gamma[loop][gamma_index - 2] >= 256 ) /* V255 Check */
+					hbm_interpolation_gamma[loop][gamma_index] = 0x80;  /* V255[8] | V0[6:0] */
+				else
+					hbm_interpolation_gamma[loop][gamma_index] = 0x00;
+			}
+		}
 	}
 
+	/* 4. Generate hbm_interpolation_table */
 	for (loop = 0; loop < HBM_INTERPOLATION_STEP; loop++) {
 		for (gamma_index = 0; gamma_index < HBM_GAMMA_SET_CNT; gamma_index++) {
 			pSmart->hbm_interpolation_table[loop].gamma_setting[gamma_index] =
-					hbm_interpolation_gamma[loop][gamma_index];
-			}
+				hbm_interpolation_gamma[loop][gamma_index];
+		}
 		for (loop2 = 0; loop2 < 3; loop2++) {
-				pSmart->hbm_interpolation_table[loop].gamma_setting[(loop2*11)+10] = 0x00;
+			pSmart->hbm_interpolation_table[loop].gamma_setting[(loop2*11)+10] = 0x00;
 		}
 	}
 
@@ -1863,24 +2109,19 @@ static int smart_dimming_init(struct SMART_DIM *psmart)
 {
 	int lux_loop;
 	int id1, id2, id3;
-#ifdef SMART_DIMMING_DEBUG
 	int cnt;
 	char pBuffer[256];
-	memset(pBuffer, 0x00, 256);
-#endif
 	id1 = (psmart->ldi_revision & 0x00FF0000) >> 16;
 	id2 = (psmart->ldi_revision & 0x0000FF00) >> 8;
 	id3 = psmart->ldi_revision & 0xFF;
 
-	pr_debug("%s : ++\n",__func__);
+	LCD_INFO("++\n");
 
 	mtp_sorting(psmart);
 	gamma_cell_determine(psmart->ldi_revision);
-
 #ifdef SMART_DIMMING_DEBUG
 	print_RGB_offset(psmart);
 #endif
-
 	v255_adjustment(psmart);
 	vt_adjustment(psmart);
 	v203_adjustment(psmart);
@@ -1924,7 +2165,19 @@ static int smart_dimming_init(struct SMART_DIM *psmart)
 	}
 #endif
 	gamma_command_sorting_post(psmart);
+	gamma_cell_determine_max(psmart);
+
+	/* Set 360CD max gamma table */
+	memcpy(&(psmart->gen_table[LUMINANCE_MAX-1].gamma_setting),
+			max_lux_table2, GAMMA_SET_MAX);
+
+	memset(pBuffer, 0x00, 256);
+	for (cnt = 0; cnt < GAMMA_SET_MAX; cnt++)
+		snprintf(pBuffer + strnlen(pBuffer, 256), 256, " %02x", max_lux_table2[cnt]);
+	LCD_INFO("MAX GAMMA : %s\n", pBuffer);
+
 	hbm_interpolation_init(psmart);
+
 #ifdef SMART_DIMMING_DEBUG
 	for (lux_loop = 0; lux_loop < psmart->lux_table_max; lux_loop++) {
 		for (cnt = 0; cnt < GAMMA_SET_MAX; cnt++)
@@ -1936,9 +2189,7 @@ static int smart_dimming_init(struct SMART_DIM *psmart)
 		memset(pBuffer, 0x00, 256);
 	}
 #endif
-
-	pr_info("%s done\n",__func__);
-
+	LCD_INFO(" done\n");
 	return 0;
 }
 

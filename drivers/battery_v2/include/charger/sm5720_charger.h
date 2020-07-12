@@ -51,7 +51,6 @@ ssize_t sm5720_chg_store_attrs(struct device *dev,
 
 #define REDUCE_CURRENT_STEP						100
 #define MINIMUM_INPUT_CURRENT					300
-#define SLOW_CHARGING_CURRENT_STANDARD          400
 
 #define WC_CURRENT_STEP		100
 #define WC_CURRENT_START	400
@@ -238,7 +237,6 @@ struct sm5720_charger_data {
 
 	int pmic_ver;
 
-	bool slow_late_chg_mode;
 	bool enable_sysovlo_irq;
 
 	/* wireless charger */

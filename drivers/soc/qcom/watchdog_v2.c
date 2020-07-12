@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -387,6 +387,10 @@ static void pet_watchdog(struct msm_watchdog_data *wdog_dd)
 #ifdef CONFIG_SEC_DEBUG
 	pr_err("[%s] last_count : %x, new_count : %x, bark_time : %x, bite_time : %x\n", __func__, last_count, count, __raw_readl(wdog_dd->base + WDT0_BARK_TIME), __raw_readl(wdog_dd->base + WDT0_BITE_TIME));
 	sec_debug_save_last_pet(time_ns);
+
+#ifdef CONFIG_SEC_DEBUG_PWDT
+	sec_debug_check_pwdt();
+#endif
 #endif
 
 }
@@ -978,8 +982,7 @@ err:
 }
 
 static const struct dev_pm_ops msm_watchdog_dev_pm_ops = {
-	.suspend_noirq = msm_watchdog_suspend,
-	.resume_noirq = msm_watchdog_resume,
+	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(msm_watchdog_suspend, msm_watchdog_resume)
 };
 
 static struct platform_driver msm_watchdog_driver = {

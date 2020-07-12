@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 TRUSTONIC LIMITED
+ * Copyright (c) 2013-2018 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -238,26 +238,26 @@ static int irq_bh_worker(void *arg)
 				rx->hdr.read_cnt % rx->hdr.queue_size];
 
 			/*
-			* Ensure read_cnt writing happens after buffer read
-			* We want a ARM dmb() / ARM64 dmb(sy) here
-			*/
+			 * Ensure read_cnt writing happens after buffer read
+			 * We want a ARM dmb() / ARM64 dmb(sy) here
+			 */
 			smp_mb();
 			rx->hdr.read_cnt++;
 			/*
-			* Ensure read_cnt writing finishes before reader
-			* We want a ARM dsb() / ARM64 dsb(sy) here
-			*/
+			 * Ensure read_cnt writing finishes before reader
+			 * We want a ARM dsb() / ARM64 dsb(sy) here
+			 */
 			rmb();
 			nq_notif_handler(nf.session_id, nf.payload);
 		}
 
 		/*
-		* Finished processing notifications. It does not matter whether
-		* there actually were any notification or not.  S-SIQs can also
-		* be triggered by an SWd driver which was waiting for a FIQ.
-		* In this case the S-SIQ tells NWd that SWd is no longer idle
-		* an will need scheduling again.
-		*/
+		 * Finished processing notifications. It does not matter whether
+		 * there actually were any notification or not.  S-SIQs can also
+		 * be triggered by an SWd driver which was waiting for a FIQ.
+		 * In this case the S-SIQ tells NWd that SWd is no longer idle
+		 * an will need scheduling again.
+		 */
 		if (l_ctx.scheduler_cb)
 			l_ctx.scheduler_cb(MC_NQ_NSIQ);
 	}
@@ -674,7 +674,6 @@ int nq_init(void)
 		sizeof(*l_ctx.mcp_buffer) +
 		MAX_IW_SESSION * sizeof(struct interworld_session);
 
-
 	l_ctx.order = get_order(buf_len);
 
 	mci = __get_free_pages(GFP_USER | __GFP_ZERO, l_ctx.order);
@@ -708,7 +707,6 @@ int nq_init(void)
 	mci += MAX_IW_SESSION * sizeof(struct interworld_session);
 
 	l_ctx.time = (void *)ALIGN(mci, 8);
-
 	return 0;
 }
 

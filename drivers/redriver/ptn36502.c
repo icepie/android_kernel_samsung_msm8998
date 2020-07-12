@@ -39,7 +39,7 @@ void ptn36502_config(int config, int is_DFP)
 		i2c_smbus_write_byte_data(redrv_data->i2c, USB_TXRX_Control, redrv_data->usbControl_US.data);
 		pr_info("%s: usbControl_US as (%x)\n", __func__, redrv_data->usbControl_US.data);
 		value = i2c_smbus_read_byte_data(redrv_data->i2c, USB_TXRX_Control);
-		pr_info("%s: read 0x0b command as (%x)\n", __func__, value);
+		pr_info("%s: read 0x04 command as (%x)\n", __func__, value);
 		i2c_smbus_write_byte_data(redrv_data->i2c, DS_TXRX_Control, redrv_data->usbControl_DS.data);
 		i2c_smbus_write_byte_data(redrv_data->i2c, DP_Lane0_Control, 0x29);
 		i2c_smbus_write_byte_data(redrv_data->i2c, DP_Lane1_Control, 0x29);
@@ -84,6 +84,17 @@ void ptn36502_config(int config, int is_DFP)
 			i2c_smbus_write_byte_data(redrv_data->i2c, Mode_Control, is_front ? 0x4b:0x6b);
 		else
 			i2c_smbus_write_byte_data(redrv_data->i2c, Mode_Control, is_front ? 0x8b:0xab);
+		break;
+
+	case SAFE_STATE:
+		i2c_smbus_write_byte_data(redrv_data->i2c, Device_Control, 0x80);
+
+		value = i2c_smbus_read_byte_data(redrv_data->i2c, Device_Control);
+
+		pr_info("%s: read 0x0d command as (%x)\n", __func__, value);
+		i2c_smbus_write_byte_data(redrv_data->i2c, Mode_Control, 0x40);
+		value = i2c_smbus_read_byte_data(redrv_data->i2c, Mode_Control);
+		pr_info("%s: read 0x0b command as (%x)\n", __func__, value);
 		break;
 	}
 }
@@ -135,13 +146,18 @@ static void init_usb_control(void)
 {
 	redrv_data->usbControl_US.BITS.RxEq = 2;
 	redrv_data->usbControl_US.BITS.Swing = 1;
-	redrv_data->usbControl_US.BITS.DeEmpha = 1;
+	redrv_data->usbControl_US.BITS.DeEmpha = 2;
 	pr_info("%s: usbControl_US (%x)\n", __func__, redrv_data->usbControl_US.data);
 
 	redrv_data->usbControl_DS.BITS.RxEq = 2;
 	redrv_data->usbControl_DS.BITS.Swing = 1;
 	redrv_data->usbControl_DS.BITS.DeEmpha = 1;
 	pr_info("%s: usbControl_DS (%x)\n", __func__, redrv_data->usbControl_DS.data);
+}
+
+int ptn36502_i2c_read(u8 command)
+{
+	return i2c_smbus_read_byte_data(redrv_data->i2c, command);
 }
 
 static ssize_t ptn_us_tune_show(struct device *dev,
@@ -164,6 +180,7 @@ static ssize_t ptn_us_tune_store(struct device *dev,
 	char *value;
 	int	tmp = 0;
 	char buf[256], *b, *c;
+	char read_data;
 
 	pr_info("%s buff=%s\n", __func__, buff);
 	strlcpy(buf, buff, sizeof(buf));
@@ -197,6 +214,9 @@ static ssize_t ptn_us_tune_store(struct device *dev,
 			tmp = 0;
 		}
 	}
+	i2c_smbus_write_byte_data(redrv_data->i2c, USB_TXRX_Control, redrv_data->usbControl_US.data);
+	read_data = i2c_smbus_read_byte_data(redrv_data->i2c, USB_TXRX_Control);
+	pr_info("%s: usbControl_US as (%x)\n", __func__, read_data);
 	return size;
 }
 
@@ -223,6 +243,7 @@ static ssize_t ptn_ds_tune_store(struct device *dev,
 	char *value;
 	int	tmp = 0;
 	char buf[256], *b, *c;
+	char read_data;
 
 	pr_info("%s buff=%s\n", __func__, buff);
 	strlcpy(buf, buff, sizeof(buf));
@@ -256,6 +277,9 @@ static ssize_t ptn_ds_tune_store(struct device *dev,
 			tmp = 0;
 		}
 	}
+	i2c_smbus_write_byte_data(redrv_data->i2c, DS_TXRX_Control, redrv_data->usbControl_DS.data);
+	read_data = i2c_smbus_read_byte_data(redrv_data->i2c, DS_TXRX_Control);
+	pr_info("%s: usbControl_DS as (%x)\n", __func__, read_data);
 	return size;
 }
 
@@ -293,6 +317,7 @@ static int ptn36502_probe(struct i2c_client *i2c,
 
 	init_usb_control();
 	ptn36502_config(INIT_MODE, 0);
+	ptn36502_config(SAFE_STATE, 0);
 
 	return ret;
 }

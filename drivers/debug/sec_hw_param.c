@@ -140,41 +140,41 @@ static ssize_t show_last_dcvs(struct device *dev,
 		return info_size;
 	}
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"RR\":\"%s\",",
 				sec_debug_get_reset_reason_str(reset_reason));
 
-	info_size += snprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"RWC\":\"%d\",", sec_debug_get_reset_write_cnt());
 
 	for (i = 0; i < MAX_CLUSTER_NUM; i++) {
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"%sKHz\":\"%u\",", prefix[i],
 				phealth->last_dcvs.apps[i].cpu_KHz);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"%s\":\"%u\",", prefix[i],
 				phealth->last_dcvs.apps[i].apc_mV);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"%sl2\":\"%u\",", prefix[i],
 				phealth->last_dcvs.apps[i].l2_mV);
 	}
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"DDRKHz\":\"%u\",", phealth->last_dcvs.rpm.ddr_KHz);
 
 	for (i = 0; i < MAX_VREG_CNT; i++) {
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"%s\":\"%u\",", prefix_vreg[i],
 				phealth->last_dcvs.rpm.mV[i]);
 	}
 	
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"BCAP\":\"%d\",", phealth->last_dcvs.batt.cap);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"BVOL\":\"%d\",", phealth->last_dcvs.batt.volt);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"BTEM\":\"%d\",", phealth->last_dcvs.batt.temp);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"BCUR\":\"%d\",", phealth->last_dcvs.batt.curr);
 
 	// remove , character
@@ -234,94 +234,94 @@ static ssize_t show_ap_health(struct device *dev,
 
 	for (i = 0; i < MAX_CLUSTER_NUM; i++) {
 		cpu = i * CPU_NUM_PER_CLUSTER;
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"T%sT\":\"%d\",", prefix[i],
 				phealth->thermal.cpu_throttle_cnt[cpu]);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dT%sT\":\"%d\",", prefix[i],
 				phealth->daily_thermal.cpu_throttle_cnt[cpu]);
 	}
 
 	for (cpu = 0; cpu < NR_CPUS; cpu++) {
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"TC%dH\":\"%d\",",
 				cpu, phealth->thermal.cpu_hotplug_cnt[cpu]);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dTC%dH\":\"%d\",",
 				cpu, phealth->daily_thermal.cpu_hotplug_cnt[cpu]);
 	}
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"TR\":\"%d\",", phealth->thermal.ktm_reset_cnt +
 				phealth->thermal.gcc_t0_reset_cnt +
 				phealth->thermal.gcc_t1_reset_cnt);
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dTR\":\"%d\",", phealth->daily_thermal.ktm_reset_cnt +
 				phealth->daily_thermal.gcc_t0_reset_cnt +
 				phealth->daily_thermal.gcc_t1_reset_cnt);
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"CEG\":\"%u\",",
 				phealth->cache.gld_err_cnt);
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dCEG\":\"%u\",",
 				phealth->daily_cache.gld_err_cnt);
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"CEO\":\"%u\",",
 				phealth->cache.obsrv_err_cnt);
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dCEO\":\"%u\",",
 				phealth->daily_cache.obsrv_err_cnt);
 	
 	for (i = 0; i < MAX_PCIE_NUM; i++) {
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"P%dPF\":\"%d\",", i,
 				phealth->pcie[i].phy_init_fail_cnt);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"P%dLD\":\"%d\",", i,
 				phealth->pcie[i].link_down_cnt);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"P%dLF\":\"%d\",", i,
 				phealth->pcie[i].link_up_fail_cnt);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"P%dLT\":\"%x\",", i,
 				phealth->pcie[i].link_up_fail_ltssm);
 
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dP%dPF\":\"%d\",", i,
 				phealth->daily_pcie[i].phy_init_fail_cnt);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dP%dLD\":\"%d\",", i,
 				phealth->daily_pcie[i].link_down_cnt);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dP%dLF\":\"%d\",", i,
 				phealth->daily_pcie[i].link_up_fail_cnt);
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"dP%dLT\":\"%x\",", i,
 				phealth->daily_pcie[i].link_up_fail_ltssm);
 	}
 	
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dNP\":\"%d\",", phealth->daily_rr.np);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dRP\":\"%d\",", phealth->daily_rr.rp);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dMP\":\"%d\",", phealth->daily_rr.mp);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dKP\":\"%d\",", phealth->daily_rr.kp);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dDP\":\"%d\",", phealth->daily_rr.dp);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dWP\":\"%d\",", phealth->daily_rr.wp);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dTP\":\"%d\",", phealth->daily_rr.tp);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dSP\":\"%d\",", phealth->daily_rr.sp);
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 			"\"dPP\":\"%d\"", phealth->daily_rr.pp);
 
 
@@ -338,19 +338,19 @@ static ssize_t show_ddr_info(struct device *dev,
 	ssize_t info_size = 0;
 	uint32_t ch, cs, dq;
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"DDRV\":\"%s\",", get_ddr_vendor_name());
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"DSF\":\"%d.%d\",",
 				(get_ddr_DSF_version() >> 16) & 0xFFFF,
 				get_ddr_DSF_version() & 0xFFFF);
-	info_size += snprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"REV1\":\"%02x\",",
 				get_ddr_revision_id_1());
-	info_size += snprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"REV2\":\"%02x\",",
 				get_ddr_revision_id_2());
-	info_size += snprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"SIZE\":\"%d\",",
 				get_ddr_total_density());
 
@@ -358,15 +358,15 @@ static ssize_t show_ddr_info(struct device *dev,
 		for (cs = 0; cs < 2; cs++) {
 			for (dq = 0; dq < 4; dq++) {
 
-				info_size += snprintf((char*)(buf+info_size),
+				info_size += scnprintf((char*)(buf+info_size),
 					MAX_LEN_STR - info_size,
 					"\"RW_%d_%d_%d\":\"%d\",", ch, cs, dq,
 					get_ddr_rcw_tDQSCK(ch, cs, dq));
-				info_size += snprintf((char*)(buf+info_size),
+				info_size += scnprintf((char*)(buf+info_size),
 					MAX_LEN_STR - info_size,
 					"\"WC_%d_%d_%d\":\"%d\",", ch, cs, dq,
 					get_ddr_wr_coarseCDC(ch, cs, dq));
-				info_size += snprintf((char*)(buf+info_size),
+				info_size += scnprintf((char*)(buf+info_size),
 					MAX_LEN_STR - info_size,
 					"\"WF_%d_%d_%d\":\"%d\",", ch, cs, dq,
 					get_ddr_wr_fineCDC(ch, cs, dq));
@@ -390,9 +390,9 @@ static ssize_t show_eye_info(struct device *dev,
 	ssize_t info_size = 0;
 	uint32_t ch, cs, dq;
 
-	info_size += snprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"DDRV\":\"%s\",", get_ddr_vendor_name());
-	info_size += snprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char *)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"DSF\":\"%d.%d\",",
 				(get_ddr_DSF_version() >> 16) & 0xFFFF,
 				get_ddr_DSF_version() & 0xFFFF);
@@ -400,19 +400,19 @@ static ssize_t show_eye_info(struct device *dev,
 	for (ch = 0; ch < 2; ch++) {
 		for (cs = 0; cs < 2; cs++) {
 			for (dq = 0; dq < 4; dq++) {
-				info_size += snprintf((char *)(buf+info_size),
+				info_size += scnprintf((char *)(buf+info_size),
 					MAX_LEN_STR - info_size,
 					"\"R_%d_%d_%d\":\"%d\",", ch, cs, dq,
 					get_ddr_wr_eyeRect(ch, cs, dq));
-				info_size += snprintf((char *)(buf+info_size),
+				info_size += scnprintf((char *)(buf+info_size),
 					MAX_LEN_STR - info_size,
 					"\"V_%d_%d_%d\":\"%d\",", ch, cs, dq,
 					get_ddr_wr_eyeVref(ch, cs, dq));
-				info_size += snprintf((char *)(buf+info_size),
+				info_size += scnprintf((char *)(buf+info_size),
 					MAX_LEN_STR - info_size,
 					"\"H_%d_%d_%d\":\"%d\",", ch, cs, dq,
 					get_ddr_wr_eyeHeight(ch, cs, dq));
-				info_size += snprintf((char *)(buf+info_size),
+				info_size += scnprintf((char *)(buf+info_size),
 					MAX_LEN_STR - info_size,
 					"\"W_%d_%d_%d\":\"%d\",", ch, cs, dq,
 					get_ddr_wr_eyeWidth(ch, cs, dq));
@@ -468,37 +468,37 @@ static ssize_t show_ap_info(struct device *dev,
 	int i, corner, max_corner;
 	char prefix[MAX_CLUSTER_NUM][3] = {"SC", "GC"};
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				"\"HW_REV\":\"%d\"", system_rev);
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				",\"SoC_ID\":\"%u\"", socinfo_get_id());
 
-	info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+	info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				",\"SoC_REV\":\"%u.%u.%u\"",
 				SOCINFO_VERSION_MAJOR(socinfo_get_version()),
 				SOCINFO_VERSION_MINOR(socinfo_get_version()), 0);
 
 	for (i = 0; i < MAX_CLUSTER_NUM; i++) {
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				",\"%s_PRM\":\"%d\"", prefix[i], get_param0(i));
 
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				",\"%s_SB\":\"%d\"", prefix[i], cpr3_get_fuse_speed_bin(i));
 
-		info_size += snprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
+		info_size += scnprintf((char*)(buf+info_size), MAX_LEN_STR - info_size,
 				",\"%s_CR\":\"%d\"", prefix[i], cpr3_get_fuse_cpr_rev(i));
 
 		max_corner = cpr3_get_fuse_corner_count(i);
 		for (corner = 0; corner < max_corner; corner++) {
-			info_size += snprintf((char*)(buf+info_size),
+			info_size += scnprintf((char*)(buf+info_size),
 				MAX_LEN_STR - info_size,
 				",\"%s_OPV_%d\":\"%d\"", prefix[i], corner,
 				cpr3_get_fuse_open_loop_voltage(i, corner));
 		}
 
 		if (i == MAX_CLUSTER_NUM-1) {
-			info_size += snprintf((char*)(buf+info_size),
+			info_size += scnprintf((char*)(buf+info_size),
 					MAX_LEN_STR - info_size,
 					",\"%s_OPV_%d\":\"%d\"", prefix[i], corner,
 					get_param0(NUM_PARAM0-3)*1000);
@@ -555,119 +555,119 @@ static ssize_t show_extra_info(struct device *dev,
 	p_kinfo = &p_rst_exinfo->kern_ex_info.info;
 	cpu = p_kinfo->cpu;
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 			"\"RR\":\"%s\",", sec_debug_get_reset_reason_str(reset_reason));
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 			"\"RWC\":\"%d\",", sec_debug_get_reset_write_cnt());
 
 	ts_nsec = p_kinfo->ktime;
 	rem_nsec = do_div(ts_nsec, 1000000000);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"KTIME\":\"%lu.%06lu\",", (unsigned long)ts_nsec, rem_nsec / 1000);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 			"\"CPU\":\"%d\",", p_kinfo->cpu);
 
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 			"\"TASK\":\"%s\",", p_kinfo->task_name);
 
 	if (p_kinfo->smmu.fsr) {
-		offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+		offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"SDN\":\"%s\",", p_kinfo->smmu.dev_name);
 
-		offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+		offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"FSR\":\"%x\",", p_kinfo->smmu.fsr);
 
 		if (p_kinfo->smmu.fsynr) {
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"FSRY\":\"%x\",", p_kinfo->smmu.fsynr);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"IOVA\":\"%08lx\",", p_kinfo->smmu.iova);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"FAR\":\"%016lx\",", p_kinfo->smmu.far);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"SMN\":\"%s\",", p_kinfo->smmu.mas_name);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"CB\":\"%d\",", p_kinfo->smmu.cbndx);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"SOFT\":\"%016llx\",", p_kinfo->smmu.phys_soft);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"ATOS\":\"%016llx\",", p_kinfo->smmu.phys_atos);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"SID\":\"%x\",", p_kinfo->smmu.sid);
 		}
 	}
 
 	if (p_kinfo->badmode.esr) {
-		offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+		offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"BDR\":\"%08x\",", p_kinfo->badmode.reason);
 
-		offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+		offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"BDRS\":\"%s\",", p_kinfo->badmode.handler_str);
 
-		offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+		offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"BDE\":\"%08x\",", p_kinfo->badmode.esr);
 
-		offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+		offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"BDES\":\"%s\",", p_kinfo->badmode.esr_str);
 	}
 
 	if ((cpu > -1) && (cpu < NR_CPUS)) { // 0 ~ 7
 		if (p_kinfo->fault[cpu].esr) {
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"ESR\":\"%08x\",", p_kinfo->fault[cpu].esr);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"FNM\":\"%s\",", p_kinfo->fault[cpu].str);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"FV1\":\"%016llx\",", p_kinfo->fault[cpu].var1);
 
-			offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+			offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 					"\"FV2\":\"%016llx\",", p_kinfo->fault[cpu].var2);
 		}
 
-		offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+		offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"FAULT\":\"pgd=%016llx VA=%016llx *pgd=%016llx *pud=%016llx *pmd=%016llx *pte=%016llx\",",
 				p_kinfo->fault[cpu].pte[0], p_kinfo->fault[cpu].pte[1], p_kinfo->fault[cpu].pte[2],
 				p_kinfo->fault[cpu].pte[3], p_kinfo->fault[cpu].pte[4], p_kinfo->fault[cpu].pte[5]);
 	}
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"BUG\":\"%s\",", p_kinfo->bug_buf);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"PANIC\":\"%s\",", p_kinfo->panic_buf);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"PC\":\"%s\",", p_kinfo->pc);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"LR\":\"%s\",", p_kinfo->lr);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"GLE\":\"%s\",", p_kinfo->dbg0);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 			"\"UFS\":\"%s\",", p_kinfo->ufs_err);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 			"\"DISP\":\"%s\",", p_kinfo->display_err);
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 			"\"ROT\":\"W%dC%d\",", get_param0(3), get_param0(4));
 
-	offset += snprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
+	offset += scnprintf((char *)buf + offset, MAX_ETRA_LEN - offset,
 				"\"STACK\":\"%s\"", p_kinfo->backtrace);
 out:
 	if (p_rst_exinfo)
@@ -722,15 +722,15 @@ static ssize_t show_extrb_info(struct device *dev,
 		goto out;
 	}
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 			"\"RR\":\"%s\",", sec_debug_get_reset_reason_str(reset_reason));
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 			"\"RWC\":\"%d\",", sec_debug_get_reset_write_cnt());
 
 	if (p_rst_exinfo->rpm_ex_info.info.magic == RPM_EX_INFO_MAGIC
 		 && p_rst_exinfo->rpm_ex_info.info.nlog > 0) {
-		offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, "\"RPM\":\"");
+		offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, "\"RPM\":\"");
 
 		if (p_rst_exinfo->rpm_ex_info.info.nlog > 5) {
 			idx = p_rst_exinfo->rpm_ex_info.info.nlog % 5;
@@ -746,67 +746,67 @@ static ssize_t show_extrb_info(struct device *dev,
 			ts_nsec = pRPMlog->nsec;
 			rem_nsec = do_div(ts_nsec, 1000000000);
 
-			offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+			offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 					"%lu.%06lu ",
 					(unsigned long)ts_nsec, rem_nsec / 1000);
 
-			offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+			offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 					"%s ",	pRPMlog->msg);
 
-			offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+			offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 					"%x %x %x %x",
 					pRPMlog->arg[0], pRPMlog->arg[1], pRPMlog->arg[2], pRPMlog->arg[3]);
 
 			if (cnt == max_cnt - 1) {
-				offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, "\",");
+				offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, "\",");
 			} else {
-				offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, "/");
+				offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, "/");
 			}
 		}
 	}
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 			"\"TZ_RR\":\"%s\"", p_rst_exinfo->tz_ex_info.msg);
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 			",\"PIMEM\":\"0x%08x,0x%08x\"",
 			p_rst_exinfo->pimem_info.esr, p_rst_exinfo->pimem_info.ear0);
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 			",\"HYP\":\"%s\"", p_rst_exinfo->hyp_ex_info.msg);
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, ",\"LPM\":\"");
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, ",\"LPM\":\"");
 	max_cnt = sizeof(p_rst_exinfo->kern_ex_info.info.lpm_state);
 	max_cnt = max_cnt/sizeof(p_rst_exinfo->kern_ex_info.info.lpm_state[0]);
 	for (idx = 0; idx < max_cnt; idx++) {
-		offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+		offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 				"%x", p_rst_exinfo->kern_ex_info.info.lpm_state[idx]);
 		if (idx != max_cnt - 1)
-			offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, ",");
+			offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, ",");
 	}
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, "\"");
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, "\"");
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, ",\"PKO\":\"%x\"",
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, ",\"PKO\":\"%x\"",
 			p_rst_exinfo->kern_ex_info.info.pko);
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, ",\"LR\":\"");
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, ",\"LR\":\"");
 	max_cnt = sizeof(p_rst_exinfo->kern_ex_info.info.lr_val);
 	max_cnt = max_cnt/sizeof(p_rst_exinfo->kern_ex_info.info.lr_val[0]);
 	for (idx = 0; idx < max_cnt; idx++) {
-		offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+		offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 				"%llx", p_rst_exinfo->kern_ex_info.info.lr_val[idx]);
 		if (idx != max_cnt - 1)
-			offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, ",");
+			offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, ",");
 	}
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, "\"");
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, "\"");
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, ",\"PC\":\"");
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, ",\"PC\":\"");
 	max_cnt = sizeof(p_rst_exinfo->kern_ex_info.info.pc_val);
 	max_cnt = max_cnt/sizeof(p_rst_exinfo->kern_ex_info.info.pc_val[0]);
 	for (idx = 0; idx < max_cnt; idx++) {
-		offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+		offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 				"%llx", p_rst_exinfo->kern_ex_info.info.pc_val[idx]);
 		if (idx != max_cnt - 1)
-			offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, ",");
+			offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, ",");
 	}
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset, "\"");
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset, "\"");
 out:
 	if (p_rst_exinfo)
 		kfree(p_rst_exinfo);
@@ -848,13 +848,15 @@ static ssize_t show_extrc_info(struct device *dev,
 		goto out;
 	}
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 			"\"RR\":\"%s\",", sec_debug_get_reset_reason_str(reset_reason));
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 			"\"RWC\":\"%d\",", sec_debug_get_reset_write_cnt());
 
-	offset += snprintf((char *)buf + offset, MAX_LEN_STR - offset,
+	extrc_buf[1023] = '\0';
+
+	offset += scnprintf((char *)buf + offset, MAX_LEN_STR - offset,
 			"\"LKL\":\"%s\"", &extrc_buf[offset]);
 out:
 	check_format(buf, &offset, MAX_LEN_STR);

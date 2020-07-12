@@ -1,9 +1,6 @@
 /*
  * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
  *
- * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
- *
- *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all
@@ -17,12 +14,6 @@
  * PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
  * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
  * PERFORMANCE OF THIS SOFTWARE.
- */
-
-/*
- * This file was originally distributed by Qualcomm Atheros, Inc.
- * under proprietary terms before Copyright ownership was assigned
- * to the Linux Foundation.
  */
 
 #ifndef _OL_TXRX_INTERNAL__H_
@@ -39,7 +30,7 @@
 #include <ol_txrx_dbg.h>
 #include <enet.h>               /* ETHERNET_HDR_LEN, etc. */
 #include <ipv4.h>               /* IPV4_HDR_LEN, etc. */
-#include <ipv6.h>               /* IPV6_HDR_LEN, etc. */
+#include <linux/ipv6.h>               /* IPV6_HDR_LEN, etc. */
 #include <ip_prot.h>            /* IP_PROTOCOL_TCP, etc. */
 
 #ifdef ATH_11AC_TXCOMPACT
@@ -270,6 +261,10 @@ ol_rx_mpdu_list_next(struct ol_txrx_pdev_t *pdev,
 				 pub.tx.dropped.download_fail.bytes, _b_cntrs);\
 			break;                                                 \
 		default:                                                       \
+			TXRX_STATS_ADD(_pdev,				       \
+				 pub.tx.dropped.others.pkts, _p_cntrs);        \
+			TXRX_STATS_ADD(_pdev,				       \
+				 pub.tx.dropped.others.bytes, _b_cntrs);       \
 			break;                                                 \
 		}                                                              \
 		TXRX_STATS_UPDATE_TX_COMP_HISTOGRAM(_pdev, _p_cntrs);          \

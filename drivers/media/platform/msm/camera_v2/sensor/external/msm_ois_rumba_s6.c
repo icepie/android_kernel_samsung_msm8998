@@ -64,6 +64,10 @@ static struct v4l2_file_operations msm_ois_v4l2_subdev_fops;
 #define CDBG_I(fmt, args...) do { } while (0)
 #endif
 
+#if defined(CONFIG_SEC_GREATQLTE_PROJECT)
+#define I2C_ADAPTER_LOCK //add i2c lock for avoided i2c conflict with nfc
+#endif
+
 extern int16_t msm_actuator_move_for_ois_test(void);
 
 static int32_t msm_ois_suspend_mode(struct msm_ois_ctrl_t *a_ctrl, uint16_t value);
@@ -79,6 +83,11 @@ static int32_t calculate_centering_shift_param(struct msm_ois_ctrl_t *a_ctrl);
 
 static struct i2c_driver msm_ois_i2c_driver;
 struct msm_ois_ctrl_t *g_msm_ois_t;
+
+#ifdef I2C_ADAPTER_LOCK
+struct i2c_adapter *g_msm_ois_i2c_adapter;
+#endif
+
 extern struct class *camera_class; /*sys/class/camera*/
 
 #define GPIO_LEVEL_LOW        0
@@ -590,24 +599,27 @@ static int32_t msm_ois_set_mode(struct msm_ois_ctrl_t *a_ctrl,
 			return -1;
 		}
 
-		if ((select_module == OIS_MODULE_DUAL) && !(a_ctrl->is_image_shift_cal_done)) {
-			CDBG_I("[CTR_DBG] get param for shift calibartion for dual camera");
-			rc = calculate_centering_shift_param(a_ctrl);
-			if (rc < 0)
-				pr_err("[CTR_DBG] get_shift_param failed");
-			else
-				a_ctrl->is_image_shift_cal_done = TRUE;
-		}
-		a_ctrl->module = select_module;
-	} else {
-		CDBG_I("SET :: current_module 0x%2X, select module 0x%2X", a_ctrl->module, select_module);
-		if ((a_ctrl->module == OIS_MODULE_1 && select_module == OIS_MODULE_2) ||
-			(a_ctrl->module == OIS_MODULE_2 && select_module == OIS_MODULE_1)) {
-			a_ctrl->module = OIS_MODULE_4;
-			CDBG_I("running for two camera - not dual");
-		}
-	}
-	mode &= 0xff;
+        if ((select_module == OIS_MODULE_DUAL) && !(a_ctrl->is_image_shift_cal_done)) {
+            CDBG_I("[CTR_DBG] get param for shift calibartion for dual camera");
+            rc = calculate_centering_shift_param(a_ctrl);
+            if (rc < 0)
+                pr_err("[CTR_DBG] get_shift_param failed");
+            else
+                a_ctrl->is_image_shift_cal_done = TRUE;
+        }
+        a_ctrl->module = select_module;
+    } else {
+        CDBG_I("SET :: current_module 0x%2X, select module 0x%2X", a_ctrl->module, select_module);
+        if ((a_ctrl->module == OIS_MODULE_1 && select_module == OIS_MODULE_2) ||
+            (a_ctrl->module == OIS_MODULE_2 && select_module == OIS_MODULE_1)) {
+            a_ctrl->module = OIS_MODULE_4;
+            CDBG_I("running for two camera - not dual");
+        } else if (a_ctrl->module == OIS_MODULE_1 && select_module == OIS_MODULE_DUAL) {
+            a_ctrl->module = OIS_MODULE_DUAL;
+            CDBG_I("applying shift as dual camera for FHD 60fps"); // for description refer to OIS_EXCEPT
+        }
+    }
+    mode &= 0xff;
 
 	switch (mode) {
 	case OIS_MODE_ON_STILL:
@@ -1453,32 +1465,33 @@ static int32_t msm_ois_config(struct msm_ois_ctrl_t *a_ctrl,
 	int32_t rc = 0;
 	int retries = 2;
 
-	mutex_lock(a_ctrl->ois_mutex);
-	CDBG_I("Enter\n");
-	CDBG_I("%s type %d\n", __func__, cdata->cfgtype);
-	switch (cdata->cfgtype) {
-	case CFG_OIS_INIT:
-		CDBG("CFG_OIS_INIT enter \n");
-		rc = msm_ois_init(a_ctrl);
-		break;
-	case CFG_OIS_SET_MODE:
-		CDBG("CFG_OIS_SET_MODE enter \n");
-		CDBG("CFG_OIS_SET_MODE value :: %d\n", cdata->set_value);
-		do {
-			rc = msm_ois_set_mode(a_ctrl, cdata->set_value);
-			if (rc < 0) {
-				if (--retries < 0)
-					break;
-			}
-		} while (rc);
-		if (retries < 0)
-			pr_err("set mode failed %d\n", rc);
-		break;
-	case CFG_OIS_READ_MODULE_VER:
-		CDBG("CFG_OIS_READ_MODULE_VER enter \n");
-		rc = msm_ois_read_module_ver(a_ctrl);
-		if (rc < 0)
-			pr_err("read module version failed, skip fw update from phone %d\n", rc);
+    mutex_lock(a_ctrl->ois_mutex);
+    CDBG_I("Enter\n");
+    CDBG_I("%s type %d\n", __func__, cdata->cfgtype);
+    switch (cdata->cfgtype) {
+    case CFG_OIS_INIT:
+        CDBG("CFG_OIS_INIT enter \n");
+        rc = msm_ois_init(a_ctrl);
+        break;
+    case CFG_OIS_SET_MODE:
+        CDBG("CFG_OIS_SET_MODE enter \n");
+        CDBG("CFG_OIS_SET_MODE value :: %d\n", cdata->set_value);
+        do{
+            rc = msm_ois_set_mode(a_ctrl, cdata->set_value);
+            if (rc < 0){
+                msleep(30);
+                if (--retries < 0)
+                    break;
+            }
+        }while(rc);
+        if (retries < 0)
+            pr_err("set mode failed %d\n", rc);
+        break;
+    case CFG_OIS_READ_MODULE_VER:
+        CDBG("CFG_OIS_READ_MODULE_VER enter \n");
+        rc = msm_ois_read_module_ver(a_ctrl);
+        if (rc < 0)
+            pr_err("read module version failed, skip fw update from phone %d\n", rc);
 
 		if (copy_to_user(cdata->version, &a_ctrl->module_ver, sizeof(struct msm_ois_ver_t)))
 			pr_err("copy to user failed \n");
@@ -1687,6 +1700,128 @@ static const struct v4l2_subdev_internal_ops msm_ois_internal_ops = {
 	.close = msm_ois_close,
 };
 
+#if defined (CONFIG_CAMERA_SYSFS_CAMFW_ALL)
+static int32_t msm_ois_get_fw_version(char *path, char *fw_version)
+{
+    struct file *filp = NULL;
+    mm_segment_t old_fs;
+    char    char_ois_ver[MSM_OIS_VER_SIZE+1] = "";
+    int ret = 0, i;
+
+    loff_t pos;
+
+    old_fs = get_fs();
+    set_fs(KERNEL_DS);
+
+    CDBG("OIS FW : %s", path);
+
+    filp = filp_open(path, O_RDONLY, 0);
+    if(IS_ERR(filp)){
+        pr_err("%s: No OIS FW.\n", __func__);
+        set_fs(old_fs);
+        ret = -1;
+        goto ERROR;
+    }
+
+    pos = OIS_HW_VERSION_OFFSET;
+    ret = vfs_read(filp, char_ois_ver, sizeof(char) * OIS_HW_VERSION_SIZE, &pos);
+    if (ret < 0) {
+        pr_err("%s: Fail to read OIS FW.", __func__);
+        ret = -1;
+        goto ERROR;
+    }
+
+    pos = OIS_FW_VERSION_OFFSET;
+    ret = vfs_read(filp, char_ois_ver + OIS_HW_VERSION_SIZE, sizeof(char) * (MSM_OIS_VER_SIZE - OIS_HW_VERSION_SIZE), &pos);
+    if (ret < 0) {
+        pr_err("%s: Fail to read OIS FW.", __func__);
+        ret = -1;
+        goto ERROR;
+    }
+
+    for(i = 0; i < MSM_OIS_VER_SIZE; i ++)
+    {
+        if(!isalnum(char_ois_ver[i]))
+        {
+            pr_err("%s: %d version char (%c) is not alnum type.", __func__, __LINE__, char_ois_ver[i]);
+            ret = -1;
+            goto ERROR;
+        }
+    }
+
+    snprintf(fw_version, MSM_OIS_VER_SIZE * sizeof(char), "%s\n", char_ois_ver);
+    CDBG("%s, %d : fw_version %s", __func__, __LINE__, fw_version);
+
+ERROR:
+    if (filp) {
+        filp_close(filp, NULL);
+        filp = NULL;
+    }
+    set_fs(old_fs);
+    return ret;
+}
+
+static int32_t msm_ois_get_fw_all(char *all_version)
+{
+    int ret;
+    char fw_ver[32] = {0, };
+    char output[48] = {0, };
+
+    ret = msm_ois_get_fw_version(OIS_FW_PATH"/"OIS_FW_DOM_NAME, fw_ver);
+    if (ret >= 0) {
+        CDBG("%s, %d: %s", __func__, __LINE__, fw_ver);
+	    strcat(output, fw_ver);
+	    memset(fw_ver, 0, sizeof(fw_ver));
+    }
+
+    ret = msm_ois_get_fw_version(OIS_FW_PATH"/"OIS_FW_SEC_NAME, fw_ver);
+    if (ret >= 0) {
+        CDBG("%s, %d: %s", __func__, __LINE__, fw_ver);
+        strcat(output, ",");
+        strcat(output, fw_ver);
+        memset(fw_ver, 0, sizeof(fw_ver));
+    }
+
+    return sprintf(all_version, ";[OIS]%s\n", output);
+}
+
+static long msm_ois_fw_info(struct msm_ois_ctrl_t *a_ctrl, void *arg)
+{
+    struct msm_phone_fw_data_t32 *data32 = (struct msm_phone_fw_data_t32 *)arg;
+    struct msm_phone_fw_data_t data;
+    int rc = 0;
+    int16_t valid = 0;
+    char fw[MAX_OIS_FW_INFO] = {0, };
+
+    if (!a_ctrl || !data32) {
+ 	pr_err("[syscamera][%s::%d]a_ctrl %p, data %p\n", __FUNCTION__, __LINE__,
+		a_ctrl, data32);
+	return -EINVAL;
+    }
+
+    rc = msm_ois_get_fw_all(fw);
+    if (rc < 0) {
+	pr_err("[syscamera][%s::%d] error rc = %d\n", __FUNCTION__, __LINE__, rc);
+    } else {
+	data.ois_fw_all = compat_ptr(data32->ois_fw_all);
+ 	if (copy_to_user(data.ois_fw_all, fw, strlen(fw))) {
+	    pr_err("[syscamera][%s::%d] copy_to_user failed\n", __FUNCTION__, __LINE__);
+	    rc = -EFAULT;
+	} else {
+	    valid = 1;
+   	    data.valid_ois_fw_info = compat_ptr(data32->valid_ois_fw_info);
+	    if (copy_to_user(data.valid_ois_fw_info, &valid, sizeof(valid))) {
+		pr_err("[syscamera][%s::%d] copy_to_user failed\n", __FUNCTION__, __LINE__);
+		rc = -EFAULT;
+	    }
+	}
+    }
+
+    CDBG("[syscamera][%s::%d] fw %s\n", __func__, __LINE__, data.ois_fw_all);
+    return rc;
+}
+#endif
+
 static long msm_ois_subdev_ioctl(struct v4l2_subdev *sd,
 			unsigned int cmd, void *arg)
 {
@@ -1694,19 +1829,23 @@ static long msm_ois_subdev_ioctl(struct v4l2_subdev *sd,
 	void __user *argp = (void __user *)arg;
 	CDBG_I("Enter\n");
 
-	switch (cmd) {
-	case VIDIOC_MSM_SENSOR_GET_SUBDEV_ID:
-		return msm_ois_get_subdev_id(a_ctrl, argp);
-	case VIDIOC_MSM_OIS_CFG:
-		return msm_ois_config(a_ctrl, argp);
-	case MSM_SD_SHUTDOWN:
-		mutex_lock(a_ctrl->ois_mutex);
-		msm_ois_close(sd, NULL);
-		mutex_unlock(a_ctrl->ois_mutex);
-		return 0;
-	default:
-		return -ENOIOCTLCMD;
-	}
+    switch (cmd) {
+    case VIDIOC_MSM_SENSOR_GET_SUBDEV_ID:
+        return msm_ois_get_subdev_id(a_ctrl, argp);
+    case VIDIOC_MSM_OIS_CFG:
+        return msm_ois_config(a_ctrl, argp);
+    case MSM_SD_SHUTDOWN:
+        mutex_lock(a_ctrl->ois_mutex);
+        msm_ois_close(sd, NULL);
+        mutex_unlock(a_ctrl->ois_mutex);
+        return 0;
+#if defined (CONFIG_CAMERA_SYSFS_CAMFW_ALL)
+    case VIDIOC_MSM_PHONE_FW_INFO :
+	return msm_ois_fw_info(a_ctrl, argp);
+#endif
+    default:
+        return -ENOIOCTLCMD;
+    }
 }
 #ifdef CONFIG_COMPAT
 
@@ -1727,34 +1866,40 @@ static long msm_ois_subdev_do_ioctl(
 	case VIDIOC_MSM_OIS_CFG32:
 		cmd = VIDIOC_MSM_OIS_CFG;
 
-		switch (u32->cfgtype) {
-		case CFG_OIS_SET_MODE:
-		case CFG_OIS_SET_GGFADE:
-		case CFG_OIS_SUSPEND_MODE:
-			ois_data.set_value = u32->set_value;
-			parg = &ois_data;
-			break;
-		case CFG_OIS_READ_MODULE_VER:
-		case CFG_OIS_READ_PHONE_VER:
-			ois_data.version = compat_ptr(u32->version);
-			parg = &ois_data;
-			break;
-		case CFG_OIS_READ_CAL_INFO:
-		case CFG_OIS_READ_MANUAL_CAL_INFO:
-			ois_data.ois_cal_info = compat_ptr(u32->ois_cal_info);
-			parg = &ois_data;
-			break;
-		case CFG_OIS_SET_IMAGE_SHIFT_CAL:
-			ois_data.image_shift_cal = compat_ptr(u32->image_shift_cal);
-			parg = &ois_data;
-			break;
-		default:
-			parg = &ois_data;
-			break;
-		}
-	}
-	rc = msm_ois_subdev_ioctl(sd, cmd, parg);
-	return rc;
+        switch (u32->cfgtype) {
+        case CFG_OIS_SET_MODE:
+        case CFG_OIS_SET_GGFADE:
+        case CFG_OIS_SUSPEND_MODE:
+            ois_data.set_value = u32->set_value;
+            parg = &ois_data;
+            break;
+        case CFG_OIS_READ_MODULE_VER:
+        case CFG_OIS_READ_PHONE_VER:
+            ois_data.version = compat_ptr(u32->version);
+            parg = &ois_data;
+            break;
+        case CFG_OIS_READ_CAL_INFO:
+        case CFG_OIS_READ_MANUAL_CAL_INFO:
+            ois_data.ois_cal_info = compat_ptr(u32->ois_cal_info);
+            parg = &ois_data;
+            break;
+        case CFG_OIS_SET_IMAGE_SHIFT_CAL:
+            ois_data.image_shift_cal = compat_ptr(u32->image_shift_cal);
+            parg = &ois_data;
+            break;
+        default:
+            parg = &ois_data;
+            break;
+        }
+	break;
+    case VIDIOC_MSM_PHONE_FW_INFO32:
+	cmd = VIDIOC_MSM_PHONE_FW_INFO;
+	break;
+    default:
+	break;
+    }
+    rc = msm_ois_subdev_ioctl(sd, cmd, parg);
+    return rc;
 }
 
 static long msm_ois_subdev_fops_ioctl(struct file *file, unsigned int cmd,
@@ -2055,9 +2200,13 @@ static int32_t msm_ois_i2c_probe(struct i2c_client *client,
 	ois_ctrl_t->ois_v4l2_subdev_ops = &msm_ois_subdev_ops;
 	ois_ctrl_t->ois_mutex = &msm_ois_mutex;
 	ois_ctrl_t->i2c_driver = &msm_ois_i2c_driver;
+#ifdef I2C_ADAPTER_LOCK
+	g_msm_ois_i2c_adapter = client->adapter;
+#endif
 
 	//CDBG("client = %x\n", (unsigned int) client);
 	ois_ctrl_t->i2c_client.client = client;
+
 	ois_ctrl_t->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
 	/* Set device type as I2C */
 	ois_ctrl_t->ois_device_type = MSM_CAMERA_I2C_DEVICE;
@@ -2066,6 +2215,7 @@ static int32_t msm_ois_i2c_probe(struct i2c_client *client,
 	ois_ctrl_t->ois_mutex = &msm_ois_mutex;
 	ois_ctrl_t->ois_state = OIS_POWER_DOWN;
 	ois_ctrl_t->is_camera_run = FALSE;
+
 
 	ois_ctrl_t->cam_name = ois_ctrl_t->subdev_id;
 	CDBG("ois_ctrl_t->cam_name: %d", ois_ctrl_t->cam_name);

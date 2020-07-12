@@ -1194,6 +1194,10 @@ int tfa_log_register(configure_log_t tfa_log_configure,
 	update_log_t tfa_log_update);
 #endif
 
+#if defined(TFA_ACTIVATED_ASYNCHRONOUSLY)
+int tfa_is_selected_dev_to_activate(tfa98xx_handle_t handle);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

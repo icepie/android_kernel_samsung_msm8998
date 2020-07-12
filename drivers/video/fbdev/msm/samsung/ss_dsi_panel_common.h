@@ -867,11 +867,16 @@ struct samsung_display_driver_data {
 	struct mutex vdd_blank_unblank_lock;
 	struct mutex vdd_panel_lpm_lock;
 	struct mutex vdd_act_clock_lock;
+	struct mutex vdd_poc_read_lock;
+	struct mutex vdd_poc_write_lock;
 	struct mutex vdd_poc_operation_lock;
 	struct mutex vdd_mdss_direct_cmdlist_lock;
 	struct mutex vdd_cpufreq_lock;
 	struct samsung_display_debug_data *debug_data;
 	struct ss_exclusive_mipi_tx exclusive_tx;
+
+	/* Used for changing the position to enable force_clk_lane_hs */
+	bool samsung_first_blank;
 
 	int vdd_blank_mode[SUPPORT_PANEL_COUNT];
 	int vdd_blank_mode_done[SUPPORT_PANEL_COUNT];

@@ -159,7 +159,10 @@ ERROR:
 }
 
 static int msm_ois_init(struct msm_ois_ctrl_t *a_ctrl) {
-	int rc = 0;
+    int rc = 0;
+#if defined(CONFIG_SAMSUNG_APERTURE)
+    uint16_t read_value;
+#endif
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
 	struct cam_hw_param *hw_param = NULL;
 	uint32_t *hw_cam_position = NULL;
@@ -247,9 +250,18 @@ static int msm_ois_init(struct msm_ois_ctrl_t *a_ctrl) {
 	msm_ois_set_ggfadeup(a_ctrl, 1000);
 	msm_ois_set_ggfadedown(a_ctrl, 1000);
 
+#if defined(CONFIG_SAMSUNG_APERTURE)
+    msm_ois_i2c_seq_read(a_ctrl, 0x021A, a_ctrl->Xcenter, 2);
+    msm_ois_i2c_seq_read(a_ctrl, 0x021C, a_ctrl->Ycenter, 2);
+    CDBG_I("[Xcenter:%d %d , Ycenter:%d %d\n", a_ctrl->Xcenter[0], a_ctrl->Xcenter[1], a_ctrl->Ycenter[0], a_ctrl->Ycenter[1]);
+    msm_ois_set_ggfade(a_ctrl, 0);
+    a_ctrl->i2c_client.i2c_func_tbl->i2c_read( // read Error register
+        &a_ctrl->i2c_client, 0x04, &read_value, MSM_CAMERA_I2C_WORD_DATA);
+#endif
+
 ERROR:
-	CDBG_I("Exit\n");
-	return rc;
+    CDBG_I("Exit ois_mode : %d\n", a_ctrl->ois_mode);
+    return rc;
 }
 
 static int32_t msm_ois_set_debug_info(struct msm_ois_ctrl_t *a_ctrl, uint16_t mode)
@@ -446,9 +458,18 @@ static int32_t msm_ois_read_module_ver(struct msm_ois_ctrl_t *a_ctrl)
 static int32_t msm_ois_set_mode(struct msm_ois_ctrl_t *a_ctrl,
 							uint16_t mode)
 {
-	CDBG_I("Enter\n");
-	CDBG_I("[mode :: %d] \n", mode);
-	mode &= 0xff;
+#if defined(CONFIG_SAMSUNG_APERTURE)
+    uint16_t ycenter_shift = 0;
+    uint8_t  reg_val[2];
+#endif
+    CDBG_I("Enter\n");
+    CDBG_I("[mode :: %d] \n", mode);
+    mode &= 0xff;
+
+    if(a_ctrl->ois_mode == mode){
+        CDBG("ois_mode is %d already, return \n",mode);
+        return 0;
+    }
 
 	switch (mode) {
 	case OIS_MODE_ON_STILL:
@@ -1135,26 +1156,30 @@ error:
 int msm_ois_wait_idle(struct msm_ois_ctrl_t *a_ctrl, int retries) {
 	uint16_t status;
 
-	uint32_t ret = 0;
-	/* check ois status if it`s idle or not */
-	/* OISSTS register(0x0001) 1Byte read */
-	/* 0x01 == IDLE State */
-	do {
-		ret = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
-			&a_ctrl->i2c_client, 0x0001, &status, MSM_CAMERA_I2C_BYTE_DATA);
-		if (status == 0x01)
-			break;
-		if (--retries < 0) {
-			if (ret < 0) {
-				pr_err("[OIS_FW_DBG] failed due to i2c fail");
-				return -EIO;
-			}
-			pr_err("[OIS_FW_DBG] ois status is not idle, current status %d \n", status);
-			return -EBUSY;
-		}
-		usleep_range(10000, 11000);
-	} while (status != 0x01);
-	return 0;
+    uint32_t ret = 0;
+    /* check ois status if it`s idle or not */
+    /* OISSTS register(0x0001) 1Byte read */
+    /* 0x01 == IDLE State */
+    do {
+        ret = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+            &a_ctrl->i2c_client, 0x0001, &status, MSM_CAMERA_I2C_BYTE_DATA);
+#if defined(CONFIG_SAMSUNG_APERTURE)
+        if (status == 0x01 || status == 0x13)
+#else
+        if (status == 0x01)
+#endif
+            break;
+        if (--retries < 0) {
+            if (ret < 0) {
+                pr_err("[OIS_FW_DBG] failed due to i2c fail");
+                return -EIO;
+            }
+            pr_err("[OIS_FW_DBG] ois status is not idle, current status %d \n", status);
+            return -EBUSY;
+        }
+        usleep_range(10000, 11000);
+    } while (status != 0x01);
+    return 0;
 }
 
 static int32_t msm_ois_power_down(struct msm_ois_ctrl_t *a_ctrl)
@@ -1310,13 +1335,22 @@ static int32_t msm_ois_config(struct msm_ois_ctrl_t *a_ctrl,
 			pr_err("Failed ois set ggfade:%d\n", rc);
 		break;
 
-	default:
-		pr_err("invalid cdata->cfgtype:%d\n", cdata->cfgtype);
-		break;
-	}
-	mutex_unlock(a_ctrl->ois_mutex);
-	CDBG("Exit\n");
-	return rc;
+    case CFG_OIS_GET_MODE:
+        if (copy_to_user(cdata->ois_mode, &a_ctrl->ois_mode, sizeof(uint16_t)))
+            pr_err("copy ois_mode to user failed\n");
+        CDBG("CFG_OIS_GET_MODE ois_mode = %d\n", a_ctrl->ois_mode);
+#if defined(CONFIG_SAMSUNG_APERTURE)
+        msm_ois_set_mode(a_ctrl, OIS_MODE_CENTERING);
+        mdelay(10);
+#endif
+        break;
+    default:
+        pr_err("invalid cdata->cfgtype:%d\n", cdata->cfgtype);
+        break;
+    }
+    mutex_unlock(a_ctrl->ois_mutex);
+    CDBG("Exit\n");
+    return rc;
 }
 
 static int32_t msm_ois_get_subdev_id(struct msm_ois_ctrl_t *a_ctrl,
@@ -1471,29 +1505,33 @@ static long msm_ois_subdev_do_ioctl(
 	case VIDIOC_MSM_OIS_CFG32:
 		cmd = VIDIOC_MSM_OIS_CFG;
 
-		switch (u32->cfgtype) {
-		case CFG_OIS_SET_MODE:
-		case CFG_OIS_SET_GGFADE:
-			ois_data.set_value = u32->set_value;
-			parg = &ois_data;
-			break;
-		case CFG_OIS_READ_MODULE_VER:
-		case CFG_OIS_READ_PHONE_VER:
-			ois_data.version = compat_ptr(u32->version);
-			parg = &ois_data;
-			break;
-		case CFG_OIS_READ_CAL_INFO:
-		case CFG_OIS_READ_MANUAL_CAL_INFO:
-			ois_data.ois_cal_info = compat_ptr(u32->ois_cal_info);
-			parg = &ois_data;
-			break;
-		default:
-			parg = &ois_data;
-			break;
-		}
-	}
-	rc = msm_ois_subdev_ioctl(sd, cmd, parg);
-	return rc;
+        switch (u32->cfgtype) {
+        case CFG_OIS_SET_MODE:
+        case CFG_OIS_SET_GGFADE:
+            ois_data.set_value = u32->set_value;
+            parg = &ois_data;
+            break;
+        case CFG_OIS_GET_MODE:
+            ois_data.ois_mode = compat_ptr(u32->ois_mode);
+            parg = &ois_data;
+            break;
+        case CFG_OIS_READ_MODULE_VER:
+        case CFG_OIS_READ_PHONE_VER:
+            ois_data.version = compat_ptr(u32->version);
+            parg = &ois_data;
+            break;
+        case CFG_OIS_READ_CAL_INFO:
+        case CFG_OIS_READ_MANUAL_CAL_INFO:
+            ois_data.ois_cal_info= compat_ptr(u32->ois_cal_info);
+            parg = &ois_data;
+            break;
+        default:
+            parg = &ois_data;
+            break;
+        }
+    }
+    rc = msm_ois_subdev_ioctl(sd, cmd, parg);
+    return rc;
 }
 
 static long msm_ois_subdev_fops_ioctl(struct file *file, unsigned int cmd,

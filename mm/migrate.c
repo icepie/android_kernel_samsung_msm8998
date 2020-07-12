@@ -39,8 +39,8 @@
 #include <linux/balloon_compaction.h>
 #include <linux/mmu_notifier.h>
 #include <linux/page_idle.h>
-#include <linux/ptrace.h>
 #include <linux/page_owner.h>
+#include <linux/ptrace.h>
 
 #include <asm/tlbflush.h>
 
@@ -75,7 +75,7 @@ int migrate_prep_local(void)
 	return 0;
 }
 
-bool isolate_movable_page(struct page *page, isolate_mode_t mode)
+int isolate_movable_page(struct page *page, isolate_mode_t mode)
 {
 	struct address_space *mapping;
 
@@ -126,14 +126,14 @@ bool isolate_movable_page(struct page *page, isolate_mode_t mode)
 	__SetPageIsolated(page);
 	unlock_page(page);
 
-	return true;
+	return 0;
 
 out_no_isolated:
 	unlock_page(page);
 out_putpage:
 	put_page(page);
 out:
-	return false;
+	return -EBUSY;
 }
 
 /* It should be called on page which is PG_movable */
@@ -235,7 +235,7 @@ static int remove_migration_pte(struct page *new, struct vm_area_struct *vma,
 		goto unlock;
 
 	get_page(new);
-	pte = pte_mkold(mk_pte(new, vma->vm_page_prot));
+	pte = pte_mkold(mk_pte(new, READ_ONCE(vma->vm_page_prot)));
 	if (pte_swp_soft_dirty(*ptep))
 		pte = pte_mksoft_dirty(pte);
 

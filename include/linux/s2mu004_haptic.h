@@ -68,6 +68,9 @@
 #define	HAPTIC_EN		1
 #define	HAPTIC_OFF		0
 
+#define S2MU004_MAX_INTENSITY 68
+#define MAX_INTENSITY 10000
+
 
 enum s2mu004_haptic_motor_type {
 	S2MU004_HAPTIC_ERM,

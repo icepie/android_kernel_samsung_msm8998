@@ -50,6 +50,9 @@ typedef enum {
 	MANAGER_NOTIFY_MUIC_CPUIDLE,
 	MANAGER_NOTIFY_MUIC_CPUFREQ,
 	MANAGER_NOTIFY_MUIC_TIMEOUT_OPEN_DEVICE,
+	MANAGER_NOTIFY_MUIC_UART,
+	MANAGER_NOTIFY_CCIC_SENSORHUB,
+	MANAGER_NOTIFY_CCIC_WACOM,
 
 /* CCIC */
 	MANAGER_NOTIFY_CCIC_INITIAL = 20,
@@ -153,6 +156,8 @@ typedef struct _manager_data_t
 	int usb210_count;
 	int usb310_count;
 	int waterChg_count;
+	int water_cable_type;
+
 	unsigned long waterDet_duration;
 	unsigned long waterDet_time;
 	unsigned long dryDet_time;

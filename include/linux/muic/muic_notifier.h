@@ -24,6 +24,9 @@
 #define __MUIC_NOTIFIER_H__
 
 #include <linux/muic/muic.h>
+#if defined(CONFIG_MUIC_S2MU004)
+#include <linux/muic/muic_interface.h>
+#endif
 #if defined(CONFIG_CCIC_NOTIFIER)
 #include <linux/ccic/ccic_notifier.h>
 #endif
@@ -65,6 +68,17 @@ struct muic_notifier_struct {
 	struct blocking_notifier_head notifier_call_chain;
 };
 
+#if defined(CONFIG_MUIC_KEYBOARD)
+typedef enum {
+	KEYBOARD_NOTIFY_DEV_TSP = 0,
+} keyboard_notifier_device_t;
+
+struct keyboard_notifier_struct {
+	muic_notifier_cmd_t cmd;
+	struct blocking_notifier_head notifier_call_chain;
+};
+#endif
+
 #define MUIC_NOTIFIER_BLOCK(name)	\
 	struct notifier_block (name)
 
@@ -76,8 +90,16 @@ extern void muic_notifier_attach_attached_dev(muic_attached_dev_t new_dev);
 extern void muic_notifier_detach_attached_dev(muic_attached_dev_t cur_dev);
 extern void muic_notifier_logically_attach_attached_dev(muic_attached_dev_t new_dev);
 extern void muic_notifier_logically_detach_attached_dev(muic_attached_dev_t cur_dev);
-
+#if defined(CONFIG_MUIC_KEYBOARD)
+extern void keyboard_notifier_attach(void);
+extern void keyboard_notifier_detach(void);
+extern int keyboard_notifier_register(struct notifier_block *nb, notifier_fn_t notifier,
+			keyboard_notifier_device_t listener);
+extern int keyboard_notifier_unregister(struct notifier_block *nb);
+#endif
 #if defined(CONFIG_MUIC_S2MU004)
+extern void muic_register_usb_notifier(struct muic_interface_t *muic_if);
+extern void muic_unregister_usb_notifier(struct muic_interface_t *muic_if);
 extern void muic_pdic_notifier_attach_attached_dev(muic_attached_dev_t new_dev);
 extern void muic_pdic_notifier_detach_attached_dev(muic_attached_dev_t new_dev);
 extern int muic_ccic_notifier_register(struct notifier_block *nb,

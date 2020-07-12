@@ -51,6 +51,8 @@
 
 #define MSM_SENSOR_BYPASS_VIDEO_NODE    1
 
+#define FRONT_AUX_SENSOR_SUPPORT
+
 enum msm_sensor_camera_id_t {
 	CAMERA_0,
 	CAMERA_1,
@@ -72,6 +74,7 @@ enum camb_position_t {
 	BACK_CAMERA_B,
 	FRONT_CAMERA_B,
 	AUX_CAMERA_B = 0x100,
+	FRONT_AUX_CAMERA_B,
 	INVALID_CAMERA_B,
 };
 
@@ -306,6 +309,11 @@ enum msm_camera_cam_info_ois {
 	CAM_INFO_OIS_USE,
 };
 
+enum msm_camera_cam_info_dual {
+	CAM_INFO_DUAL_NONE = 0,
+	CAM_INFO_DUAL_USE,
+};
+
 enum msm_camera_cam_info_valid {
 	CAM_INFO_INVALID = 0,
 	CAM_INFO_VALID,
@@ -390,6 +398,7 @@ struct msm_camera_sensor_slave_info {
 	char actuator_name[32];
 	char ois_name[32];
 	char flash_name[32];
+	char aperture_name[32];
 	enum msm_sensor_camera_id_t camera_id;
 	unsigned short slave_addr;
 	enum i2c_freq_mode_t i2c_freq_mode;
@@ -462,6 +471,7 @@ struct msm_camera_csiphy_params {
 	unsigned char csid_core;
 	unsigned int csiphy_clk;
 	unsigned char csi_3phase;
+	uint64_t data_rate;
 };
 
 struct msm_camera_i2c_seq_reg_array {

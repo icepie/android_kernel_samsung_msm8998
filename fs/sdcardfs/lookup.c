@@ -41,8 +41,6 @@ void sdcardfs_destroy_dentry_cache(void)
 
 void free_dentry_private_data(struct dentry *dentry)
 {
-	if (!dentry || !dentry->d_fsdata)
-		return;
 	kmem_cache_free(sdcardfs_dentry_cachep, dentry->d_fsdata);
 	dentry->d_fsdata = NULL;
 }
@@ -235,7 +233,7 @@ static int sdcardfs_name_match(struct dir_context *ctx, const char *name,
 	struct sdcardfs_name_data *buf = container_of(ctx, struct sdcardfs_name_data, ctx);
 	struct qstr candidate = QSTR_INIT(name, namelen);
 
-	if (qstr_n_case_eq(buf->to_find, &candidate)) {
+	if (qstr_case_eq(buf->to_find, &candidate)) {
 		memcpy(buf->name, name, namelen);
 		buf->name[namelen] = 0;
 		buf->found = true;

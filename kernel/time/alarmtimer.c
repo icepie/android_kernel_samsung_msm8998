@@ -510,7 +510,7 @@ static int alarmtimer_suspend(struct device *dev)
 		delta = ktime_sub(next->expires, base->gettime());
 
 		palarm = container_of(next, struct alarm, node);
-		pr_info("[%s] cntvct : %lld, gettime : %lld, alarm : %p,"\
+		pr_info("[%s] cntvct : %lld, gettime : %lld, alarm : %pK,"\
 			"alarm->function : %pF, expires : %lld, delta : %lld\n",
 			__func__, arch_counter_get_cntvct(), ktime_to_ns(base->gettime()),
 			palarm, palarm->function, ktime_to_ns(next->expires), ktime_to_ns(delta));

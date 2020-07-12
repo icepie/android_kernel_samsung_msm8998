@@ -126,13 +126,13 @@ endef
 
 #Tweak defconfig for FACTORY KERNEL without additional fac_defcofig
 define modi-facdefconfig
-chmod 664 kernel/arch/arm64/configs/$(VARIANT_DEFCONFIG)
-echo -e "\nCONFIG_SEC_FACTORY=y" >> kernel/arch/arm64/configs/$(VARIANT_DEFCONFIG)
+chmod 664 kernel/msm-4.4/arch/arm64/configs/$(VARIANT_DEFCONFIG)
+echo -e "\nCONFIG_SEC_FACTORY=y" >> kernel/msm-4.4/arch/arm64/configs/$(VARIANT_DEFCONFIG)
 endef
 
 define modi-shipdefconfig
-chmod 664 kernel/arch/arm64/configs/$(VARIANT_DEFCONFIG)
-echo -e "\nCONFIG_SAMSUNG_PRODUCT_SHIP=y" >> kernel/arch/arm64/configs/$(VARIANT_DEFCONFIG)
+chmod 664 kernel/msm-4.4/arch/arm64/configs/$(VARIANT_DEFCONFIG)
+echo -e "\nCONFIG_SAMSUNG_PRODUCT_SHIP=y" >> kernel/msm-4.4/arch/arm64/configs/$(VARIANT_DEFCONFIG)
 endef
 
 ifneq ($(KERNEL_LEGACY_DIR),true)

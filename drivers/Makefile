@@ -98,6 +98,7 @@ obj-$(CONFIG_TC)		+= tc/
 obj-$(CONFIG_UWB)		+= uwb/
 obj-$(CONFIG_USB_PHY)		+= usb/
 obj-$(CONFIG_USB)		+= usb/
+obj-$(CONFIG_USB_SUPPORT)	+= usb/
 obj-$(CONFIG_PCI)		+= usb/
 obj-$(CONFIG_USB_GADGET)	+= usb/
 obj-$(CONFIG_OF)		+= usb/
@@ -189,9 +190,11 @@ ifeq ($(CONFIG_BATTERY_SAMSUNG_V2), y)
 endif
 
 obj-$(CONFIG_SENSORS_SSC)	+= sensors/
+obj-$(CONFIG_SENSORS_HRMSENSOR)	+= optics/
 obj-$(CONFIG_ADSP_FACTORY)      += adsp_factory/
 
 obj-$(CONFIG_ESOC)              += esoc/
+obj-$(CONFIG_TEE)		+= tee/
 
 #motor
 obj-y              		+= motor/
@@ -213,3 +216,6 @@ obj-$(CONFIG_SENSORS_FINGERPRINT)	+= fingerprint/
 
 # RKP
 obj-$(CONFIG_TIMA_RKP) 		+= rkp/
+
+# FIVE TEE driver
+obj-$(CONFIG_FIVE_TEE_DRIVER)	+= five/

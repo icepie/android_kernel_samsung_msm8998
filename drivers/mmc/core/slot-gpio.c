@@ -153,12 +153,12 @@ void mmc_gpiod_request_cd_irq(struct mmc_host *host)
 	if (irq >= 0 && host->caps & MMC_CAP_NEEDS_POLL)
 		irq = -EINVAL;
 
-        ret = mmc_gpio_get_cd(host);
-        if (ret < 0) {
-            pr_err("%s: getting card detection gpio is failed.\n", mmc_hostname(host));
-            return;
-        }
-        ctx->status = ret ? true : false;
+	ret = mmc_gpio_get_cd(host);
+	if (ret < 0) {
+		pr_err("%s: getting card detection gpio is failed.\n", mmc_hostname(host));
+		return;
+	}
+	ctx->status = ret ? true : false;
 
 	if (irq >= 0) {
 		if (!ctx->cd_gpio_isr)
@@ -177,6 +177,27 @@ void mmc_gpiod_request_cd_irq(struct mmc_host *host)
 		host->caps |= MMC_CAP_NEEDS_POLL;
 }
 EXPORT_SYMBOL(mmc_gpiod_request_cd_irq);
+
+/**
+ * mmc_gpiod_update_status - update ctx->status to current status
+ * @host: mmc_host
+ * @present: current status from get_cd()
+ *
+ * It is to update card detection status.
+ */
+void mmc_gpiod_update_status(struct mmc_host *host, int present)
+{
+	struct mmc_gpio *ctx = host->slot.handler_priv;
+	bool ctx_status;
+
+	if (present < 0)
+		return;
+
+	ctx_status = !!present;
+	if (ctx && (ctx->status ^ ctx_status))
+		ctx->status = ctx_status;
+}
+EXPORT_SYMBOL(mmc_gpiod_update_status);
 
 /* Register an alternate interrupt service routine for
  * the card-detect GPIO.

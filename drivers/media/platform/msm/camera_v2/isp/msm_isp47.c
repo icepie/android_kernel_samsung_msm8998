@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1615,6 +1615,7 @@ void msm_vfe47_cfg_input_mux(struct vfe_device *vfe_dev,
 {
 	uint32_t core_cfg = 0;
 	uint32_t val = 0;
+	struct msm_vfe_camif_cfg *camif_cfg = &pix_cfg->camif_cfg;
 
 	core_cfg =  msm_camera_io_r(vfe_dev->vfe_base + 0x50);
 	core_cfg &= 0xFFFFFF9F;
@@ -1645,7 +1646,18 @@ void msm_vfe47_cfg_input_mux(struct vfe_device *vfe_dev,
 	default:
 		pr_err("%s: Unsupported input mux %d\n",
 			__func__, pix_cfg->input_mux);
-		break;
+		return;
+	}
+	pr_info("vfe %d split camif %d split vfe %d chip 98 %d\n",
+		vfe_dev->pdev->id, camif_cfg->is_split, vfe_dev->is_split,
+		msm_vfe_is_vfe48(vfe_dev));
+	/* set reg update slave for vfe 1 for dual vfe */
+	if (msm_vfe_is_vfe48(vfe_dev) &&
+		vfe_dev->is_split && vfe_dev->pdev->id == ISP_VFE1) {
+			val = msm_camera_io_r(vfe_dev->vfe_base + 0x50);
+			val |= (1 << 4);
+			msm_camera_io_w(val, vfe_dev->vfe_base + 0x50);
+			pr_err("Vfe 1 set as reg update slave\n");
 	}
 	return;
 }

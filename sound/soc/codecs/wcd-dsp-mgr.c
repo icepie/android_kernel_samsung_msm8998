@@ -25,7 +25,8 @@
 static char *wdsp_get_cmpnt_type_string(enum wdsp_cmpnt_type);
 
 /* Component related macros */
-#define WDSP_GET_COMPONENT(wdsp, x) (&(wdsp->cmpnts[x]))
+#define WDSP_GET_COMPONENT(wdsp, x) ((x >= WDSP_CMPNT_TYPE_MAX || x < 0) ? \
+					NULL : (&(wdsp->cmpnts[x])))
 #define WDSP_GET_CMPNT_TYPE_STR(x) wdsp_get_cmpnt_type_string(x)
 
 /*
@@ -1013,6 +1014,10 @@ static void wdsp_mgr_debugfs_init(struct wdsp_mgr_priv *wdsp)
 
 	debugfs_create_bool("panic_on_error", S_IRUGO | S_IWUSR,
 			    wdsp->entry, &wdsp->panic_on_error);
+
+#ifdef CONFIG_SEC_SND_DEBUG
+	wdsp->panic_on_error = 1;
+#endif
 }
 
 static void wdsp_mgr_debugfs_remove(struct wdsp_mgr_priv *wdsp)

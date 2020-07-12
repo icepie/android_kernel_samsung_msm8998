@@ -1069,7 +1069,7 @@ static void dsi_update_mdnie_data_dsi0(void)
 	mdnie_data.dsi0_adjust_ldu_table = adjust_ldu_data;
 	mdnie_data.dsi0_max_adjust_ldu = 6;
 	mdnie_data.dsi0_night_mode_table = night_mode_data;
-	mdnie_data.dsi0_max_night_mode_index = 11;
+	mdnie_data.dsi0_max_night_mode_index = 12;
 	mdnie_data.dsi0_scr_step_index = MDNIE_STEP1_INDEX;
 
 	mdnie_data.dsi0_white_default_r = 0xff;
@@ -1191,7 +1191,7 @@ static void dsi_update_mdnie_data_dsi1(void)
 	mdnie_data.dsi1_adjust_ldu_table = adjust_ldu_data;
 	mdnie_data.dsi1_max_adjust_ldu = 6;
 	mdnie_data.dsi1_night_mode_table = night_mode_data;
-	mdnie_data.dsi1_max_night_mode_index = 11;
+	mdnie_data.dsi1_max_night_mode_index = 12;
 	mdnie_data.dsi1_scr_step_index = MDNIE_STEP1_INDEX;
 
 	mdnie_data.dsi1_white_default_r = 0xff;

@@ -37,6 +37,7 @@ static struct adc_list batt_adc_list[SEC_BAT_ADC_CHANNEL_NUM] = {
 	{.name = "adc-wpc-temp"},
 	{.name = "adc-slave-chg-temp"},
 	{.name = "adc-usb-temp"},
+	{.name = "adc-blkt-temp"},
 };
 static void sec_bat_adc_ap_init(struct platform_device *pdev,
 		struct sec_battery_info *battery)
@@ -106,6 +107,14 @@ static int sec_bat_adc_ap_read(struct sec_battery_info *battery, int channel)
 	case SEC_BAT_ADC_CHANNEL_INBAT_VOLTAGE:
 		sec_bat_read_adc(adc_client, VBAT_SNS, &results, channel);
 		data = ((int)results.physical)/1000;
+		break;
+	case SEC_BAT_ADC_CHANNEL_BLKT_TEMP:
+		sec_bat_read_adc(adc_client, VADC_AMUX4_GPIO_PU2, &results, channel);
+		data = results.adc_code;
+		break;
+	case SEC_BAT_ADC_CHANNEL_SLAVE_CHG_TEMP:
+		sec_bat_read_adc(adc_client, VADC_AMUX2_GPIO_PU2, &results, channel);
+		data = results.adc_code;
 		break;
 	default :
 		break;
@@ -374,6 +383,12 @@ bool sec_bat_get_value_by_adc(
 		temp_adc_table_size =
 			battery->pdata->slave_chg_temp_adc_table_size;
 		battery->slave_chg_temp_adc = temp_adc;
+		break;
+	case SEC_BAT_ADC_CHANNEL_BLKT_TEMP:
+		temp_adc_table = battery->pdata->blkt_temp_adc_table;
+		temp_adc_table_size =
+			battery->pdata->blkt_temp_adc_table_size;
+		battery->blkt_temp_adc = temp_adc;
 		break;
 	default:
 		dev_err(battery->dev,

@@ -28,6 +28,8 @@
 #include <linux/muic/s2mu004-muic.h>
 #include <linux/sec_sysfs.h>
 #include <linux/sec_class.h>
+#include <linux/muic/s2mu004-muic-sysfs.h>
+#include <linux/sec_param.h>
 
 static ssize_t s2mu004_muic_show_uart_en(struct device *dev,
 	struct device_attribute *attr, char *buf)
@@ -172,7 +174,7 @@ static ssize_t s2mu004_muic_show_adc(struct device *dev,
 		/* No cable detection means RID open */
 		ret = ADC_OPEN;
 	} else {
-#if IS_ENABLED(CONFIG_HV_MUIC_S2MU004_AFC)
+#if IS_ENABLED(CONFIG_MUIC_HV)
 		if (muic_pdata->is_factory_start && muic_data->is_afc_muic_ready)
 			/* No need to read adc in the middle of afc detection sequences */
 			ret = ADC_GND;
@@ -180,7 +182,7 @@ static ssize_t s2mu004_muic_show_adc(struct device *dev,
 #endif
 			ret = s2mu004_muic_refresh_adc(muic_data);
 	}
-#if IS_ENABLED(CONFIG_HV_MUIC_S2MU004_AFC)
+#if IS_ENABLED(CONFIG_MUIC_HV)
 	pr_info("%s: factory: %d attached_dev: %d afc ready: %d", __func__,
 			muic_pdata->is_factory_start, muic_pdata->attached_dev,
 			muic_data->is_afc_muic_ready);
@@ -437,19 +439,6 @@ static ssize_t muic_show_vbus_value(struct device *dev,
 	int val = 0;
 	u8 ret, vbadc, afc_ctrl = 0;
 
-	if ((muic_pdata->attached_dev != ATTACHED_DEV_AFC_CHARGER_9V_MUIC)
-		& (muic_pdata->attached_dev != ATTACHED_DEV_QC_CHARGER_9V_MUIC)) {
-		/* Set AFC_EN, VB_ADC_EN to true in case of did not prepared afc
-		 * for PD charger or Normal TA with flag afc_disable
-		 */
-		pr_info("%s: Set AFC_EN, VB_ADC_ON\n", __func__);
-		afc_ctrl = s2mu004_i2c_read_byte(i2c, S2MU004_REG_AFC_CTRL1);
-		afc_ctrl |= (MUIC_AFC_CTRL1_AFC_EN_MASK|MUIC_AFC_CTRL1_VB_ADC_EN_MASK);
-		s2mu004_i2c_write_byte(i2c, S2MU004_REG_AFC_CTRL1, afc_ctrl);
-		mdelay(10);
-		afc_ctrl = s2mu004_i2c_read_byte(i2c, S2MU004_REG_AFC_CTRL1);
-	}
-
 	/* Read VBADC : must be read after afc prepared */
 	ret = s2mu004_i2c_read_byte(i2c, S2MU004_REG_AFC_STATUS);
 	if (ret < 0)
@@ -472,17 +461,6 @@ static ssize_t muic_show_vbus_value(struct device *dev,
 		break;
 	}
 
-	/* NOTE: If enter this statement with 9V, voltage would be decreased to 5V */
-	if ((muic_pdata->attached_dev != ATTACHED_DEV_AFC_CHARGER_9V_MUIC) &
-		(muic_pdata->attached_dev != ATTACHED_DEV_QC_CHARGER_9V_MUIC)) {
-		/* Clear AFC_EN, VB_ADC_EN  */
-		pr_info("%s: Clear AFC_EN, VB_ADC_ON\n", __func__);
-		afc_ctrl = s2mu004_i2c_read_byte(i2c, S2MU004_REG_AFC_CTRL1);
-		afc_ctrl &= ~(MUIC_AFC_CTRL1_AFC_EN_MASK|MUIC_AFC_CTRL1_VB_ADC_EN_MASK);
-		s2mu004_i2c_write_byte(i2c, S2MU004_REG_AFC_CTRL1, afc_ctrl);
-		afc_ctrl = s2mu004_i2c_read_byte(i2c, S2MU004_REG_AFC_CTRL1);
-	}
-
 	pr_info("%s VBUS:%d, afc_ctrl:0x%x\n", __func__, val, afc_ctrl);
 
 	if (val > 0)
@@ -491,7 +469,7 @@ static ssize_t muic_show_vbus_value(struct device *dev,
 	return sprintf(buf, "UNKNOWN\n");
 }
 
-#if IS_ENABLED(CONFIG_HV_MUIC_S2MU004_AFC)
+#if defined(CONFIG_MUIC_HV)
 static ssize_t s2mu004_muic_show_afc_disable(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -541,8 +519,15 @@ static ssize_t s2mu004_muic_set_afc_disable(struct device *dev,
 		return ret;
 	}
 #else
-	pr_err("%s:set_param is NOT supported! - %02x:%02x(%d)\n",
-		__func__, param_val, curr_val, ret);
+	pr_info("%s: param_val:%d\n",__func__,param_val);
+	ret = sec_set_param(param_index_afc_disable, &param_val);
+
+	if (ret == false) {
+		pr_err("%s:set_param failed - %02x:%02x(%d)\n", __func__,
+			param_val, curr_val, ret);
+		pdata->afc_disable = curr_val;
+		return ret;
+	}
 #endif
 
 	pr_info("%s afc_disable(%d)\n", __func__, pdata->afc_disable);
@@ -596,7 +581,6 @@ static ssize_t s2mu004_muic_set_afc_disable(struct device *dev,
 	return count;
 }
 
-#if IS_ENABLED(CONFIG_HV_MUIC_VOLTAGE_CTRL)
 static ssize_t muic_store_afc_set_voltage(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -609,8 +593,29 @@ static ssize_t muic_store_afc_set_voltage(struct device *dev,
 
 	return count;
 }
-#endif /* CONFIG_HV_MUIC_VOLTAGE_CTRL */
-#endif /* CONFIG_HV_MUIC_S2MU004_AFC */
+#endif /* CONFIG_MUIC_HV */
+
+#if IS_ENABLED(CONFIG_HICCUP_CHARGER)
+static ssize_t muic_hiccup_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "ENABLE\n");
+}
+
+static ssize_t muic_hiccup_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct s2mu004_muic_data *muic_data = dev_get_drvdata(dev);
+
+	if (!strncasecmp(buf, "DISABLE", 7)) {
+		muic_data->is_hiccup_mode = false;
+		s2mu004_muic_com_to_open(muic_data);
+	} else
+		pr_warn("%s invalid com : %s\n", __func__, buf);
+
+	return count;
+}
+#endif
 
 static DEVICE_ATTR(uart_en, 0664, s2mu004_muic_show_uart_en,
 					s2mu004_muic_set_uart_en);
@@ -639,14 +644,15 @@ static DEVICE_ATTR(usb_en, 0664,
 		s2mu004_muic_show_usb_en,
 		s2mu004_muic_set_usb_en);
 static DEVICE_ATTR(vbus_value, 0444, muic_show_vbus_value, NULL);
-#if IS_ENABLED(CONFIG_HV_MUIC_S2MU004_AFC)
+#if IS_ENABLED(CONFIG_MUIC_HV)
 static DEVICE_ATTR(afc_disable, 0664,
 		s2mu004_muic_show_afc_disable, s2mu004_muic_set_afc_disable);
-#if IS_ENABLED(CONFIG_HV_MUIC_VOLTAGE_CTRL)
 static DEVICE_ATTR(afc_set_voltage, 0220,
 		NULL, muic_store_afc_set_voltage);
-#endif /* CONFIG_HV_MUIC_VOLTAGE_CTRL */
-#endif /* CONFIG_HV_MUIC_S2MU004_AFC */
+#endif /* CONFIG_MUIC_HV */
+#if IS_ENABLED(CONFIG_HICCUP_CHARGER)
+static DEVICE_ATTR(hiccup, 0664, muic_hiccup_show, muic_hiccup_store);
+#endif
 
 static struct attribute *s2mu004_muic_attributes[] = {
 	&dev_attr_uart_en.attr,
@@ -667,12 +673,13 @@ static struct attribute *s2mu004_muic_attributes[] = {
 	&dev_attr_apo_factory.attr,
 	&dev_attr_usb_en.attr,
 	&dev_attr_vbus_value.attr,
-#if IS_ENABLED(CONFIG_HV_MUIC_S2MU004_AFC)
+#if IS_ENABLED(CONFIG_MUIC_HV)
 	&dev_attr_afc_disable.attr,
-#if IS_ENABLED(CONFIG_HV_MUIC_VOLTAGE_CTRL)
 	&dev_attr_afc_set_voltage.attr,
-#endif /* CONFIG_HV_MUIC_VOLTAGE_CTRL */
-#endif /* CONFIG_HV_MUIC_S2MU004_AFC */
+#endif /* CONFIG_MUIC_HV */
+#if IS_ENABLED(CONFIG_HICCUP_CHARGER)
+	&dev_attr_hiccup.attr,
+#endif
 	NULL
 };
 

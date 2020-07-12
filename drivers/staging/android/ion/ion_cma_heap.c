@@ -28,8 +28,6 @@
 #include "ion.h"
 #include "ion_priv.h"
 
-#define ION_CMA_ALLOCATE_FAILED -1
-
 struct ion_cma_buffer_info {
 	void *cpu_addr;
 	dma_addr_t handle;
@@ -65,11 +63,9 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 	struct device *dev = heap->priv;
 	struct ion_cma_buffer_info *info;
 
-	dev_dbg(dev, "Request buffer allocation len %ld\n", len);
-
 	info = kzalloc(sizeof(struct ion_cma_buffer_info), GFP_KERNEL);
 	if (!info)
-		return ION_CMA_ALLOCATE_FAILED;
+		return -ENOMEM;
 
 	if (!ION_IS_CACHED(flags))
 		info->cpu_addr = dma_alloc_writecombine(dev, len,
@@ -94,12 +90,11 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 
 	/* keep this for memory release */
 	buffer->priv_virt = info;
-	dev_dbg(dev, "Allocate buffer %pK\n", buffer);
 	return 0;
 
 err:
 	kfree(info);
-	return ION_CMA_ALLOCATE_FAILED;
+	return -ENOMEM;
 }
 
 static void ion_cma_free(struct ion_buffer *buffer)
@@ -107,7 +102,6 @@ static void ion_cma_free(struct ion_buffer *buffer)
 	struct device *dev = buffer->heap->priv;
 	struct ion_cma_buffer_info *info = buffer->priv_virt;
 
-	dev_dbg(dev, "Release buffer %pK\n", buffer);
 	/* release memory */
 	dma_free_coherent(dev, buffer->size, info->cpu_addr, info->handle);
 	sg_free_table(info->table);
@@ -317,26 +311,27 @@ err:
 	return ret;
 }
 
-static int ion_secure_cma_mmap(struct ion_heap *mapper, struct ion_buffer *buffer,
-			struct vm_area_struct *vma)
-{
-	pr_info("%s: Mapping from secure heap %s disallowed\n",
-		__func__, mapper->name);
-	return -EINVAL;
-}
-
 static void *ion_secure_cma_map_kernel(struct ion_heap *heap,
-				struct ion_buffer *buffer)
+				       struct ion_buffer *buffer)
 {
-	pr_info("%s: Kernel mapping from secure heap %s disallowed\n",
-		__func__, heap->name);
-	return ERR_PTR(-EINVAL);
+	if (!is_buffer_hlos_assigned(buffer)) {
+		pr_info("%s: Mapping non-HLOS accessible buffer disallowed\n",
+			__func__);
+		return NULL;
+	}
+	return ion_cma_map_kernel(heap, buffer);
 }
 
-static void ion_secure_cma_unmap_kernel(struct ion_heap *heap,
-				 struct ion_buffer *buffer)
+static int ion_secure_cma_map_user(struct ion_heap *mapper,
+				   struct ion_buffer *buffer,
+				   struct vm_area_struct *vma)
 {
-	return;
+	if (!is_buffer_hlos_assigned(buffer)) {
+		pr_info("%s: Mapping non-HLOS accessible buffer disallowed\n",
+			__func__);
+		return -EINVAL;
+	}
+	return ion_cma_mmap(mapper, buffer, vma);
 }
 
 static struct ion_heap_ops ion_secure_cma_ops = {
@@ -345,9 +340,9 @@ static struct ion_heap_ops ion_secure_cma_ops = {
 	.map_dma = ion_cma_heap_map_dma,
 	.unmap_dma = ion_cma_heap_unmap_dma,
 	.phys = ion_cma_phys,
-	.map_user = ion_secure_cma_mmap,
+	.map_user = ion_secure_cma_map_user,
 	.map_kernel = ion_secure_cma_map_kernel,
-	.unmap_kernel = ion_secure_cma_unmap_kernel,
+	.unmap_kernel = ion_cma_unmap_kernel,
 	.print_debug = ion_cma_print_debug,
 };
 

@@ -284,8 +284,9 @@ static int suspend_prepare(suspend_state_t state)
 		nr_calls--;
 		goto Finish;
 	}
-
+#ifdef CONFIG_SEC_BSP
 	sec_suspend_resume_add("Syncing FS+");
+#endif
 #ifndef CONFIG_SUSPEND_SKIP_SYNC
 	trace_suspend_resume(TPS("sync_filesystems"), 0, true);
 	printk(KERN_INFO "PM: Syncing filesystems ... ");

@@ -118,6 +118,7 @@ struct gadget_info {
 	struct usb_composite_driver composite;
 	struct usb_composite_dev cdev;
 	bool use_os_desc;
+	bool unbinding;
 	char b_vendor_code;
 	char qw_sign[OS_STRING_QW_SIGN_LEN];
 #ifdef CONFIG_USB_CONFIGFS_UEVENT
@@ -314,9 +315,11 @@ static int unregister_gadget(struct gadget_info *gi)
 	if (!gi->udc_name)
 		return -ENODEV;
 
+	gi->unbinding = true;
 	ret = usb_gadget_unregister_driver(&gi->composite.gadget_driver);
 	if (ret)
 		return ret;
+	gi->unbinding = false;
 	kfree(gi->udc_name);
 	gi->udc_name = NULL;
 	return 0;
@@ -781,13 +784,9 @@ static struct config_group *config_desc_make(
 		goto err;
 	}
 	cfg->c.bConfigurationValue = num;
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-	cfg->c.MaxPower = 0x30; /* 96ma */
-	cfg->c.bmAttributes = USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER;
-#else
 	cfg->c.MaxPower = CONFIG_USB_GADGET_VBUS_DRAW;
 	cfg->c.bmAttributes = USB_CONFIG_ATT_ONE;
-#endif
+
 	INIT_LIST_HEAD(&cfg->string_list);
 	INIT_LIST_HEAD(&cfg->func_list);
 
@@ -1343,9 +1342,9 @@ static void purge_configs_funcs(struct gadget_info *gi)
 
 		cfg = container_of(c, struct config_usb_cfg, c);
 
-		list_for_each_entry_safe(f, tmp, &c->functions, list) {
+		list_for_each_entry_safe_reverse(f, tmp, &c->functions, list) {
 
-			list_move_tail(&f->list, &cfg->func_list);
+			list_move(&f->list, &cfg->func_list);
 			if (f->unbind) {
 				dev_err(&gi->cdev.gadget->dev, "unbind function"
 						" '%s'/%pK\n", f->name, f);
@@ -1705,6 +1704,18 @@ static void android_disconnect(struct usb_gadget *gadget)
 
 	gi = container_of(cdev, struct gadget_info, cdev);
 
+	/* FIXME: There's a race between usb_gadget_udc_stop() which is likely
+	 * to set the gadget driver to NULL in the udc driver and this drivers
+	 * gadget disconnect fn which likely checks for the gadget driver to
+	 * be a null ptr. It happens that unbind (doing set_gadget_data(NULL))
+	 * is called before the gadget driver is set to NULL and the udc driver
+	 * calls disconnect fn which results in cdev being a null ptr.
+	 */
+	if (cdev == NULL) {
+		WARN(1, "%s: gadget driver already disconnected\n", __func__);
+		return;
+	}
+
 	/* accessory HID support can be active while the
 		accessory function is not actually enabled,
 		so we need to inform it when we are disconnected.
@@ -1726,11 +1737,13 @@ static void android_disconnect(struct usb_gadget *gadget)
 	} else {
 		pr_info("usb: %s schedule_work con(%d) sw(%d)\n",
 			 __func__, gi->connected, gi->sw_connected);
-		schedule_work(&gi->work);
+		if (!gi->unbinding)
+			schedule_work(&gi->work);
 	}
 	composite_disconnect(gadget);
 #else
-	schedule_work(&gi->work);
+	if (!gi->unbinding)
+		schedule_work(&gi->work);
 	composite_disconnect(gadget);
 #endif	
 }

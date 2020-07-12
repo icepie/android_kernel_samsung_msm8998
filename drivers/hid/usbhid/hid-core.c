@@ -1010,7 +1010,7 @@ static int usbhid_parse(struct hid_device *hid)
 	char *rdesc;
 	int ret, n;
 	int num_descriptors;
-	size_t offset = offsetof(struct hid_descriptor, desc); 
+	size_t offset = offsetof(struct hid_descriptor, desc);
 
 	quirks = usbhid_lookup_quirk(le16_to_cpu(dev->descriptor.idVendor),
 			le16_to_cpu(dev->descriptor.idProduct));

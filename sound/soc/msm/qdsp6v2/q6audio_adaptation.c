@@ -25,6 +25,7 @@
 #include <sound/adsp_err.h>
 #include <sound/audio_cal_utils.h>
 #include <linux/qdsp6v2/apr_tal.h>
+#include <sound/q6common.h>
 
 #include <sound/core.h>
 #include <sound/soc.h>
@@ -99,21 +100,6 @@ union asm_token_struct {
 		u8 flags;
 	} _token;
 	u32 token;
-} __packed;
-
-struct cvp_set_nbmode_enable_cmd {
-	struct apr_hdr hdr;
-	struct vss_icommon_cmd_set_ui_property_enable_t cvp_set_nbmode;
-} __packed;
-
-struct cvp_set_spkmode_enable_cmd {
-	struct apr_hdr hdr;
-	struct vss_icommon_cmd_set_ui_property_enable_t cvp_set_spkmode;
-} __packed;
-
-struct cvp_set_device_info_cmd {
-	struct apr_hdr hdr;
-	struct vss_icommon_cmd_set_ui_property_enable_t cvp_set_device_info;
 } __packed;
 
 static struct afe_ctl this_afe;
@@ -235,10 +221,13 @@ static int q6audio_dsm_write(int port,
 {
 	int ret = -EINVAL;
 	int index = 0;
-	struct afe_dsm_spkr_prot_set_command config;
+	struct afe_port_cmd_set_param_v2 *set_param = NULL;
 	int mod = maxdsm_get_rx_mod_id();
+	struct param_hdr_v3 param_info = {0};
+	u8 *packed_param_data = NULL;
+	int packed_data_size;
+	uint32_t size = sizeof(struct afe_port_cmd_set_param_v2);	
 
-	memset(&config, 0, sizeof(config));
 	if (!set_config) {
 		pr_err("%s Invalid params\n", __func__);
 		goto exit;
@@ -251,32 +240,62 @@ static int q6audio_dsm_write(int port,
 	index = q6audio_get_port_index(port);
 	if (port != maxdsm_get_rx_port_id())
 		mod = maxdsm_get_tx_mod_id();
-	config.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
-				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
-	config.hdr.pkt_size = sizeof(config);
-	config.hdr.src_port = SEC_ADAPTATAION_DSM_SRC_PORT;
-	config.hdr.dest_port = SEC_ADAPTATAION_DSM_DEST_PORT;
-	config.hdr.token = index;
 
-	config.hdr.opcode = AFE_PORT_CMD_SET_PARAM_V2;
-	config.param.port_id = q6audio_get_port_id(port);
-	config.param.payload_size = sizeof(config) - sizeof(config.hdr)
-		- sizeof(config.param);
-	config.pdata.param_id = AFE_PARAM_ID_FBSP_MODE_RX_CFG;
-	config.pdata.param_size = sizeof(config.set_config);
-	config.pdata.module_id = mod;
-	config.set_config = *set_config;
+	param_info.module_id = mod;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = AFE_PARAM_ID_FBSP_MODE_RX_CFG;
+	param_info.param_size = sizeof(struct afe_dsm_filter_set_params_t);
 
+	packed_data_size = param_info.param_size + sizeof(param_info);
+	packed_param_data = kzalloc(packed_data_size, GFP_KERNEL);
+	if (packed_param_data == NULL)
+		return -ENOMEM;
+
+	ret = q6common_pack_pp_params(packed_param_data, &param_info, (u8 *)set_config, &packed_data_size);
+
+	if (packed_param_data != NULL)
+		size += packed_data_size;
+	set_param = kzalloc(size, GFP_KERNEL);
+	if (set_param == NULL)
+		return -ENOMEM;
+
+	set_param->apr_hdr.hdr_field =
+		APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE),
+			      APR_PKT_VER);
+	set_param->apr_hdr.pkt_size = size;
+	set_param->apr_hdr.src_port = SEC_ADAPTATAION_DSM_SRC_PORT;
+	set_param->apr_hdr.dest_port = SEC_ADAPTATAION_DSM_DEST_PORT;
+	set_param->apr_hdr.token = index;
+	set_param->apr_hdr.opcode = AFE_PORT_CMD_SET_PARAM_V2;
+	set_param->port_id = q6audio_get_port_id(port);
+	if (packed_data_size > U16_MAX) {
+		pr_err("%s: Invalid data size for set params V2 %d\n", __func__,
+		       packed_data_size);
+		ret = -EINVAL;
+		goto exit;
+	}
+	set_param->payload_size = packed_data_size;
+
+	if (packed_param_data != NULL) {
+		memcpy(&set_param->param_data, packed_param_data,
+		       packed_data_size);
+	} else {
+		pr_err("%s: param data are NULL\n",
+		       __func__);
+		ret = -EINVAL;
+		goto exit;
+	}
+ 
 	atomic_set(&this_afe.state, 1);
 	atomic_set(&this_afe.status, 0);
 
 	pr_info("%s: port=%#x, port_id=%#x, param_id=%#x, module_id=%#x\n",
 		__func__, port,
-		config.param.port_id,
-		config.pdata.param_id,
-		config.pdata.module_id);
+		set_param->port_id,
+		param_info.param_id,
+		param_info.module_id);
 
-	ret = apr_send_pkt(this_afe.apr, (uint32_t *) &config);
+	ret = apr_send_pkt(this_afe.apr, (void *)set_param);
 	if (ret < 0) {
 		pr_err("%s: Setting param for port %d param[0x%x]failed\n",
 		 __func__, port, AFE_PARAM_ID_FBSP_MODE_RX_CFG);
@@ -297,8 +316,13 @@ static int q6audio_dsm_write(int port,
 	}
 	ret = 0;
 exit:
-	pr_debug("%s config.pdata.param_id %x status %d\n",
-		__func__, config.pdata.param_id, ret);
+	if (packed_param_data)
+		kfree(packed_param_data);
+	if (set_param)
+		kfree(set_param);
+	pr_debug("%s param_info.param_id %x status %d\n",
+		__func__, param_info.param_id, ret);
+
 	return ret;
 }
 
@@ -306,13 +330,14 @@ int q6audio_dsm_read(int port)
 {
 	int ret = -EINVAL;
 	int index = 0;
-	struct afe_dsm_spkr_prot_get_command config;
+	struct afe_port_cmd_get_param_v2 afe_get_param;
 	int mod = maxdsm_get_rx_mod_id();
+	u32 param_size = sizeof(struct afe_dsm_spkr_prot_get_command);
 
 	pr_debug("%s: port_id = 0x%x, module_id = 0x%x\n",
 		__func__, q6audio_get_port_id(port), maxdsm_get_rx_mod_id());
 
-	memset(&config, 0, sizeof(config));
+	memset(&afe_get_param, 0, sizeof(afe_get_param));
 
 	if ((q6audio_validate_port(port) < 0)) {
 		pr_err("%s invalid port %d\n", __func__, port);
@@ -321,39 +346,37 @@ int q6audio_dsm_read(int port)
 	index = q6audio_get_port_index(port);
 	if (port != maxdsm_get_rx_port_id())
 		mod = maxdsm_get_tx_mod_id();
-	config.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
-				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
-	config.hdr.pkt_size = sizeof(config);
-	config.hdr.src_port = SEC_ADAPTATAION_DSM_SRC_PORT;
-	config.hdr.dest_port = SEC_ADAPTATAION_DSM_DEST_PORT;
-	config.hdr.token = index;
-	config.hdr.opcode =  AFE_PORT_CMD_GET_PARAM_V2;
-	config.get_param.mem_map_handle = 0;
-	config.get_param.module_id = mod;
-	config.get_param.param_id = AFE_PARAM_ID_CALIB_RES_CFG;
-	config.get_param.payload_address_lsw = 0;
-	config.get_param.payload_address_msw = 0;
-	config.get_param.payload_size = sizeof(config)
-		- sizeof(config.get_param);
-	config.get_param.port_id = q6audio_get_port_id(port);
-	config.pdata.module_id = mod;
-	config.pdata.param_id = AFE_PARAM_ID_CALIB_RES_CFG;
-	config.pdata.param_size = sizeof(config.res_cfg);
+
+	afe_get_param.apr_hdr.hdr_field =
+		APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE),
+				  APR_PKT_VER);
+	afe_get_param.apr_hdr.pkt_size = sizeof(afe_get_param) + param_size;
+	afe_get_param.apr_hdr.src_port = SEC_ADAPTATAION_DSM_SRC_PORT;
+	afe_get_param.apr_hdr.dest_port = SEC_ADAPTATAION_DSM_DEST_PORT;
+	afe_get_param.apr_hdr.token = index;
+	afe_get_param.apr_hdr.opcode = AFE_PORT_CMD_GET_PARAM_V2;
+	afe_get_param.port_id = q6audio_get_port_id(port);
+	afe_get_param.payload_size = sizeof(struct param_hdr_v1) + param_size;
+	afe_get_param.module_id = mod;
+	afe_get_param.param_id = AFE_PARAM_ID_CALIB_RES_CFG;
+	afe_get_param.param_hdr.module_id = mod;
+	afe_get_param.param_hdr.param_id = AFE_PARAM_ID_CALIB_RES_CFG;
+	afe_get_param.param_hdr.param_size = param_size;
 
 	atomic_set(&this_afe.state, 1);
 	atomic_set(&this_afe.status, 0);
 
 	pr_info("%s: port_id=%#x, param_id=%#x, module_id=%#x module_id=%#x\n",
 		__func__,
-		config.get_param.port_id,
-		config.get_param.param_id,
-		config.get_param.module_id,
-		config.pdata.module_id);
+		afe_get_param.port_id,
+		afe_get_param.param_id,
+		afe_get_param.module_id,
+		afe_get_param.param_hdr.module_id);
 
-	ret = apr_send_pkt(this_afe.apr, (uint32_t *)&config);
+	ret = apr_send_pkt(this_afe.apr, (void *)&afe_get_param);
 	if (ret < 0) {
 		pr_err("%s: get param port %d param id[0x%x]failed\n",
-			   __func__, port, config.get_param.param_id);
+			   __func__, port,afe_get_param.param_id);
 		goto exit;
 	}
 	ret = wait_event_timeout(this_afe.wait,
@@ -378,13 +401,14 @@ int q6audio_dsm_log_read(int port)
 {
 	int ret = -EINVAL;
 	int index = 0;
-	struct afe_dsm_spkr_prot_get_log_command config;
+	struct afe_port_cmd_get_param_v2 afe_get_param;
 	int mod = maxdsm_get_rx_mod_id();
+	u32 param_size = sizeof(struct afe_dsm_spkr_prot_get_log_command);
 
 	pr_debug("%s: port_id = 0x%x, module_id = 0x%x\n",
 		__func__, q6audio_get_port_id(port), maxdsm_get_rx_mod_id());
 
-	memset(&config, 0, sizeof(config));
+	memset(&afe_get_param, 0, sizeof(afe_get_param));
 
 	if ((q6audio_validate_port(port) < 0)) {
 		pr_err("%s invalid port %d\n", __func__, port);
@@ -393,39 +417,37 @@ int q6audio_dsm_log_read(int port)
 	index = q6audio_get_port_index(port);
 	if (port != maxdsm_get_rx_port_id())
 		mod = maxdsm_get_tx_mod_id();
-	config.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
-				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
-	config.hdr.pkt_size = sizeof(config);
-	config.hdr.src_port = SEC_ADAPTATAION_DSM_SRC_PORT;
-	config.hdr.dest_port = SEC_ADAPTATAION_DSM_DEST_PORT;
-	config.hdr.token = index;
-	config.hdr.opcode =  AFE_PORT_CMD_GET_PARAM_V2;
-	config.get_param.mem_map_handle = 0;
-	config.get_param.module_id = mod;
-	config.get_param.param_id = AFE_PARAM_ID_CALIB_RES_LOG_CFG;
-	config.get_param.payload_address_lsw = 0;
-	config.get_param.payload_address_msw = 0;
-	config.get_param.payload_size = sizeof(config)
-		- sizeof(config.get_param);
-	config.get_param.port_id = q6audio_get_port_id(port);
-	config.pdata.module_id = mod;
-	config.pdata.param_id = AFE_PARAM_ID_CALIB_RES_LOG_CFG;
-	config.pdata.param_size = sizeof(config.res_log_cfg);
+
+	afe_get_param.apr_hdr.hdr_field =
+		APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE),
+				  APR_PKT_VER);
+	afe_get_param.apr_hdr.pkt_size = sizeof(afe_get_param) + param_size;
+	afe_get_param.apr_hdr.src_port = SEC_ADAPTATAION_DSM_SRC_PORT;
+	afe_get_param.apr_hdr.dest_port = SEC_ADAPTATAION_DSM_DEST_PORT;
+	afe_get_param.apr_hdr.token = index;
+	afe_get_param.apr_hdr.opcode = AFE_PORT_CMD_GET_PARAM_V2;
+	afe_get_param.port_id = q6audio_get_port_id(port);
+	afe_get_param.payload_size = sizeof(struct param_hdr_v1) + param_size;
+	afe_get_param.module_id = mod;
+	afe_get_param.param_id = AFE_PARAM_ID_CALIB_RES_LOG_CFG;
+	afe_get_param.param_hdr.module_id = mod;
+	afe_get_param.param_hdr.param_id = AFE_PARAM_ID_CALIB_RES_LOG_CFG;
+	afe_get_param.param_hdr.param_size = param_size;
 
 	atomic_set(&this_afe.state, 1);
 	atomic_set(&this_afe.status, 0);
 
 	pr_info("%s: port_id=%#x, param_id=%#x, module_id=%#x module_id=%#x\n",
 		__func__,
-		config.get_param.port_id,
-		config.get_param.param_id,
-		config.get_param.module_id,
-		config.pdata.module_id);
+		afe_get_param.port_id,
+		afe_get_param.param_id,
+		afe_get_param.module_id,
+		afe_get_param.param_hdr.module_id);
 
-	ret = apr_send_pkt(this_afe.apr, (uint32_t *)&config);
+	ret = apr_send_pkt(this_afe.apr, (void *)&afe_get_param);
 	if (ret < 0) {
 		pr_err("%s: get param port %d param id[0x%x]failed\n",
-			   __func__, port, config.get_param.param_id);
+			   __func__, port, afe_get_param.param_id);
 		goto exit;
 	}
 	ret = wait_event_timeout(this_afe.wait,
@@ -588,102 +610,24 @@ int32_t dsm_read_write(void *data)
 /****************************************************************************/
 /*//////////////////////////// AUDIO SOLUTION //////////////////////////////*/
 /****************************************************************************/
-/* This function must be sync up from q6asm_set_flag_in_token() of q6asm.c */
-static inline void q6asm_set_flag_in_token_in_adaptation(union asm_token_struct *asm_token,
-					   int flag, int flag_offset)
-{
-	if (flag)
-		ASM_SET_BIT(asm_token->_token.flags, flag_offset);
-}
-
-/* This function must be sync up from q6asm_get_flag_from_token() of q6asm.c */
-static inline int q6asm_get_flag_from_token_in_adaptation(union asm_token_struct *asm_token,
-					    int flag_offset)
-{
-	return ASM_TEST_BIT(asm_token->_token.flags, flag_offset);
-}
-
-/* This function must be sync up from q6asm_update_token() of q6asm.c */
-static inline void q6asm_update_token_in_adaptation(u32 *token, u8 session_id, u8 stream_id,
-				      u8 buf_index, u8 dir, u8 nowait_flag)
-{
-	union asm_token_struct asm_token;
-
-	asm_token.token = 0;
-	asm_token._token.session_id = session_id;
-	asm_token._token.stream_id = stream_id;
-	asm_token._token.buf_index = buf_index;
-	q6asm_set_flag_in_token_in_adaptation(&asm_token, dir, ASM_DIRECTION_OFFSET);
-	q6asm_set_flag_in_token_in_adaptation(&asm_token, nowait_flag,
-				  ASM_CMD_NO_WAIT_OFFSET);
-	*token = asm_token.token;
-}
-
-/* This function must be sync up from __q6asm_add_hdr_async() of q6asm.c */
-static void __q6asm_add_hdr_async_in_adaptation(struct audio_client *ac, struct apr_hdr *hdr,
-				  uint32_t pkt_size, uint32_t cmd_flg,
-				  uint32_t stream_id, u8 no_wait_flag)
-{
-	dev_vdbg(ac->dev, "%s: pkt_size = %d, cmd_flg = %d, session = %d stream_id=%d\n",
-			__func__, pkt_size, cmd_flg, ac->session, stream_id);
-	hdr->hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
-			APR_HDR_LEN(sizeof(struct apr_hdr)),
-			APR_PKT_VER);
-	if (ac->apr == NULL) {
-		pr_err("%s: AC APR is NULL", __func__);
-		return;
-	}
-	hdr->src_svc = ((struct apr_svc *)ac->apr)->id;
-	hdr->src_domain = APR_DOMAIN_APPS;
-	hdr->dest_svc = APR_SVC_ASM;
-	hdr->dest_domain = APR_DOMAIN_ADSP;
-	hdr->src_port = ((ac->session << 8) & 0xFF00) | (stream_id);
-	hdr->dest_port = ((ac->session << 8) & 0xFF00) | (stream_id);
-	if (cmd_flg) {
-		q6asm_update_token_in_adaptation(&hdr->token,
-				   ac->session,
-				   0, /* Stream ID is NA */
-				   0, /* Buffer index is NA */
-				   0, /* Direction flag is NA */
-				   no_wait_flag);
-
-	}
-	hdr->pkt_size  = pkt_size;
-}
-
-/* This function must be sync up from q6asm_add_hdr_async() of q6asm.c */
-static void q6asm_add_hdr_async_in_adaptation(struct audio_client *ac, struct apr_hdr *hdr,
-				uint32_t pkt_size, uint32_t cmd_flg)
-{
-	__q6asm_add_hdr_async_in_adaptation(ac, hdr, pkt_size, cmd_flg,
-			      ac->stream_id, WAIT_CMD);
-}
-
 int q6asm_set_sound_alive(struct audio_client *ac, long *param)
 {
-	uint32_t sz = 0;
-	int rc  = 0;
-	int i = 0;
 	struct asm_stream_cmd_set_pp_params_sa cmd;
+	struct param_hdr_v3 param_info;
+	int rc = 0;
+	int i = 0;
 
 	if (ac == NULL) {
-		pr_err("%s: audio client is null\n", __func__);
+		pr_err("%s: Audio client is NULL\n", __func__);
 		return -EINVAL;
 	}
 
-	sz = sizeof(struct asm_stream_cmd_set_pp_params_sa);
-	q6asm_add_hdr_async_in_adaptation(ac, &cmd.hdr, sz, TRUE);
-
-	cmd.hdr.opcode = ASM_STREAM_CMD_SET_PP_PARAMS_V2;
-	cmd.param.data_payload_addr_lsw = 0;
-	cmd.param.data_payload_addr_msw = 0;
-	cmd.param.mem_map_handle = 0;
-	cmd.param.data_payload_size =
-			sizeof(cmd) - sizeof(cmd.hdr) - sizeof(cmd.param);
-	cmd.data.module_id = ASM_MODULE_ID_PP_SA;
-	cmd.data.param_id = ASM_PARAM_ID_PP_SA_PARAMS;
-	cmd.data.param_size = cmd.param.data_payload_size - sizeof(cmd.data);
-	cmd.data.reserved = 0;
+	memset(&param_info, 0, sizeof(param_info));
+	memset(&cmd, 0, sizeof(cmd));
+	param_info.module_id = MODULE_ID_PP_SA;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = PARAM_ID_PP_SA_PARAMS;
+	param_info.param_size = sizeof(cmd);
 
 	/* SA paramerters */
 	cmd.OutDevice = param[0];
@@ -706,8 +650,8 @@ int q6asm_set_sound_alive(struct audio_client *ac, long *param)
 	cmd.m3DPositionGain[0] = param[24];
 	cmd.m3DPositionGain[1] = param[25];
 	cmd.AHDRonoff = param[26];
-	pr_info("%s: %d %d %d %d %d %d %d %d %d %d %d %d "
-		"%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+	pr_info("%s: %d %d %d%d %d %d %d %d %d %d %d %d"
+		" %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
 		__func__,
 		cmd.OutDevice, cmd.Preset, cmd.EqLev[0],
 		cmd.EqLev[1], cmd.EqLev[2], cmd.EqLev[3],
@@ -721,86 +665,62 @@ int q6asm_set_sound_alive(struct audio_client *ac, long *param)
 		cmd.m3DPositionGain[0], cmd.m3DPositionGain[1],
 		cmd.AHDRonoff);
 
-	rc = apr_send_pkt(ac->apr, (uint32_t *)&cmd);
-	if (rc < 0) {
-		pr_err("%s: send_pkt failed. paramid[0x%x]\n", __func__,
-			cmd.data.param_id);
-		rc = -EINVAL;
-		goto fail_cmd;
-	}
-
-	return 0;
-fail_cmd:
+	rc = q6asm_pack_and_set_pp_param_in_band(ac, param_info,
+						 (u8 *) &cmd);
+	if (rc)
+		pr_err("%s: set-params send failed paramid[0x%x] rc %d\n",
+			   __func__, param_info.param_id, rc);
 	return rc;
 }
 
 int q6asm_set_play_speed(struct audio_client *ac, long *param)
 {
-	uint32_t sz = 0;
-	int rc  = 0;
 	struct asm_stream_cmd_set_pp_params_vsp cmd;
+	struct param_hdr_v3 param_info;
+	int rc = 0;
 
 	if (ac == NULL) {
-		pr_err("%s: audio client is null\n", __func__);
+		pr_err("%s: Audio client is NULL\n", __func__);
 		return -EINVAL;
 	}
 
-	sz = sizeof(struct asm_stream_cmd_set_pp_params_vsp);
-	q6asm_add_hdr_async_in_adaptation(ac, &cmd.hdr, sz, TRUE);
-
-	cmd.hdr.opcode = ASM_STREAM_CMD_SET_PP_PARAMS_V2;
-	cmd.param.data_payload_addr_lsw = 0;
-	cmd.param.data_payload_addr_msw = 0;
-	cmd.param.mem_map_handle = 0;
-	cmd.param.data_payload_size =
-			sizeof(cmd) - sizeof(cmd.hdr) - sizeof(cmd.param);
-	cmd.data.module_id = ASM_MODULE_ID_PP_SA_VSP;
-	cmd.data.param_id = ASM_PARAM_ID_PP_SA_VSP_PARAMS;
-	cmd.data.param_size = cmd.param.data_payload_size - sizeof(cmd.data);
-	cmd.data.reserved = 0;
+	memset(&param_info, 0, sizeof(param_info));
+	memset(&cmd, 0, sizeof(cmd));
+	param_info.module_id = MODULE_ID_PP_SA_VSP;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = PARAM_ID_PP_SA_VSP_PARAMS;
+	param_info.param_size = sizeof(cmd);
 
 	/* play speed paramerters */
 	cmd.speed_int = param[0];
 	pr_info("%s: %d\n", __func__, cmd.speed_int);
 
-	rc = apr_send_pkt(ac->apr, (uint32_t *)&cmd);
-	if (rc < 0) {
-		pr_err("%s: send_pkt failed. paramid[0x%x]\n", __func__,
-			cmd.data.param_id);
-		rc = -EINVAL;
-		goto fail_cmd;
-	}
-
-	return 0;
-fail_cmd:
+	rc = q6asm_pack_and_set_pp_param_in_band(ac, param_info,
+						 (u8 *) &cmd);
+	if (rc)
+		pr_err("%s: set-params send failed paramid[0x%x] rc %d\n",
+			   __func__, param_info.param_id, rc);
 	return rc;
 }
 
 int q6asm_set_adaptation_sound(struct audio_client *ac, long *param)
 {
-	uint32_t sz = 0;
-	int rc  = 0;
-	int i = 0;
 	struct asm_stream_cmd_set_pp_params_adaptation_sound cmd;
+	struct param_hdr_v3 param_info;
+	int rc = 0;
+	int i = 0;
 
 	if (ac == NULL) {
-		pr_err("%s: audio client is null\n", __func__);
+		pr_err("%s: Audio client is NULL\n", __func__);
 		return -EINVAL;
 	}
 
-	sz = sizeof(struct asm_stream_cmd_set_pp_params_adaptation_sound);
-	q6asm_add_hdr_async_in_adaptation(ac, &cmd.hdr, sz, TRUE);
-
-	cmd.hdr.opcode = ASM_STREAM_CMD_SET_PP_PARAMS_V2;
-	cmd.param.data_payload_addr_lsw = 0;
-	cmd.param.data_payload_addr_msw = 0;
-	cmd.param.mem_map_handle = 0;
-	cmd.param.data_payload_size =
-			sizeof(cmd) - sizeof(cmd.hdr) - sizeof(cmd.param);
-	cmd.data.module_id = ASM_MODULE_ID_PP_ADAPTATION_SOUND;
-	cmd.data.param_id = ASM_PARAM_ID_PP_ADAPTATION_SOUND_PARAMS;
-	cmd.data.param_size = cmd.param.data_payload_size - sizeof(cmd.data);
-	cmd.data.reserved = 0;
+	memset(&param_info, 0, sizeof(param_info));
+	memset(&cmd, 0, sizeof(cmd));
+	param_info.module_id = MODULE_ID_PP_ADAPTATION_SOUND;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = PARAM_ID_PP_ADAPTATION_SOUND_PARAMS;
+	param_info.param_size = sizeof(cmd);
 
 	/* adapt sound paramerters */
 	cmd.enable = param[0];
@@ -814,185 +734,163 @@ int q6asm_set_adaptation_sound(struct audio_client *ac, long *param)
 		cmd.gain[1][1], cmd.gain[1][2], cmd.gain[1][3], cmd.gain[1][4],
 		cmd.gain[1][5], cmd.device);
 
-	rc = apr_send_pkt(ac->apr, (uint32_t *)&cmd);
-	if (rc < 0) {
-		pr_err("%s: send_pkt failed. paramid[0x%x]\n", __func__,
-			cmd.data.param_id);
-		rc = -EINVAL;
-		goto fail_cmd;
-	}
-
-	return 0;
-fail_cmd:
+	rc = q6asm_pack_and_set_pp_param_in_band(ac, param_info,
+						 (u8 *) &cmd);
+	if (rc)
+		pr_err("%s: set-params send failed paramid[0x%x] rc %d\n",
+			   __func__, param_info.param_id, rc);
 	return rc;
 }
 
 int q6asm_set_sound_balance(struct audio_client *ac, long *param)
 {
-	uint32_t sz = 0;
-	int rc  = 0;
 	struct asm_stream_cmd_set_pp_params_lrsm cmd;
+	struct param_hdr_v3 param_info;
+	int rc = 0;
 
 	if (ac == NULL) {
-		pr_err("%s: audio client is null\n", __func__);
+		pr_err("%s: Audio client is NULL\n", __func__);
 		return -EINVAL;
 	}
 
-	sz = sizeof(struct asm_stream_cmd_set_pp_params_lrsm);
-	q6asm_add_hdr_async_in_adaptation(ac, &cmd.hdr, sz, TRUE);
-
-	cmd.hdr.opcode = ASM_STREAM_CMD_SET_PP_PARAMS_V2;
-	cmd.param.data_payload_addr_lsw = 0;
-	cmd.param.data_payload_addr_msw = 0;
-	cmd.param.mem_map_handle = 0;
-	cmd.param.data_payload_size =
-			sizeof(cmd) - sizeof(cmd.hdr) - sizeof(cmd.param);
-	cmd.data.module_id = ASM_MODULE_ID_PP_LRSM;
-	cmd.data.param_id = ASM_PARAM_ID_PP_LRSM_PARAMS;
-	cmd.data.param_size = cmd.param.data_payload_size - sizeof(cmd.data);
-	cmd.data.reserved = 0;
+	memset(&param_info, 0, sizeof(param_info));
+	memset(&cmd, 0, sizeof(cmd));
+	param_info.module_id = MODULE_ID_PP_LRSM;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = PARAM_ID_PP_LRSM_PARAMS;
+	param_info.param_size = sizeof(cmd);
 
 	/* sound balance paramerters */
 	cmd.sm = param[0];
 	cmd.lr = param[1];
 	pr_info("%s: %d %d\n", __func__, cmd.sm, cmd.lr);
 
-	rc = apr_send_pkt(ac->apr, (uint32_t *)&cmd);
-	if (rc < 0) {
-		pr_err("%s: send_pkt failed. paramid[0x%x]\n", __func__,
-			cmd.data.param_id);
-		rc = -EINVAL;
-		goto fail_cmd;
-	}
-
-	return 0;
-fail_cmd:
+	rc = q6asm_pack_and_set_pp_param_in_band(ac, param_info,
+						 (u8 *) &cmd);
+	if (rc)
+		pr_err("%s: set-params send failed paramid[0x%x] rc %d\n",
+			   __func__, param_info.param_id, rc);
 	return rc;
 }
 
 int q6asm_set_myspace(struct audio_client *ac, long *param)
 {
-	uint32_t sz = 0;
-	int rc  = 0;
 	struct asm_stream_cmd_set_pp_params_msp cmd;
+	struct param_hdr_v3 param_info;
+	int rc = 0;
 
 	if (ac == NULL) {
-		pr_err("%s: audio client is null\n", __func__);
+		pr_err("%s: Audio client is NULL\n", __func__);
 		return -EINVAL;
 	}
 
-	sz = sizeof(struct asm_stream_cmd_set_pp_params_msp);
-	q6asm_add_hdr_async_in_adaptation(ac, &cmd.hdr, sz, TRUE);
-
-	cmd.hdr.opcode = ASM_STREAM_CMD_SET_PP_PARAMS_V2;
-	cmd.param.data_payload_addr_lsw = 0;
-	cmd.param.data_payload_addr_msw = 0;
-	cmd.param.mem_map_handle = 0;
-	cmd.param.data_payload_size =
-			sizeof(cmd) - sizeof(cmd.hdr) - sizeof(cmd.param);
-	cmd.data.module_id = ASM_MODULE_ID_PP_SA_MSP;
-	cmd.data.param_id = ASM_MODULE_ID_PP_SA_MSP_PARAM;
-	cmd.data.param_size = cmd.param.data_payload_size - sizeof(cmd.data);
-	cmd.data.reserved = 0;
+	memset(&param_info, 0, sizeof(param_info));
+	memset(&cmd, 0, sizeof(cmd));
+	param_info.module_id = MODULE_ID_PP_SA_MSP;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = MODULE_ID_PP_SA_MSP_PARAM;
+	param_info.param_size = sizeof(cmd);
 
 	/* myspace paramerters */
 	cmd.msp_int = param[0];
 	pr_info("%s: %d\n", __func__, cmd.msp_int);
 
-	rc = apr_send_pkt(ac->apr, (uint32_t *)&cmd);
-	if (rc < 0) {
-		pr_err("%s: send_pkt failed. paramid[0x%x]\n", __func__,
-			cmd.data.param_id);
-		rc = -EINVAL;
-		goto fail_cmd;
-	}
-
-	return 0;
-fail_cmd:
+	rc = q6asm_pack_and_set_pp_param_in_band(ac, param_info,
+						 (u8 *) &cmd);
+	if (rc)
+		pr_err("%s: set-params send failed paramid[0x%x] rc %d\n",
+			   __func__, param_info.param_id, rc);
 	return rc;
 }
 
 int q6asm_set_sound_boost(struct audio_client *ac, long *param)
 {
-	uint32_t sz = 0;
-	int rc  = 0;
 	struct asm_stream_cmd_set_pp_params_sb cmd;
+	struct param_hdr_v3 param_info;
+	int rc = 0;
 
 	if (ac == NULL) {
-		pr_err("%s: audio client is null\n", __func__);
+		pr_err("%s: Audio client is NULL\n", __func__);
 		return -EINVAL;
 	}
 
-	sz = sizeof(struct asm_stream_cmd_set_pp_params_sb);
-	q6asm_add_hdr_async_in_adaptation(ac, &cmd.hdr, sz, TRUE);
-
-	cmd.hdr.opcode = ASM_STREAM_CMD_SET_PP_PARAMS_V2;
-	cmd.param.data_payload_addr_lsw = 0;
-	cmd.param.data_payload_addr_msw = 0;
-	cmd.param.mem_map_handle = 0;
-	cmd.param.data_payload_size =
-			sizeof(cmd) - sizeof(cmd.hdr) - sizeof(cmd.param);
-	cmd.data.module_id = ASM_MODULE_ID_PP_SB;
-	cmd.data.param_id = ASM_PARAM_ID_PP_SB_PARAM;
-	cmd.data.param_size = cmd.param.data_payload_size - sizeof(cmd.data);
-	cmd.data.reserved = 0;
+	memset(&param_info, 0, sizeof(param_info));
+	memset(&cmd, 0, sizeof(cmd));
+	param_info.module_id = MODULE_ID_PP_SB;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = PARAM_ID_PP_SB_PARAM;
+	param_info.param_size = sizeof(cmd);
 
 	/* sound booster paramerters */
 	cmd.sb_enable = param[0];
 	pr_info("%s: %d\n", __func__, cmd.sb_enable);
 
-	rc = apr_send_pkt(ac->apr, (uint32_t *)&cmd);
-	if (rc < 0) {
-		pr_err("%s: send_pkt failed. paramid[0x%x]\n", __func__,
-			cmd.data.param_id);
-		rc = -EINVAL;
-		goto fail_cmd;
-	}
-
-	return 0;
-fail_cmd:
+	rc = q6asm_pack_and_set_pp_param_in_band(ac, param_info,
+						 (u8 *) &cmd);
+	if (rc)
+		pr_err("%s: set-params send failed paramid[0x%x] rc %d\n",
+			   __func__, param_info.param_id, rc);
 	return rc;
 }
 
 int q6asm_set_upscaler(struct audio_client *ac, long *param)
 {
-	uint32_t sz = 0;
-	int rc  = 0;
 	struct asm_stream_cmd_set_pp_params_upscaler cmd;
+	struct param_hdr_v3 param_info;
+	int rc = 0;
 
 	if (ac == NULL) {
-		pr_err("%s: audio client is null\n", __func__);
+		pr_err("%s: Audio client is NULL\n", __func__);
 		return -EINVAL;
 	}
 
-	sz = sizeof(struct asm_stream_cmd_set_pp_params_upscaler);
-	q6asm_add_hdr_async_in_adaptation(ac, &cmd.hdr, sz, TRUE);
-
-	cmd.hdr.opcode = ASM_STREAM_CMD_SET_PP_PARAMS_V2;
-	cmd.param.data_payload_addr_lsw = 0;
-	cmd.param.data_payload_addr_msw = 0;
-	cmd.param.mem_map_handle = 0;
-	cmd.param.data_payload_size =
-			sizeof(cmd) - sizeof(cmd.hdr) - sizeof(cmd.param);
-	cmd.data.module_id = ASM_MODULE_ID_PP_SA_UPSCALER_COLOR;
-	cmd.data.param_id = ASM_PARAM_ID_PP_SA_UPSCALER_COLOR_PARAMS;
-	cmd.data.param_size = cmd.param.data_payload_size - sizeof(cmd.data);
-	cmd.data.reserved = 0;
+	memset(&param_info, 0, sizeof(param_info));
+	memset(&cmd, 0, sizeof(cmd));
+	param_info.module_id = MODULE_ID_PP_SA_UPSCALER_COLOR;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = PARAM_ID_PP_SA_UPSCALER_COLOR_PARAMS;
+	param_info.param_size = sizeof(cmd);
 
 	/* upscaler paramerters */
 	cmd.upscaler_enable = param[0];
 	pr_info("%s: %d\n", __func__, cmd.upscaler_enable);
 
-	rc = apr_send_pkt(ac->apr, (uint32_t *)&cmd);
-	if (rc < 0) {
-		pr_err("%s: send_pkt failed. paramid[0x%x]\n", __func__,
-			cmd.data.param_id);
-		rc = -EINVAL;
-		goto fail_cmd;
+	rc = q6asm_pack_and_set_pp_param_in_band(ac, param_info,
+						 (u8 *) &cmd);
+	if (rc)
+		pr_err("%s: set-params send failed paramid[0x%x] rc %d\n",
+			   __func__, param_info.param_id, rc);
+	return rc;
+}
+
+int q6asm_set_sb_rotation(struct audio_client *ac, long *param)
+{
+	struct asm_stream_cmd_set_pp_params_sb_rotation cmd;
+	struct param_hdr_v3 param_info;
+	int rc = 0;
+
+	if (ac == NULL) {
+		pr_err("%s: Audio client is NULL\n", __func__);
+		return -EINVAL;
 	}
 
-	return 0;
-fail_cmd:
+	memset(&param_info, 0, sizeof(param_info));
+	memset(&cmd, 0, sizeof(cmd));
+	param_info.module_id = MODULE_ID_PP_SB;
+	param_info.instance_id = INSTANCE_ID_0;
+	param_info.param_id = PARAM_ID_PP_SB_ROTATION_PARAM;
+	param_info.param_size = sizeof(cmd);
+
+	/* rotation paramerters */
+	cmd.sb_rotation = (unsigned int)param[0];
+	pr_info("%s: %d\n", __func__, cmd.sb_rotation);
+
+	rc = q6asm_pack_and_set_pp_param_in_band(ac, param_info,
+						 (u8 *) &cmd);
+	if (rc)
+		pr_err("%s: set-params send failed paramid[0x%x] rc %d\n",
+			   __func__, param_info.param_id, rc);
+
 	return rc;
 }
 
@@ -1044,8 +942,8 @@ static int sec_audio_voice_tracking_info_get(struct snd_kcontrol *kcontrol,
 	}
 	if ((be_idx < MSM_BACKEND_DAI_MAX) && msm_bedai.active) {
 		rc = adm_get_params(SLIMBUS_0_TX, 0,
-				ADM_MODULE_ID_PP_SS_REC,
-				ADM_PARAM_ID_PP_SS_REC_GETPARAMS,
+				MODULE_ID_PP_SS_REC,
+				PARAM_ID_PP_SS_REC_GETPARAMS,
 				param_length + param_payload_len,
 				param_value);
 		if (rc) {
@@ -1077,6 +975,12 @@ static int sec_audio_sound_boost_get(struct snd_kcontrol *kcontrol,
 }
 
 static int sec_audio_upscaler_get(struct snd_kcontrol *kcontrol,
+			struct snd_ctl_elem_value *ucontrol)
+{
+	return 0;
+}
+
+static int sec_audio_sb_rotation_get(struct snd_kcontrol *kcontrol,
 			struct snd_ctl_elem_value *ucontrol)
 {
 	return 0;
@@ -1200,6 +1104,23 @@ static int sec_audio_upscaler_put(struct snd_kcontrol *kcontrol,
 			SESSION_TYPE_RX, &fe_dai_map);
 	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
 	ret = q6asm_set_upscaler(ac, (long *)ucontrol->value.integer.value);
+	mutex_unlock(&asm_lock);
+
+	return ret;
+}
+
+static int sec_audio_sb_rotation_put(struct snd_kcontrol *kcontrol,
+			struct snd_ctl_elem_value *ucontrol)
+{
+	int ret = 0;
+	struct msm_pcm_routing_fdai_data fe_dai_map;
+	struct audio_client *ac;
+
+	mutex_lock(&asm_lock);
+	msm_pcm_routing_get_fedai_info(SEC_ADAPTATAION_AUDIO_PORT,
+			SESSION_TYPE_RX, &fe_dai_map);
+	ac = q6asm_get_audio_client(fe_dai_map.strm_id);
+	ret = q6asm_set_sb_rotation(ac, (long *)ucontrol->value.integer.value);
 	mutex_unlock(&asm_lock);
 
 	return ret;
@@ -1405,7 +1326,7 @@ static int send_packet_loopback_cmd(struct voice_data *v, int mode)
 
 	cvs_set_loopback_cmd.vss_set_loopback.module_id = VOICEPROC_MODULE_VENC;
 	cvs_set_loopback_cmd.vss_set_loopback.param_id = VOICE_PARAM_LOOPBACK_ENABLE;
-	cvs_set_loopback_cmd.vss_set_loopback.param_size = MOD_ENABLE_PARAM_LEN;
+	cvs_set_loopback_cmd.vss_set_loopback.param_size = 4;
 	cvs_set_loopback_cmd.vss_set_loopback.reserved = 0;
 	cvs_set_loopback_cmd.vss_set_loopback.loopback_enable = mode;
 	cvs_set_loopback_cmd.vss_set_loopback.reserved_field = 0;
@@ -1650,7 +1571,6 @@ int sec_voice_set_adaptation_sound(uint16_t mode, uint16_t select, int16_t *para
 
 	pr_debug("%s: Enter\n", __func__);
 
-	mutex_lock(&common->common_lock);
 	voice_itr_init(&itr, ALL_SESSION_VSID);
 	while (voice_itr_get_next_session(&itr, &v)) {
 		if (v != NULL) {
@@ -1666,7 +1586,6 @@ int sec_voice_set_adaptation_sound(uint16_t mode, uint16_t select, int16_t *para
 			break;
 		}
 	}
-	mutex_unlock(&common->common_lock);
 	pr_debug("%s: Exit, ret=%d\n", __func__, ret);
 
 	return ret;
@@ -1702,7 +1621,7 @@ static int sec_voice_send_nb_mode_cmd(struct voice_data *v, int enable)
 	cvp_nbmode_cmd.hdr.opcode = VSS_ICOMMON_CMD_SET_UI_PROPERTY;
 	cvp_nbmode_cmd.cvp_set_nbmode.module_id = VOICE_VOICEMODE_MODULE;
 	cvp_nbmode_cmd.cvp_set_nbmode.param_id = VOICE_NBMODE_PARAM;
-	cvp_nbmode_cmd.cvp_set_nbmode.param_size = MOD_ENABLE_PARAM_LEN;
+	cvp_nbmode_cmd.cvp_set_nbmode.param_size = 4;
 	cvp_nbmode_cmd.cvp_set_nbmode.reserved = 0;
 	cvp_nbmode_cmd.cvp_set_nbmode.enable = enable;
 	cvp_nbmode_cmd.cvp_set_nbmode.reserved_field = 0;
@@ -1739,7 +1658,6 @@ int sec_voice_set_nb_mode(short enable)
 
 	pr_debug("%s: Enter\n", __func__);
 
-	mutex_lock(&common->common_lock);
 	voice_itr_init(&itr, ALL_SESSION_VSID);
 	while (voice_itr_get_next_session(&itr, &v)) {
 		if (v != NULL) {
@@ -1755,7 +1673,6 @@ int sec_voice_set_nb_mode(short enable)
 			break;
 		}
 	}
-	mutex_unlock(&common->common_lock);
 	pr_debug("%s: Exit, ret=%d\n", __func__, ret);
 
 	return ret;
@@ -1791,7 +1708,7 @@ static int sec_voice_send_spk_mode_cmd(struct voice_data *v, int enable)
 	cvp_spkmode_cmd.hdr.opcode = VSS_ICOMMON_CMD_SET_UI_PROPERTY;
 	cvp_spkmode_cmd.cvp_set_spkmode.module_id = VOICE_VOICEMODE_MODULE;
 	cvp_spkmode_cmd.cvp_set_spkmode.param_id = VOICE_SPKMODE_PARAM;
-	cvp_spkmode_cmd.cvp_set_spkmode.param_size = MOD_ENABLE_PARAM_LEN;
+	cvp_spkmode_cmd.cvp_set_spkmode.param_size = 4;
 	cvp_spkmode_cmd.cvp_set_spkmode.reserved = 0;
 	cvp_spkmode_cmd.cvp_set_spkmode.enable = enable;
 	cvp_spkmode_cmd.cvp_set_spkmode.reserved_field = 0;
@@ -1868,7 +1785,6 @@ int sec_voice_set_spk_mode(short enable)
 
 	pr_debug("%s: Enter\n", __func__);
 
-	mutex_lock(&common->common_lock);
 	voice_itr_init(&itr, ALL_SESSION_VSID);
 	while (voice_itr_get_next_session(&itr, &v)) {
 		if (v != NULL) {
@@ -1884,7 +1800,6 @@ int sec_voice_set_spk_mode(short enable)
 			break;
 		}
 	}
-	mutex_unlock(&common->common_lock);
 	pr_debug("%s: Exit, ret=%d\n", __func__, ret);
 
 	return ret;
@@ -1920,7 +1835,7 @@ static int sec_voice_send_device_info_cmd(struct voice_data *v, int device)
 	cvp_device_info_cmd.hdr.opcode = VSS_ICOMMON_CMD_SET_UI_PROPERTY;
 	cvp_device_info_cmd.cvp_set_device_info.module_id = VOICE_MODULE_SET_DEVICE;
 	cvp_device_info_cmd.cvp_set_device_info.param_id = VOICE_MODULE_SET_DEVICE_PARAM;
-	cvp_device_info_cmd.cvp_set_device_info.param_size = MOD_ENABLE_PARAM_LEN;
+	cvp_device_info_cmd.cvp_set_device_info.param_size = 4;
 	cvp_device_info_cmd.cvp_set_device_info.reserved = 0;
 	cvp_device_info_cmd.cvp_set_device_info.enable = device;
 	cvp_device_info_cmd.cvp_set_device_info.reserved_field = 0;
@@ -1957,7 +1872,6 @@ int sec_voice_set_device_info(short device)
 
 	pr_debug("%s: Enter\n", __func__);
 
-	mutex_lock(&common->common_lock);
 	voice_itr_init(&itr, ALL_SESSION_VSID);
 	while (voice_itr_get_next_session(&itr, &v)) {
 		if (v != NULL) {
@@ -1973,7 +1887,6 @@ int sec_voice_set_device_info(short device)
 			break;
 		}
 	}
-	mutex_unlock(&common->common_lock);
 	pr_debug("%s: Exit, ret=%d\n", __func__, ret);
 
 	return ret;
@@ -2121,6 +2034,8 @@ static const struct snd_kcontrol_new samsung_solution_mixer_controls[] = {
 				sec_audio_sound_boost_get, sec_audio_sound_boost_put),
 	SOC_SINGLE_MULTI_EXT("UPSCALER", SND_SOC_NOPM, 0, 65535, 0, 1,
 				sec_audio_upscaler_get, sec_audio_upscaler_put),
+	SOC_SINGLE_MULTI_EXT("SB rotation", SND_SOC_NOPM, 0, 65535, 0, 1,
+				sec_audio_sb_rotation_get, sec_audio_sb_rotation_put),
 	SOC_SINGLE_MULTI_EXT("Sec Set DHA data", SND_SOC_NOPM, 0, 65535, 0, 14,
 				sec_voice_adaptation_sound_get, sec_voice_adaptation_sound_put),
 	SOC_SINGLE_EXT("NB Mode", SND_SOC_NOPM, 0, 1, 0,
@@ -2192,19 +2107,19 @@ static struct platform_driver samsung_q6audio_adaptation_driver = {
 	.remove = samsung_q6audio_adaptation_remove,
 };
 
-static int __init msm_soc_platform_init(void)
+static int __init sec_soc_platform_init(void)
 {
 	pr_debug("%s\n", __func__);
 	return platform_driver_register(&samsung_q6audio_adaptation_driver);
 }
-module_init(msm_soc_platform_init);
+module_init(sec_soc_platform_init);
 
-static void __exit msm_soc_platform_exit(void)
+static void __exit sec_soc_platform_exit(void)
 {
 	pr_debug("%s\n", __func__);
 	platform_driver_unregister(&samsung_q6audio_adaptation_driver);
 }
-module_exit(msm_soc_platform_exit);
+module_exit(sec_soc_platform_exit);
 
 MODULE_AUTHOR("SeokYoung Jang, <quartz.jang@samsung.com>");
 MODULE_DESCRIPTION("Samsung ASoC ADSP Adaptation driver");

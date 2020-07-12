@@ -1359,6 +1359,9 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	if (ret) {
 		dev_err(&slim->dev, "%s: failed to get slimbus %s logical address: %d\n",
 		       __func__, wcd9xxx->slim->name, ret);
+#ifdef CONFIG_SEC_SND_DEBUG
+		panic("failed to get slimbus slimbus logical address\n");
+#endif
 		ret = -EPROBE_DEFER;
 		goto err_reset;
 	}
@@ -1374,6 +1377,9 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	if (ret) {
 		dev_err(&slim->dev, "%s: error, adding SLIMBUS device failed\n",
 			__func__);
+#ifdef CONFIG_SEC_SND_DEBUG
+		panic("adding SLIMBUS device failed\n");
+#endif
 		goto err_reset;
 	}
 
@@ -1384,6 +1390,9 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	if (ret) {
 		dev_err(&slim->dev, "%s: failed to get slimbus %s logical address: %d\n",
 		       __func__, wcd9xxx->slim->name, ret);
+#ifdef CONFIG_SEC_SND_DEBUG
+		panic("failed to get slimbus slimbus slave logical address\n");
+#endif
 		ret = -EPROBE_DEFER;
 		goto err_slim_add;
 	}
@@ -1394,6 +1403,9 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	if (ret) {
 		dev_err(&slim->dev, "%s: error, initializing device failed (%d)\n",
 			__func__, ret);
+#ifdef CONFIG_SEC_SND_DEBUG
+		panic("error, initializing device failed\n");
+#endif
 		goto err_slim_add;
 	}
 #ifdef CONFIG_DEBUG_FS

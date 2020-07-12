@@ -26,6 +26,8 @@
 #define BQ25898S_CHG_ENABLE_HIZ_MODE_MASK	(1 << BQ25898S_CHG_ENABLE_HIZ_MODE_SHIFT)
 #define BQ25898S_CHG_IINLIM_MASK		0x3F
 
+#define BQ25898S_CHG_REG_02			0x02
+
 #define BQ25898S_CHG_REG_03			0x03
 #define BQ25898S_CHG_CONFIG_SHIFT		4
 #define BQ25898S_CHG_CONFIG_MASK		(1 << BQ25898S_CHG_CONFIG_SHIFT)
@@ -34,6 +36,7 @@
 #define BQ25898S_CHG_ICHG_MASK			0x3F
 
 #define BQ25898S_CHG_REG_05			0x05
+#define BQ25898S_CHG_ITERM_MASK			0x0F
 
 #define BQ25898S_CHG_REG_06			0x06
 #define BQ25898S_CHG_VREG_MASK			0xFC
@@ -54,6 +57,8 @@ enum bq25898s_watchdog_timer {
 
 struct bq25898s_charger_platform_data {
 	int irq_gpio;
+	unsigned int float_voltage;
+	unsigned int full_check_current;
 };
 
 struct bq25898s_charger {
@@ -73,6 +78,7 @@ struct bq25898s_charger {
 	int input_current;
 	int charging_current;
 	unsigned int float_voltage;
+	unsigned int full_check_current;
 
 	u8 addr;
 	int size;

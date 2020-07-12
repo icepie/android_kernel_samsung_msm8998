@@ -95,30 +95,7 @@ struct rkp_init {
         u64 _erodata;
 	u32 large_memory;
 } __attribute__((packed));
-#ifdef CONFIG_RKP_KDP
-typedef struct kdp_init
-{
-	u32 credSize;
-	u32 cred_task;
-	u32 mm_task;
-	u32 uid_cred;
-	u32 euid_cred;
-	u32 gid_cred;
-	u32 egid_cred;
-	u32 bp_pgd_cred;
-	u32 bp_task_cred;
-	u32 type_cred;
-	u32 security_cred;
-	u32 pid_task;
-	u32 rp_task;
-	u32 comm_task;
-	u32 pgd_mm;
-	u32 usage_cred;
-	u32 task_threadinfo;
-	u32 sp_size;
-	u32 bp_cred_secptr;
-} kdp_init_t;
-#endif  /* CONFIG_RKP_KDP */
+
 /*** TODO: We need to export this so it is hard coded 
      at one place*/
 

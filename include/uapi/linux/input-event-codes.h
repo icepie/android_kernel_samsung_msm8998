@@ -623,6 +623,7 @@
 #define KEY_KBDINPUTASSIST_ACCEPT		0x264
 #define KEY_KBDINPUTASSIST_CANCEL		0x265
 
+#define KEY_INT_CANCEL		0x2be	/* for touch event skip */
 #define KEY_WINK			0x2bf	/* Intelligence Key */
 
 #define BTN_TRIGGER_HAPPY		0x2c0
@@ -721,6 +722,15 @@
 #define ABS_VOLUME		0x20
 
 #define ABS_MISC		0x28
+
+/*
+ * 0x2e is reserved and should not be used in input drivers.
+ * It was used by HID as ABS_MISC+6 and userspace needs to detect if
+ * the next ABS_* event is correct or is just ABS_MISC + n.
+ * We define here ABS_RESERVED so userspace can rely on it and detect
+ * the situation described above.
+ */
+#define ABS_RESERVED		0x2e
 
 #define ABS_MT_SLOT		0x2f	/* MT slot being modified */
 #define ABS_MT_TOUCH_MAJOR	0x30	/* Major axis of touching ellipse */

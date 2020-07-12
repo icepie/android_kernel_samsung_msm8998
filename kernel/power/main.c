@@ -697,6 +697,11 @@ cpufreq_limit_list_t cpufreq_limit_list[] = {
 		.handle = NULL ,
 		.id_mask = DVFS_MULTI_TOUCH_ID_MASK
 	},
+	{
+		.name = "argos min",
+		.handle = NULL,
+		.id_mask = DVFS_ARGOS_ID_MASK
+	},
 };
 
 int set_freq_limit(unsigned long id, unsigned int freq)

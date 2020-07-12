@@ -481,6 +481,7 @@ int snd_card_disconnect(struct snd_card *card)
 		device_del(&card->card_dev);
 		card->registered = false;
 	}
+
 	/* disable fops (user space) operations for ALSA API */
 	mutex_lock(&snd_card_mutex);
 	snd_cards[card->number] = NULL;

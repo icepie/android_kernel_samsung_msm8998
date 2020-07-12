@@ -1242,7 +1242,7 @@ static void aicl_work(struct work_struct *work)
 			}
 			aicl_cnt = 0;
 		}
-		mdelay(50);
+		msleep(50);
 		sm5720_read_reg(charger->i2c, SM5720_CHG_REG_STATUS2, &reg);
 	}
 

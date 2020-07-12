@@ -104,6 +104,7 @@ struct pn547_dev {
 };
 
 static struct pn547_dev *pn547_dev;
+static atomic_t s_Device_opened = ATOMIC_INIT(1);
 
 #ifdef CONFIG_NFC_PN547_ESE_SUPPORT
 static void release_ese_lock(enum p61_access_state  p61_current_state);
@@ -121,7 +122,7 @@ static irqreturn_t pn547_dev_irq_handler(int irq, void *dev_id)
 	struct pn547_dev *pn547_dev = dev_id;
 
 	if (!gpio_get_value(pn547_dev->irq_gpio)) {
-#if NFC_DEBUG
+#if 1 /* NFC_DEBUG */
 		NFC_LOG_ERR("irq_gpio = %d\n",
 			gpio_get_value(pn547_dev->irq_gpio));
 #endif
@@ -306,6 +307,13 @@ static int pn547_dev_open(struct inode *inode, struct file *filp)
 	struct pn547_dev *pn547_dev = container_of(filp->private_data,
 						   struct pn547_dev,
 						   pn547_device);
+
+	if (!atomic_dec_and_test(&s_Device_opened)) {
+		atomic_inc(&s_Device_opened);
+		NFC_LOG_ERR("already opened!\n");
+		return -EBUSY;
+	}
+
 	filp->private_data = pn547_dev;
 	NFC_LOG_INFO("imajor:%d, iminor:%d (%d)\n", imajor(inode), iminor(inode),
 			pn547_dev->i2c_probe);
@@ -327,6 +335,8 @@ static int pn547_dev_release(struct inode *inode, struct file *filp)
 			(P61_STATE_SPI|P61_STATE_SPI_PRIO)) == 0))
 		release_ese_lock(P61_STATE_WIRED);
 #endif
+	atomic_inc(&s_Device_opened);
+
 	return 0;
 }
 
@@ -354,7 +364,6 @@ static int release_dwp_onoff(void)
 	NFC_LOG_INFO("enter\n");
 	complete(&pn547_dev->dwp_onoff_comp);
 	{
-		sema_init(&dwp_onoff_release_sema, 0);
 		if(down_timeout(&dwp_onoff_release_sema, tempJ) != 0)
 		{
 			NFC_LOG_INFO("Dwp On/off release wait protection: Timeout");
@@ -402,7 +411,7 @@ static void p61_update_access_state(struct pn547_dev *pn547_dev,
 						= P61_STATE_INVALID;
 			pn547_dev->p61_current_state |= current_state;
 		} else {
-			pn547_dev->p61_current_state ^= current_state;
+			pn547_dev->p61_current_state &= (unsigned int)(~current_state);
 			if (!pn547_dev->p61_current_state)
 				pn547_dev->p61_current_state = P61_STATE_IDLE;
 		}

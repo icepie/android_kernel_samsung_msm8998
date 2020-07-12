@@ -16,7 +16,6 @@
 #include <linux/fs.h>
 #include <linux/quotaops.h>
 #include <linux/buffer_head.h>
-#include <linux/android_aid.h>
 #include "ext4.h"
 #include "ext4_jbd2.h"
 #include "mballoc.h"

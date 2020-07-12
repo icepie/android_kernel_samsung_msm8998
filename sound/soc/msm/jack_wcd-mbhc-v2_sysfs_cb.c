@@ -24,7 +24,11 @@
 #include <sound/soc.h>
 #include <sound/samsung/sec_audio_sysfs.h>
 #include "jack_wcd-mbhc-v2_sysfs_cb.h"
+#ifdef CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET
+#include "../codecs/wcd-mbhc-v2-usbc.h"
+#else
 #include "../codecs/wcd-mbhc-v2.h"
+#endif
 #include "../codecs/wcd934x/wcd934x.h"
 #include "../codecs/wcd934x/wcd934x-mbhc.h"
 

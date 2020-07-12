@@ -725,6 +725,7 @@ int rndis_ipa_pipe_connect_notify(u32 usb_to_ipa_hdl,
 	}
 	RNDIS_IPA_DEBUG("netif_carrier_on() was called\n");
 	
+
 	rndis_msg = kzalloc(sizeof(*rndis_msg), GFP_KERNEL);
 	if (!rndis_msg) {
 		result = -ENOMEM;
@@ -1221,6 +1222,7 @@ int rndis_ipa_pipe_disconnect_notify(void *private)
 	netif_carrier_off(rndis_ipa_ctx->net);
 	RNDIS_IPA_DEBUG("carrier_off notification was sent\n");
 	
+
 	rndis_msg = kzalloc(sizeof(*rndis_msg), GFP_KERNEL);
 	if (!rndis_msg)
 		return -ENOMEM;
@@ -1238,7 +1240,6 @@ int rndis_ipa_pipe_disconnect_notify(void *private)
 		kfree(rndis_msg);
 		return -EPERM;
 	}
-
 	netif_stop_queue(rndis_ipa_ctx->net);
 	RNDIS_IPA_DEBUG("queue stopped\n");
 

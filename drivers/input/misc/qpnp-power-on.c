@@ -2124,16 +2124,17 @@ static DEVICE_ATTR(sec_powerkey_pressed, 0444 , sysfs_powerkey_onoff_show, NULL)
 static int qpnp_wake_enabled(const char *val, const struct kernel_param *kp)
 {
 	int ret = 0;
+	int old_val = wake_enabled;
 	struct qpnp_pon_config *cfg;
-
-	if (*val == wake_enabled)
-	  return ret;
 
 	ret = param_set_bool(val, kp);
 	if (ret) {
 		pr_err("Unable to set qpnp_wake_enabled: %d\n", ret);
 		return ret;
 	}
+
+	if (old_val == wake_enabled)
+		return ret;
 
 	cfg = qpnp_get_cfg(sys_reset_dev, PON_KPDPWR);
 	if (!cfg) {
@@ -2146,7 +2147,8 @@ static int qpnp_wake_enabled(const char *val, const struct kernel_param *kp)
 	else
 		enable_irq_wake(cfg->state_irq);
 
-	pr_info("%s: wake_enabled = %d\n", __func__, wake_enabled);
+	pr_info("%s: wake_enabled changed [%d -> %d]\n",
+			__func__, old_val, wake_enabled);
 
 	return ret;
 }

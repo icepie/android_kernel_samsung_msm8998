@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -2703,6 +2703,13 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 		goto commit_fail;
 	}
 
+	ret = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_DSI_DYNAMIC_BITCLK,
+		NULL, CTL_INTF_EVENT_FLAG_SKIP_BROADCAST);
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("failed to update dynamic bit clk!\n");
+		goto commit_fail;
+	}
+
 	mutex_lock(&mdp5_data->ov_lock);
 
 	/* Disable secure display/camera for video mode panels */
@@ -3347,6 +3354,7 @@ int mdss_mdp_overlay_vsync_ctrl(struct msm_fb_data_type *mfd, int en)
 			mfd->index);
 		goto end;
 	}
+ 
 
 	mdp5_data->vsync_en = en;
 
@@ -5828,12 +5836,14 @@ static int mdss_mdp_overlay_on(struct msm_fb_data_type *mfd)
 
 panel_on:
 	if (mdp5_data->vsync_en) {
-		pr_info("reenabling vsync for fb%d\n", mfd->index);
-		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
-		rc = ctl->ops.add_vsync_handler(ctl, &ctl->vsync_handler);
-		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+		if ((ctl) && (ctl->ops.add_vsync_handler)) {
+			pr_info("reenabling vsync for fb%d\n", mfd->index);
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			rc = ctl->ops.add_vsync_handler(ctl,
+					 &ctl->vsync_handler);
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+		}
 	}
-
 	if (IS_ERR_VALUE(rc)) {
 		pr_err("Failed to turn on fb%d\n", mfd->index);
 		mdss_mdp_overlay_off(mfd);
@@ -6466,6 +6476,15 @@ void mdss_mdp_footswitch_ctrl_handler(bool on)
 static void mdss_mdp_signal_retire_fence(struct msm_fb_data_type *mfd,
 					 int retire_cnt)
 {
+	struct mdss_overlay_private *mdp5_data;
+
+	if (!mfd)
+		return;
+
+	mdp5_data = mfd_to_mdp5_data(mfd);
+	if (!mdp5_data->ctl || !mdp5_data->ctl->ops.remove_vsync_handler)
+		return;
+
 	__vsync_retire_signal(mfd, retire_cnt);
 	pr_debug("Signaled (%d) pending retire fence\n", retire_cnt);
 }

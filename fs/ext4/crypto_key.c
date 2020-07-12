@@ -200,12 +200,6 @@ retry:
 	case EXT4_ENCRYPTION_MODE_PRIVATE:
 		cipher_str = "bugon";
 		break;
-	case EXT4_ENCRYPTION_MODE_SPECK128_256_XTS:
-		cipher_str = "xts(speck128)";
-		break;
-	case EXT4_ENCRYPTION_MODE_SPECK128_256_CTS:
-		cipher_str = "cts(cbc(speck128))";
-		break;
 	default:
 		printk_once(KERN_WARNING
 			    "ext4: unsupported key mode %d (ino %u)\n",

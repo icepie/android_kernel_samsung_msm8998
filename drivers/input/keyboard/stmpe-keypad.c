@@ -390,6 +390,84 @@ static void stmpe_keypad_fill_used_pins(struct stmpe_keypad *keypad,
 	}
 }
 
+static void sec_keypad_dump_reg(struct stmpe_keypad *keypad)
+{
+	union stmpe1801_kpc_data key_values;
+	int ret;
+	int i;
+
+	// get global int status
+	ret = stmpe_reg_read(keypad->stmpe, 0x04);
+	if (ret < 0) {
+		pr_err("[STMKEY]:%s read I2C fail %d\n", __func__, ret);
+		return;
+	}
+	pr_info("[STMKEY]:%s get global int status: %d\n", __func__, ret);
+
+	// get int src
+	ret = stmpe_reg_read(keypad->stmpe, 0x08);
+	if (ret < 0) {
+		pr_err("[STMKEY]:%s read I2C fail %d\n", __func__, ret);
+		return;
+	}
+	pr_info("[STMKEY]:%s get int src: %d\n", __func__, ret);
+
+	for (i = 0; i < STMPE1801_KEY_FIFO_LENGTH; i++) {
+		ret = stmpe_block_read(keypad->stmpe, STMPE_KPC_DATA_BYTE0, 5, key_values.array);
+		pr_info("[STMKEY]: %s data byte0: 0x%llx(%x,%x,%x,%x,%x,%x,%x,%x)\n", __func__, key_values.value, key_values.array[0], key_values.array[1], key_values.array[2], key_values.array[3], key_values.array[4],
+				key_values.array[5], key_values.array[6], key_values.array[7]);		
+	}
+
+	ret = stmpe_reg_read(keypad->stmpe, STMPE_KPC_CTRL_LSB);
+	if (ret < 0) {
+		pr_err("[STMKEY]:%s read I2C fail %d\n", __func__, ret);
+		return;
+	}
+	pr_info("[STMKEY]:%s get ctrl lsb: %d\n", __func__, ret);
+	msleep(5);
+
+	ret = stmpe_reg_read(keypad->stmpe, STMPE_KPC_CTRL_MSB);
+	if (ret < 0) {
+		pr_err("[STMKEY]:%s read I2C fail %d\n", __func__, ret);
+		return;
+	}
+	pr_info("[STMKEY]:%s get ctrl msb: %d\n", __func__, ret);
+	msleep(5);
+
+	ret = stmpe_reg_read(keypad->stmpe, STMPE_INT_EN_MASK);
+	if (ret < 0) {
+		pr_err("[STMKEY]:%s read I2C fail %d\n", __func__, ret);
+		return;
+	}
+	pr_info("[STMKEY]:%s get int en mask: %d\n", __func__, ret);
+	msleep(5);
+
+	ret = stmpe_reg_read(keypad->stmpe, STMPE_ICR_LSB);
+	if (ret < 0) {
+		pr_err("[STMKEY]:%s read I2C fail %d\n", __func__, ret);
+		return;
+	}
+	pr_info("[STMKEY]:%s get icr lsb: %d\n", __func__, ret);
+	msleep(5);
+
+	ret = stmpe_reg_read(keypad->stmpe, STMPE_KPC_CTRL_CMD);
+	if (ret < 0) {
+		pr_err("[STMKEY]:%s read I2C fail %d\n", __func__, ret);
+		return;
+	}
+	pr_info("[STMKEY]:%s get ctrl cmd: %d\n", __func__, ret);
+}
+
+static ssize_t  sec_keypad_dump_reg_show(struct device *dev,
+        struct device_attribute *attr, char *buf)
+{
+	struct stmpe_keypad *keypad = dev_get_drvdata(dev);
+
+	sec_keypad_dump_reg(keypad);
+
+	return 1;
+}
+
 static ssize_t  sysfs_key_onoff_show(struct device *dev,
         struct device_attribute *attr, char *buf)
 {
@@ -408,6 +486,7 @@ static ssize_t  sysfs_key_onoff_show(struct device *dev,
 }
 
 static DEVICE_ATTR(sec_key_pressed, 0444 , sysfs_key_onoff_show, NULL);
+static DEVICE_ATTR(sec_keypad_dump_reg, 0444 , sec_keypad_dump_reg_show, NULL);
 
 
 static ssize_t key_led_onoff_show(struct device *dev,
@@ -480,6 +559,7 @@ static DEVICE_ATTR(brightness, S_IRUGO | S_IWUSR | S_IWGRP,
 
 static struct attribute *key_attributes[] = {
 	&dev_attr_sec_key_pressed.attr,
+	&dev_attr_sec_keypad_dump_reg.attr,
 	&dev_attr_brightness.attr,
 	NULL,
 };
@@ -636,6 +716,8 @@ static int stmpe_keypad_probe(struct platform_device *pdev)
 			ret);
 	}
 
+	enable_irq_wake(stmpe->irq);
+
 	platform_set_drvdata(pdev, keypad);
 	return ret;
 	
@@ -661,7 +743,7 @@ static int stmpe_keypad_remove(struct platform_device *pdev)
 {
 	struct stmpe_keypad *keypad = platform_get_drvdata(pdev);
 
-	device_init_wakeup(&pdev->dev, 0);
+	disable_irq_wake(keypad->stmpe->irq);
 	wake_lock_destroy(&keypad->stmpe_wake_lock);
 
 	input_unregister_device(keypad->input);

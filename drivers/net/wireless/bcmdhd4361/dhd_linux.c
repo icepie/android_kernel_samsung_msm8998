@@ -19313,7 +19313,7 @@ int custom_rps_map_set(struct netdev_rx_queue *queue, char *buf, size_t len)
 	}
 
 	map = kzalloc(max_t(unsigned int,
-		RPS_MAP_SIZE(cpumask_weight(mask)), L1_CACHE_BYTES),
+		(unsigned int)RPS_MAP_SIZE(cpumask_weight(mask)), L1_CACHE_BYTES),
 		GFP_KERNEL);
 	if (!map) {
 		free_cpumask_var(mask);

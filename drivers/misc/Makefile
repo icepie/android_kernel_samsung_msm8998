@@ -58,7 +58,6 @@ obj-$(CONFIG_HDCP_QSEECOM) += hdcp.o
 ifdef CONFIG_COMPAT
 obj-$(CONFIG_QSEECOM) += compat_qseecom.o
 endif
-obj-$(CONFIG_QSEECOM)  += tzic64.o
 obj-$(CONFIG_ECHO)		+= echo/
 obj-$(CONFIG_VEXPRESS_SYSCFG)	+= vexpress-syscfg.o
 obj-$(CONFIG_CXL_BASE)		+= cxl/
@@ -69,8 +68,11 @@ obj-$(CONFIG_MEMORY_STATE_TIME) += memory_state_time.o
 obj-$(CONFIG_TIMA_LOG)		+= tima_debug_log.o
 
 obj-$(CONFIG_SEC_BSP) += sec_misc.o sec_param.o
+obj-$(CONFIG_ARGOS)  += sec_argos.o
 
 # for DMVerity
 obj-$(CONFIG_DM_VERITY)		+= dmverity_query.o
 
 obj-$(CONFIG_RKP_CFP_TEST)	+= cfp_test.o
+
+obj-$(CONFIG_DEV_RIL_BRIDGE)	+= dev_ril_bridge/

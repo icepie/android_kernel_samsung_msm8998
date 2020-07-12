@@ -25,13 +25,13 @@
 #define SENSOR_MAX_MOUNTANGLE (360)
 
 #if defined (CONFIG_CAMERA_SYSFS_V2)
-extern char rear_cam_info[100];		//camera_info
-extern char front_cam_info[100];	//camera_info
+extern char rear_cam_info[200];		//camera_info
+extern char front_cam_info[200];	//camera_info
 #if defined(CONFIG_SAMSUNG_MULTI_CAMERA)
-extern char rear2_cam_info[100];	//camera_info
+extern char rear2_cam_info[200];	//camera_info
 #endif
 #if defined(CONFIG_SAMSUNG_SECURE_CAMERA)
-extern char iris_cam_info[100];	//camera_info
+extern char iris_cam_info[200];	//camera_info
 #endif
 #endif
 

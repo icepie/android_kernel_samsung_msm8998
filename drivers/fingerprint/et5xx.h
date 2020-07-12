@@ -183,6 +183,8 @@ struct etspi_data {
 	struct timer_list dbg_timer;
 	int sensortype;
 	struct device *fp_device;
+	int reset_count;
+	int interrupt_count;
 #ifdef ENABLE_SENSORS_FPRINT_SECURE
 	bool enabled_clk;
 	bool isGpio_cfgDone;

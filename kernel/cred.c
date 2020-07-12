@@ -239,7 +239,10 @@ void __put_cred(struct cred *cred)
 		put_ro_cred(cred);
 	} else
 #endif /*CONFIG_RKP_KDP*/
-	call_rcu(&cred->rcu, put_cred_rcu);
+	if (cred->non_rcu)
+		put_cred_rcu(&cred->rcu);
+	else
+		call_rcu(&cred->rcu, put_cred_rcu);
 }
 EXPORT_SYMBOL(__put_cred);
 
@@ -363,6 +366,7 @@ struct cred *prepare_creds(void)
 	old = task->cred;
 	memcpy(new, old, sizeof(struct cred));
 
+	new->non_rcu = 0;
 	atomic_set(&new->usage, 1);
 	set_cred_subscribers(new, 0);
 	get_group_info(new->group_info);
@@ -667,6 +671,15 @@ int commit_creds(struct cred *new)
 		if (task->mm)
 			set_dumpable(task->mm, suid_dumpable);
 		task->pdeath_signal = 0;
+		/*
+		 * If a task drops privileges and becomes nondumpable,
+		 * the dumpability change must become visible before
+		 * the credential change; otherwise, a __ptrace_may_access()
+		 * racing with this change may be able to attach to a task it
+		 * shouldn't be able to attach to (as if the task had dropped
+		 * privileges without becoming nondumpable).
+		 * Pairs with a read barrier in __ptrace_may_access().
+		 */
 		smp_wmb();
 	}
 
@@ -811,7 +824,6 @@ const struct cred *override_creds(const struct cred *new)
 		use_cnt_ptr = kmem_cache_alloc(usecnt_jar,GFP_KERNEL);
 		if(!use_cnt_ptr)
 			panic("override_creds() : Unable to allocate usage pointer\n");
-
 		tsec = kmem_cache_alloc(tsec_jar, GFP_KERNEL);
 		if(!tsec)
 			panic("override_creds() : Unable to allocate security pointer\n");
@@ -831,12 +843,23 @@ const struct cred *override_creds(const struct cred *new)
 		}
 	}
 	else {
-		get_cred(new);
+		/*
+	 * NOTE! This uses 'get_new_cred()' rather than 'get_cred()'.
+	 *
+	 * That means that we do not clear the 'non_rcu' flag, since
+	 * we are only installing the cred into the thread-synchronous
+	 * '->cred' pointer, not the '->real_cred' pointer that is
+	 * visible to other threads under RCU.
+	 *
+	 * Also note that we did validate_creds() manually, not depending
+	 * on the validation in 'get_cred()'.
+	 */
+		get_new_cred((struct cred *)new);
 		alter_cred_subscribers(new, 1);
 		rcu_assign_pointer(current->cred, new);
 	}
 #else
-	get_cred(new);
+	get_new_cred((struct cred *)new);
 	alter_cred_subscribers(new, 1);
 	rcu_assign_pointer(current->cred, new);
 #endif  /* CONFIG_RKP_KDP */
@@ -982,6 +1005,7 @@ struct cred *prepare_kernel_cred(struct task_struct *daemon)
 	validate_creds(old);
 
 	*new = *old;
+	new->non_rcu = 0;
 	atomic_set(&new->usage, 1);
 	set_cred_subscribers(new, 0);
 	get_uid(new->user);

@@ -91,6 +91,11 @@ enum pa_dac_ack_flags {
 	WCD_MBHC_HPHR_PA_OFF_ACK,
 };
 
+enum anc_ack_flags {
+	WCD_MBHC_ANC0_OFF_ACK = 0,
+	WCD_MBHC_ANC1_OFF_ACK,
+};
+
 enum wcd_mbhc_btn_det_mem {
 	WCD_MBHC_BTN_DET_V_BTN_LOW,
 	WCD_MBHC_BTN_DET_V_BTN_HIGH
@@ -391,6 +396,9 @@ struct wcd_mbhc_cb {
 	void (*hph_pull_down_ctrl)(struct snd_soc_codec *, bool);
 	void (*mbhc_moisture_config)(struct wcd_mbhc *);
 	bool (*hph_register_recovery)(struct wcd_mbhc *);
+	void (*update_anc_state)(struct snd_soc_codec *codec,
+				 bool enable, int anc_num);
+	bool (*is_anc_on)(struct wcd_mbhc *mbhc);
 };
 
 #ifdef CONFIG_SND_SOC_WCD_MBHC_ADC
@@ -438,6 +446,7 @@ struct wcd_mbhc {
 
 	/* track PA/DAC state to sync with userspace */
 	unsigned long hph_pa_dac_state;
+	unsigned long hph_anc_state;
 	unsigned long event_state;
 	unsigned long jiffies_atreport;
 
@@ -480,6 +489,7 @@ struct wcd_mbhc {
 #ifdef CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET
 	struct notifier_block ccic_nb;
 	struct delayed_work ccic_work;
+	bool usbc_ear_out_enable;
 	int usbc_ana_en_gpio;
 	int usbc_ana_sel_gpio;
 	int usbc_jack_ctr_gpio;
@@ -593,4 +603,7 @@ static inline void wcd_mbhc_deinit(struct wcd_mbhc *mbhc)
 }
 #endif
 
+#ifdef CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET
+void MBHC_enable_jack_output_ctr(struct wcd_mbhc *mbhc, bool enable);
+#endif
 #endif /* __WCD_MBHC_V2_H__ */

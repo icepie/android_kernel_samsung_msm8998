@@ -155,11 +155,15 @@ static struct switch_dev switch_secdp_msg = {
 
 void secdp_send_poor_connection_event(void)
 {
+	struct mdss_dp_drv_pdata *dp_drv = g_dp_drv;
+
 	pr_info("poor connection!");
 #ifdef CONFIG_SWITCH
 	switch_set_state(&switch_secdp_msg, 1);
 	switch_set_state(&switch_secdp_msg, 0);
 #endif
+
+	dp_drv->dex_node_status = dp_drv->dex_en = dp_drv->dex_now = 0;
 }
 #endif
 
@@ -5629,6 +5633,11 @@ static ssize_t secdp_dex_show(struct class *class,
 	struct mdss_dp_drv_pdata *dp_drv = g_dp_drv;
 	int ret = 0;
 
+	if (!dp_drv->cable_connected_phy || !dp_drv->sec_hpd) {
+		pr_info("cable is out\n");
+		dp_drv->dex_node_status = dp_drv->dex_en = dp_drv->dex_now = 0;
+	}
+
 	pr_info("dex_set: %d, dex_en: %d, dex_node_status: %d\n", dp_drv->dex_set, dp_drv->dex_en, dp_drv->dex_node_status);
 	ret = scnprintf(buf, PAGE_SIZE, "%d\n", dp_drv->dex_node_status);
 
@@ -5691,6 +5700,12 @@ static ssize_t secdp_dex_store(struct class *class,
 
 	if (!dp_drv->dex_supported_res) {
 		pr_info("dex supported device is not connected.\n");
+		goto exit;
+	}
+
+	if (!dp_drv->cable_connected_phy || !dp_drv->sec_hpd) {
+		pr_info("cable is out\n");
+		dp_drv->dex_node_status = dp_drv->dex_en = dp_drv->dex_now = 0;
 		goto exit;
 	}
 

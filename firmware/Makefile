@@ -173,8 +173,10 @@ fw-shipped-$(CONFIG_SPI_TO_I2C_FPGA) += fpga/spi_to_i2c_bitmap.fw
 fw-shipped-$(CONFIG_POGO_FPGA) += fpga/pogo_fpga.fw
 fw-shipped-$(CONFIG_SEC_ICE40XX_IRIS) += fpga/iris_fpga.fw
 
-fw-shipped-$(CONFIG_FIVE_TEE_DRIVER) += five.b00 five.b01 five.b02 five.b03 \
-				  five.b04 five.b05 five.b06 five.b07 five.mdt
+# FIVE
+ifeq ($(CONFIG_FIVE_TEE_DRIVER),y)
+include $(srctree)/firmware/five/Makefile
+endif
 
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 

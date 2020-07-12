@@ -514,16 +514,16 @@ struct uart_port *bluesleep_get_uart_port(void)
 
 static ssize_t bluesleep_read_proc_lpm(struct file *file, char __user *userbuf, size_t bytes, loff_t *off)
 {
-	int ret;
+	int min, ret;
+	min = (bytes > sizeof("lpm: 0 \n"))? sizeof("lpm: 0 \n"):bytes;
 
-	ret = copy_to_user(userbuf,bt_enabled?"lpm: 1 \n":"lpm: 0 \n",bytes);
-	if(ret)
-	{
-		BT_ERR("Failed to bluesleep_read_proc_lpm : %d",ret);
+	ret = copy_to_user(userbuf, bt_enabled?"lpm: 1 \n":"lpm: 0 \n", min);
+	if (ret) {
+		BT_ERR("Failed to bluesleep_read_proc_lpm : %d", ret);
 		return ret;
 	}
 
-	return bytes;
+	return min;
 }
 
 static ssize_t bluesleep_write_proc_lpm(struct file *file, const char __user *buffer,

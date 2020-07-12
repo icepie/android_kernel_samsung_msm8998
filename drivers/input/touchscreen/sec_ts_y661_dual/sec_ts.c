@@ -2869,7 +2869,9 @@ static void sec_ts_read_info_work(struct work_struct *work)
 	sec_ts_run_rawdata_all(ts, false);
 	
 #ifdef CONFIG_DUAL_TSP
-	gpio_direction_output(ts->plat_data->tsp_sel, value);
+	if(value!=ts->flip_status_current)
+		input_info(true, &ts->client->dev, "%s: flip_status_current: %d\n", __func__, ts->flip_status_current);
+	gpio_direction_output(ts->plat_data->tsp_sel, ts->flip_status_current);
 	udelay(500);
 #endif
 

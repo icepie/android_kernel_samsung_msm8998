@@ -160,7 +160,8 @@ static int print_mem_entry(void *data, void *ptr)
 						&egl_image_count);
 
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG) && !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
-	seq_printf(s, "%p %p %16llu %5d %9s %10s %16s %5d %16llu %6d %6d",
+	seq_printf(s, m->useraddr ? "%p %p %16llu %5d %9s %10s %16s %5d %16llu %6d %6d" :
+			"%p %pK %16llu %5d %9s %10s %16s %5d %16llu %6d %6d",
 			(uint64_t *)(uintptr_t) m->gpuaddr,
 			(unsigned long *) m->useraddr,
 			m->size, entry->id, flags,
@@ -490,7 +491,7 @@ static int kgsl_mem_debugfs_show(struct seq_file *s, void *unused)
 				if (!IS_ERR_OR_NULL(dump_private->pagetable)) {
 					pt = (struct kgsl_iommu_pt *)(dump_private->pagetable->priv);
 					if (!IS_ERR_OR_NULL(pt)) {
-						kgsl_mem_dump_svm_start = pt->svm_start; 
+						kgsl_mem_dump_svm_start = pt->svm_start;
 						kgsl_mem_dump_svm_end = pt->svm_end;
 					}
 				}
@@ -545,7 +546,7 @@ static int kgsl_mem_debugfs_show(struct seq_file *s, void *unused)
 			}
 
 			seq_printf(s, "Biggest hole(from 0x%lx to 0x%lx) is 0x%lx (%lu KB)\n"
-					"Total hole is 0x%lx (%lu KB)\n", 
+					"Total hole is 0x%lx (%lu KB)\n",
 					kgsl_mem_dump_svm_start, kgsl_mem_dump_svm_end,
 					biggest_hole, biggest_hole,
 					total_hole, total_hole);
@@ -558,7 +559,7 @@ static int kgsl_mem_debugfs_show(struct seq_file *s, void *unused)
 }
 
 static int kgsl_mem_debugfs_open(struct inode *inode, struct file *file)
-{	
+{
 	return single_open(file, kgsl_mem_debugfs_show, file);
 }
 

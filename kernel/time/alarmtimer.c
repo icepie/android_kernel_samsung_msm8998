@@ -29,7 +29,6 @@
 #ifdef CONFIG_MSM_PM
 #include "lpm-levels.h"
 #endif
-#include <linux/workqueue.h>
 
 /**
  * struct alarm_base - Alarm timer bases
@@ -51,15 +50,16 @@ static ktime_t freezer_delta;
 static DEFINE_SPINLOCK(freezer_delta_lock);
 
 static struct wakeup_source *ws;
-static struct delayed_work work;
-static struct workqueue_struct *power_off_alarm_workqueue;
 
 #ifdef CONFIG_RTC_CLASS
 /* rtc timer and device for setting alarm wakeups at suspend */
 static struct rtc_timer		rtctimer;
 static struct rtc_device	*rtcdev;
 static DEFINE_SPINLOCK(rtcdev_lock);
+#ifndef CONFIG_RTC_AUTO_PWRON
 static struct mutex power_on_alarm_lock;
+#endif
+#if 0
 static struct alarm init_alarm;
 
 /**
@@ -92,7 +92,7 @@ void power_on_alarm_init(void)
 		alarm_start(&init_alarm, alarm_ktime);
 	}
 }
-
+#endif
 /**
  * set_power_on_alarm - set power on alarm value into rtc register
  *
@@ -239,7 +239,7 @@ int alarm_set_alarm(char *alarm_data)
 {
 	struct rtc_wkalrm alm;
 	int ret = 0;
-	char buf_ptr[BOOTALM_BIT_TOTAL+1];
+	char buf_ptr[BOOTALM_BIT_TOTAL+1] = {0,};
 	struct rtc_time     rtc_tm;
 	unsigned long       rtc_sec;
 	unsigned long       rtc_alm_sec;
@@ -339,8 +339,6 @@ static void alarmtimer_rtc_remove_device(struct device *dev,
 
 static inline void alarmtimer_rtc_timer_init(void)
 {
-	mutex_init(&power_on_alarm_lock);
-
 	rtc_timer_init(&rtctimer, NULL, NULL);
 }
 
@@ -367,13 +365,7 @@ struct rtc_device *alarmtimer_get_rtcdev(void)
 static inline int alarmtimer_rtc_interface_setup(void) { return 0; }
 static inline void alarmtimer_rtc_interface_remove(void) { }
 static inline void alarmtimer_rtc_timer_init(void) { }
-void set_power_on_alarm(void) { }
 #endif
-
-static void alarm_work_func(struct work_struct *unused)
-{
-	set_power_on_alarm();
-}
 
 /**
  * alarmtimer_enqueue - Adds an alarm timer to an alarm_base timerqueue
@@ -443,10 +435,6 @@ static enum hrtimer_restart alarmtimer_fired(struct hrtimer *timer)
 		ret = HRTIMER_RESTART;
 	}
 	spin_unlock_irqrestore(&base->lock, flags);
-
-	/* set next power off alarm */
-	if (alarm->type == ALARM_POWEROFF_REALTIME)
-		queue_delayed_work(power_off_alarm_workqueue, &work, 0);
 
 	return ret;
 
@@ -566,8 +554,6 @@ static int alarmtimer_suspend(struct device *dev)
 	int i;
 	int ret;
 
-	cancel_delayed_work_sync(&work);
-
 	spin_lock_irqsave(&freezer_delta_lock, flags);
 	min = freezer_delta;
 	freezer_delta = ktime_set(0, 0);
@@ -624,7 +610,6 @@ static int alarmtimer_resume(struct device *dev)
 		return 0;
 	rtc_timer_cancel(rtc, &rtctimer);
 
-	queue_delayed_work(power_off_alarm_workqueue, &work, 0);
 	return 0;
 }
 
@@ -805,14 +790,12 @@ EXPORT_SYMBOL_GPL(alarm_forward_now);
  * clock2alarm - helper that converts from clockid to alarmtypes
  * @clockid: clockid.
  */
-enum alarmtimer_type clock2alarm(clockid_t clockid)
+static enum alarmtimer_type clock2alarm(clockid_t clockid)
 {
 	if (clockid == CLOCK_REALTIME_ALARM)
 		return ALARM_REALTIME;
 	if (clockid == CLOCK_BOOTTIME_ALARM)
 		return ALARM_BOOTTIME;
-	if (clockid == CLOCK_POWEROFF_ALARM)
-		return ALARM_POWEROFF_REALTIME;
 	return -1;
 }
 
@@ -894,7 +877,7 @@ static int alarm_timer_create(struct k_itimer *new_timer)
 	struct alarm_base *base;
 
 	if (!alarmtimer_get_rtcdev())
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	if (!capable(CAP_WAKE_ALARM))
 		return -EPERM;
@@ -937,7 +920,7 @@ static void alarm_timer_get(struct k_itimer *timr,
 static int alarm_timer_del(struct k_itimer *timr)
 {
 	if (!rtcdev)
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	if (alarm_try_to_cancel(&timr->it.alarm.alarmtimer) < 0)
 		return TIMER_RETRY;
@@ -961,7 +944,7 @@ static int alarm_timer_set(struct k_itimer *timr, int flags,
 	ktime_t exp;
 
 	if (!rtcdev)
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	if (flags & ~TIMER_ABSTIME)
 		return -EINVAL;
@@ -1123,7 +1106,7 @@ static int alarm_timer_nsleep(const clockid_t which_clock, int flags,
 	struct restart_block *restart;
 
 	if (!alarmtimer_get_rtcdev())
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	if (flags & ~TIMER_ABSTIME)
 		return -EINVAL;
@@ -1137,7 +1120,8 @@ static int alarm_timer_nsleep(const clockid_t which_clock, int flags,
 	/* Convert (if necessary) to absolute time */
 	if (flags != TIMER_ABSTIME) {
 		ktime_t now = alarm_bases[type].gettime();
-		exp = ktime_add(now, exp);
+
+		exp = ktime_add_safe(now, exp);
 	}
 
 	if (alarmtimer_do_nsleep(&alarm, exp))
@@ -1208,13 +1192,10 @@ static int __init alarmtimer_init(void)
 
 	posix_timers_register_clock(CLOCK_REALTIME_ALARM, &alarm_clock);
 	posix_timers_register_clock(CLOCK_BOOTTIME_ALARM, &alarm_clock);
-	posix_timers_register_clock(CLOCK_POWEROFF_ALARM, &alarm_clock);
 
 	/* Initialize alarm bases */
 	alarm_bases[ALARM_REALTIME].base_clockid = CLOCK_REALTIME;
 	alarm_bases[ALARM_REALTIME].gettime = &ktime_get_real;
-	alarm_bases[ALARM_POWEROFF_REALTIME].base_clockid = CLOCK_REALTIME;
-	alarm_bases[ALARM_POWEROFF_REALTIME].gettime = &ktime_get_real;
 	alarm_bases[ALARM_BOOTTIME].base_clockid = CLOCK_BOOTTIME;
 	alarm_bases[ALARM_BOOTTIME].gettime = &ktime_get_boottime;
 	for (i = 0; i < ALARM_NUMTYPE; i++) {
@@ -1236,24 +1217,8 @@ static int __init alarmtimer_init(void)
 		goto out_drv;
 	}
 	ws = wakeup_source_register("alarmtimer");
-	if (!ws) {
-		error = -ENOMEM;
-		goto out_ws;
-	}
-
-	INIT_DELAYED_WORK(&work, alarm_work_func);
-	power_off_alarm_workqueue =
-		create_singlethread_workqueue("power_off_alarm");
-	if (!power_off_alarm_workqueue) {
-		error = -ENOMEM;
-		goto out_wq;
-	}
-
 	return 0;
-out_wq:
-	wakeup_source_unregister(ws);
-out_ws:
-	platform_device_unregister(pdev);
+
 out_drv:
 	platform_driver_unregister(&alarmtimer_driver);
 out_if:

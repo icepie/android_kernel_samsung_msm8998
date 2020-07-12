@@ -45,12 +45,19 @@
 #include <linux/kthread.h>
 #include <linux/version.h>
 
+#ifdef CONFIG_PM_WAKELOCKS
+#include <linux/pm_wakeup.h>
+#endif
+
 #include "dbmdx-interface.h"
 #include "dbmdx-customer.h"
 #include "dbmdx-va-regmap.h"
 #include "dbmdx-vqe-regmap.h"
 #include "dbmdx-i2s.h"
 #include <sound/dbmdx-export.h>
+#ifdef CONFIG_SND_SOC_WCD934X
+#include "../wcd934x/wcd934x.h"
+#endif
 
 /* Size must be power of 2 */
 #define MAX_KFIFO_BUFFER_SIZE_MONO		(32768 * 8) /* >8 seconds */
@@ -434,6 +441,7 @@ static void dbmdx_wakeup_toggle(struct dbmdx_private *p)
 	gpio_set_value(p->cur_wakeup_gpio, p->cur_wakeup_set_value);
 	usleep_range(1000, 1100);
 	gpio_set_value(p->cur_wakeup_gpio, !(p->cur_wakeup_set_value));
+	usleep_range(1000, 1100);
 }
 
 static long dbmdx_clk_set_rate(struct dbmdx_private *p,
@@ -2067,6 +2075,45 @@ static int dbmdx_update_microphone_mode(struct dbmdx_private *p,
 		break;
 	}
 
+#ifdef CONFIG_SND_SOC_WCD934X
+	/* 
+	 * In case of analog mic mode, 
+	 * it need to change the micbias voltage more then 2.2V
+	 * to support AKG earphone.
+	 */
+	switch (mode) {
+	case DBMDX_MIC_MODE_DISABLE:
+	case DBMDX_MIC_MODE_DIGITAL_LEFT:
+	case DBMDX_MIC_MODE_DIGITAL_RIGHT:
+	case DBMDX_MIC_MODE_DIGITAL_STEREO_TRIG_ON_LEFT:
+	case DBMDX_MIC_MODE_DIGITAL_STEREO_TRIG_ON_RIGHT:
+#ifdef DBMDX_4CHANNELS_SUPPORT
+	case DBMDX_MIC_MODE_DIGITAL_4CH:
+#endif
+		if (remote_codec != NULL) {
+			ret = tavil_codec_enable_standalone_micbias(remote_codec, 2, 0);
+			if (ret) {
+				dev_err(remote_codec->dev, "%s: Failed to enable standalone\n",
+					__func__);
+				return ret;
+			}
+		}
+		break;
+	case DBMDX_MIC_MODE_ANALOG:
+		if (remote_codec != NULL) {
+			ret = tavil_codec_enable_standalone_micbias(remote_codec, 2, 1);
+			if (ret) {
+				dev_err(remote_codec->dev, "%s: Failed to enable standalone\n",
+					__func__);
+				return ret;
+			}
+		}
+		break;
+	default:
+		break;
+	}
+#endif
+
 	if (new_detection_kfifo_size != p->detection_samples_kfifo_buf_size) {
 		p->detection_samples_kfifo_buf_size = new_detection_kfifo_size;
 		kfifo_init(&p->detection_samples_kfifo,
@@ -2110,9 +2157,6 @@ static int dbmdx_reconfigure_microphones(struct dbmdx_private *p,
 	}
 #endif
 
-	current_mode = p->va_flags.mode;
-	current_audio_channels = p->pdata->va_audio_channels;
-
 	/* flush pending buffering works if any */
 	p->va_flags.buffering = 0;
 	flush_work(&p->sv_work);
@@ -2125,6 +2169,9 @@ static int dbmdx_reconfigure_microphones(struct dbmdx_private *p,
 			__func__);
 
 	p->lock(p);
+
+	current_mode = p->va_flags.mode;
+	current_audio_channels = p->pdata->va_audio_channels;
 
 	ret = dbmdx_set_power_mode(p, DBMDX_PM_ACTIVE);
 	if (ret < 0) {
@@ -3304,6 +3351,10 @@ static int dbmdx_acoustic_model_build_from_external(struct dbmdx_private *p,
 	ret = 0;
 
 	cur_amodel->amodel_loaded = true;
+
+	memcpy(&(cur_amodel->amodel_checksum),
+		&(cur_amodel->amodel_buf[cur_amodel->amodel_size - 4]), 4);
+	
 out:
 	return ret;
 }
@@ -3697,6 +3748,10 @@ static int dbmdx_config_va_mode(struct dbmdx_private *p)
 			continue;
 		}
 #endif
+
+	/* Ensure that wakeup line is not toggled during initial config */
+		p->cur_wakeup_disabled = 1;
+
 		ret = dbmdx_send_cmd(p, p->pdata->va_cfg_value[i], NULL);
 		if (ret < 0) {
 			dev_err(p->dev, "%s: failed to send cmd\n", __func__);
@@ -3707,6 +3762,8 @@ static int dbmdx_config_va_mode(struct dbmdx_private *p)
 
 	/* Give to PLL enough time for stabilization */
 	msleep(DBMDX_MSLEEP_CONFIG_VA_MODE_REG);
+
+	p->cur_wakeup_disabled = p->pdata->wakeup_disabled;	
 
 	p->chip->transport_enable(p, true);
 
@@ -3827,6 +3884,12 @@ static int dbmdx_va_firmware_ready(struct dbmdx_private *p)
 
 	p->boot_mode = DBMDX_BOOT_MODE_NORMAL_BOOT;
 
+	/* Ensure that wakeup line is not toggled during initial config */
+	p->cur_wakeup_disabled = 1;
+
+	/* Ensure that interface is enabled */
+	p->chip->transport_enable(p, true);
+
 	/* Boot VA chip */
 	if (p->pdata->boot_options & DBMDX_BOOT_OPT_SEND_PREBOOT) {
 
@@ -3836,7 +3899,7 @@ static int dbmdx_va_firmware_ready(struct dbmdx_private *p)
 			dev_err(p->dev,
 				"%s Error switching to (VA) interface\n",
 				__func__);
-			return ret;
+			goto out_fail;
 		}
 
 		dbmdx_reset_sequence(p);
@@ -3851,7 +3914,8 @@ static int dbmdx_va_firmware_ready(struct dbmdx_private *p)
 			dev_err(p->dev,
 				"%s Error sending the Preboot FW (VA)\n",
 				__func__);
-			return -EIO;
+			ret = -EIO;
+			goto out_fail;
 		}
 
 		dev_err(p->dev, "%s Preboot was sent successfully (VA)\n",
@@ -3866,14 +3930,15 @@ static int dbmdx_va_firmware_ready(struct dbmdx_private *p)
 			"%s Error switching to (VA) BOOT interface\n",
 			__func__);
 		p->boot_mode = DBMDX_BOOT_MODE_NORMAL_BOOT;
-		return ret;
+		goto out_fail;
 	}
 
 	/* common boot */
 	ret = dbmdx_firmware_ready(p->va_fw, p);
 	if (ret != 0) {
 		dev_err(p->dev, "%s: could not load VA firmware\n", __func__);
-		return -EIO;
+		ret = -EIO;
+		goto out_fail;
 	}
 
 	p->boot_mode = DBMDX_BOOT_MODE_NORMAL_BOOT;
@@ -3885,24 +3950,30 @@ static int dbmdx_va_firmware_ready(struct dbmdx_private *p)
 		dev_err(p->dev,
 			"%s Error switching to (VA) CMD interface\n",
 			__func__);
-		return ret;
+		goto out_fail;
 	}
 
 	ret = dbmdx_config_va_mode(p);
 	if (ret != 0) {
 		dev_err(p->dev, "%s: could not configure VA firmware\n",
 			__func__);
-		return -EIO;
+		ret = -EIO;
+		goto out_fail;
 	}
 
 	ret = p->chip->set_va_firmware_ready(p);
 	if (ret) {
 		dev_err(p->dev, "%s: could not set to ready VA firmware\n",
 			__func__);
-		return -EIO;
+		ret = -EIO;
+		goto out_fail;
 	}
 
 	return 0;
+out_fail:
+	p->cur_wakeup_disabled = p->pdata->wakeup_disabled;
+	p->chip->transport_enable(p, false);
+	return ret;	
 }
 
 static int dbmdx_vqe_read_version(struct dbmdx_private *p,
@@ -5886,12 +5957,6 @@ static int dbmdx_va_amodel_okg_load(struct dbmdx_private *p,
 
 	cur_amodel = &(p->okg_amodel);
 
-	if (p->va_flags.okg_a_model_downloaded_to_fw) {
-		dev_info(p->dev, "%s: OKG model has been already loaded\n",
-			__func__);
-		return 0;
-	}
-
 	if (to_load_from_memory && !(p->okg_amodel.amodel_loaded)) {
 
 		dev_err(p->dev, "%s: OKG model was not loaded to memory\n",
@@ -5920,6 +5985,27 @@ static int dbmdx_va_amodel_okg_load(struct dbmdx_private *p,
 		}
 
 		cur_amodel->amodel_loaded = true;
+
+		memcpy(&(cur_amodel->amodel_checksum),
+			&(cur_amodel->amodel_buf[cur_amodel->amodel_size - 4]),
+			4);
+
+	}
+
+	if (p->va_flags.okg_a_model_downloaded_to_fw) {
+		/* Check if loaded amodel checksum matches to the one loaded */
+		ret = memcmp(&(p->va_flags.okg_amodel_checksum),
+				&(cur_amodel->amodel_checksum),	4);
+		if (!ret) {
+			dev_info(p->dev,
+				"%s: OKG model has been already loaded\n",
+				__func__);
+			return 0;
+		}
+
+		dev_info(p->dev,
+			"%s: OKG model was changed and should be reloaded\n",
+			__func__);		
 	}
 
 	p->va_flags.okg_amodel_len = cur_amodel->amodel_size;
@@ -6017,6 +6103,9 @@ static int dbmdx_va_amodel_okg_load(struct dbmdx_private *p,
 		__func__);
 
 	p->va_flags.okg_a_model_downloaded_to_fw = 1;
+
+	memcpy(&(p->va_flags.okg_amodel_checksum),
+		&(cur_amodel->amodel_checksum), 4);
 
 out_finish_loading:
 	/* finish A-Model loading */
@@ -6833,6 +6922,11 @@ static int dbmdx_va_amodel_load_single(struct dbmdx_private *p,
 		}
 
 		cur_amodel->amodel_loaded = true;
+
+		memcpy(&(cur_amodel->amodel_checksum),
+			&(cur_amodel->amodel_buf[cur_amodel->amodel_size - 4]),
+			4);
+
 	}
 
 	p->va_flags.amodel_len = cur_amodel->amodel_size;
@@ -7014,6 +7108,10 @@ static int dbmdx_va_amodel_load_dual(struct dbmdx_private *p,
 
 		cur_amodel->amodel_loaded = true;
 
+		memcpy(&(cur_amodel->amodel_checksum),
+			&(cur_amodel->amodel_buf[cur_amodel->amodel_size - 4]),
+			4);
+
 		cur_amodel = &(p->secondary_amodel);
 
 		if (cur_amodel->amodel_buf == NULL) {
@@ -7042,6 +7140,11 @@ static int dbmdx_va_amodel_load_dual(struct dbmdx_private *p,
 		}
 
 		cur_amodel->amodel_loaded = true;
+
+		memcpy(&(cur_amodel->amodel_checksum),
+			&(cur_amodel->amodel_buf[cur_amodel->amodel_size - 4]),
+			4);
+
 	}
 
 	cur_amodel = &(p->primary_amodel);
@@ -7673,13 +7776,14 @@ static int dbmdx_va_amodel_update(struct dbmdx_private *p, int val)
 		((sv_model_was_loaded &&
 			p->va_flags.okg_a_model_downloaded_to_fw) ||
 			((p->va_detection_mode == DETECTION_MODE_PHRASE) &&
-				okg_model_selected && !do_not_reload_model &&
-				!(p->va_flags.okg_a_model_downloaded_to_fw)));
+				okg_model_selected && !do_not_reload_model));
 
 	if (load_okg_model) {
 
 		/* Reset the flag to ensure that the model will be reloaded */
-		p->va_flags.okg_a_model_downloaded_to_fw = 0;
+		if (sv_model_was_loaded &&
+			p->va_flags.okg_a_model_downloaded_to_fw)
+			p->va_flags.okg_a_model_downloaded_to_fw = 0;
 
 		ret = dbmdx_va_amodel_okg_load(p, DBMDX_VC_OKG_NAME,
 						load_model_from_memory);
@@ -10642,7 +10746,8 @@ int dbmdx_stop_pcm_streaming(struct snd_soc_codec *codec)
 		dev_dbg(p->dev,
 			"%s: FW in Buffering mode, set the flag and leave\n",
 			__func__);
-		return 0;
+		ret = 0;
+		goto out_unlock;
 	} else if (p->va_flags.mode == DBMDX_DETECTION_AND_STREAMING)
 		required_mode = DBMDX_DETECTION;
 	else
@@ -13453,6 +13558,12 @@ static irqreturn_t dbmdx_sv_interrupt_soft(int irq, void *dev)
 	dev_dbg(p->dev, "%s\n", __func__);
 
 	if ((p->device_ready) && (p->va_flags.irq_inuse)) {
+
+#ifdef CONFIG_PM_WAKELOCKS
+		__pm_wakeup_event(&(p->ps_nosuspend_wl),
+					DBMDX_WAKELOCK_IRQ_TIMEOUT_MS);
+#endif
+		
 #ifdef DBMDX_PROCESS_DETECTION_IRQ_WITHOUT_WORKER
 		dbmdx_process_detection_irq(p, true);
 #else
@@ -13570,6 +13681,10 @@ static int dbmdx_get_va_resources(struct dbmdx_private *p)
 			__func__);
 		goto err_free_irq;
 	}
+#ifdef CONFIG_PM_WAKELOCKS
+	wakeup_source_init(&p->ps_nosuspend_wl,
+					"dbmdx_nosuspend_wakelock");
+#endif
 
 	return 0;
 err_free_irq:
@@ -13603,6 +13718,10 @@ static void dbmdx_free_va_resources(struct dbmdx_private *p)
 		free_irq(p->sv_irq, p);
 	}
 	sysfs_remove_group(&p->dev->kobj, &dbmdx_va_attribute_group);
+#ifdef CONFIG_PM_WAKELOCKS
+	wakeup_source_trash(&p->ps_nosuspend_wl);
+#endif
+	
 }
 
 static int dbmdx_get_vqe_resources(struct dbmdx_private *p)

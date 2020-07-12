@@ -69,9 +69,9 @@
 
 struct device *sec_touchkey;
 #define ABOV_TK_NAME		"abov-touchkey"
-#define FW_VERSION		0x02
+#define FW_VERSION		0x04
 #define FW_CHECKSUM_H		0x4B
-#define FW_CHECKSUM_L		0xC0
+#define FW_CHECKSUM_L		0xC4
 #define TK_FW_PATH_BIN		"abov/abov_tk_kelly.fw"
 #define TK_FW_PATH_SDCARD	"/sdcard/Firmware/TOUCHKEY/abov_fw.bin"
 
@@ -2007,6 +2007,20 @@ int abov_power(struct abov_touchkey_dt_data *dtdata, bool on)
 	if (reg_boot_on && !dtdata->reg_boot_on)
 		reg_boot_on = false;
 
+	/* SUB LED 3P0 off before IC VDD or it will blink one time when LCD off.*/
+	if (!IS_ERR_OR_NULL(dtdata->led_avdd_vreg)) {
+		if (!on) {
+			if (regulator_is_enabled(dtdata->led_avdd_vreg))
+				ret = regulator_disable(dtdata->led_avdd_vreg);
+			else
+				pr_err("%s: LED 3p3 is already disabled\n", __func__);
+		}
+
+		if (ret)
+			pr_err("%s %s: led_avdd_vreg reg %s fail ret=%d\n",
+				SECLOG, __func__, on ? "enable" : "disable", ret);
+	}
+
 	/* 3.3V on,off control. */
 	if (!IS_ERR_OR_NULL(dtdata->avdd_vreg)) {
 		if (on) {
@@ -2068,12 +2082,7 @@ int abov_power(struct abov_touchkey_dt_data *dtdata, bool on)
 				pr_err("%s: 3p3 is already enabled\n", __func__);
 			} else
 				ret = regulator_enable(dtdata->led_avdd_vreg);
-		} else {
-			if (regulator_is_enabled((dtdata->led_avdd_vreg))) {
-				ret = regulator_disable(dtdata->led_avdd_vreg);
-				} else
-				pr_err("%s: 3p3 is already disabled\n", __func__);
-			}
+		}
 
 		if (ret)
 			pr_err("%s %s: led_avdd_vreg reg %s fail ret=%d\n",

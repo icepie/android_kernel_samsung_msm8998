@@ -2443,7 +2443,7 @@ wl_cfgvendor_get_ndev(struct bcm_cfg80211 *cfg, struct wireless_dev *wdev,
 			return NULL;
 		}
 
-		ifname_len = pos1 - pos;
+		ifname_len = (u32)(pos1 - pos);
 		if (memcpy(ifname, pos, ifname_len) != BCME_OK) {
 			WL_ERR(("Failed to copy data. len: %d\n", ifname_len));
 			return NULL;

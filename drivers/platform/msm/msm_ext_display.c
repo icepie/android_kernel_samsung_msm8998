@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -262,6 +262,8 @@ static int msm_ext_disp_process_display(struct msm_ext_disp *ext_disp,
 	else
 		ext_disp->current_disp = EXT_DISPLAY_TYPE_MAX;
 
+	reinit_completion(&ext_disp->hpd_comp);
+
 	ret = msm_ext_disp_send_cable_notification(ext_disp, state);
 
 	/* positive ret value means audio node was switched */
@@ -271,7 +273,6 @@ static int msm_ext_disp_process_display(struct msm_ext_disp *ext_disp,
 		goto end;
 	}
 
-	reinit_completion(&ext_disp->hpd_comp);
 	ret = wait_for_completion_timeout(&ext_disp->hpd_comp, HZ * 5);
 	if (!ret) {
 		pr_err("display timeout\n");
@@ -296,6 +297,8 @@ static int msm_ext_disp_process_audio(struct msm_ext_disp *ext_disp,
 		goto end;
 	}
 
+	reinit_completion(&ext_disp->hpd_comp);
+
 	ret = msm_ext_disp_send_audio_notification(ext_disp, state);
 
 	/* positive ret value means audio node was switched */
@@ -305,7 +308,6 @@ static int msm_ext_disp_process_audio(struct msm_ext_disp *ext_disp,
 		goto end;
 	}
 
-	reinit_completion(&ext_disp->hpd_comp);
 	ret = wait_for_completion_timeout(&ext_disp->hpd_comp, HZ * 2);
 	if (!ret) {
 		pr_err("audio timeout\n");

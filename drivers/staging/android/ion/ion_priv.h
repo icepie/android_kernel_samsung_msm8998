@@ -2,7 +2,7 @@
  * drivers/staging/android/ion/ion_priv.h
  *
  * Copyright (C) 2011 Google, Inc.
- * Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -374,6 +374,11 @@ void ion_system_heap_destroy(struct ion_heap *);
 struct ion_heap *ion_system_contig_heap_create(struct ion_platform_heap *);
 void ion_system_contig_heap_destroy(struct ion_heap *);
 
+#ifdef CONFIG_ION_RBIN_HEAP
+struct ion_heap *ion_rbin_heap_create(struct ion_platform_heap *);
+void ion_rbin_heap_destroy(struct ion_heap *);
+#endif
+
 struct ion_heap *ion_carveout_heap_create(struct ion_platform_heap *);
 void ion_carveout_heap_destroy(struct ion_heap *);
 
@@ -444,6 +449,8 @@ struct ion_page_pool {
 struct ion_page_pool *ion_page_pool_create(struct device *dev, gfp_t gfp_mask,
 					   unsigned int order);
 void ion_page_pool_destroy(struct ion_page_pool *);
+struct page *ion_page_pool_remove(struct ion_page_pool *pool, bool high);
+void *ion_page_pool_only_alloc(struct ion_page_pool *a);
 void *ion_page_pool_alloc(struct ion_page_pool *, bool *from_pool);
 void *ion_page_pool_alloc_pool_only(struct ion_page_pool *);
 void ion_page_pool_free(struct ion_page_pool *, struct page *);
@@ -506,10 +513,35 @@ int ion_walk_heaps(struct ion_client *client, int heap_id,
 			enum ion_heap_type type, void *data,
 			int (*f)(struct ion_heap *heap, void *data));
 
-struct ion_handle *ion_handle_get_by_id(struct ion_client *client,
-					int id);
+struct ion_handle *ion_handle_get_by_id_nolock(struct ion_client *client,
+					       int id);
 
 int ion_handle_put(struct ion_handle *handle);
+
+bool ion_handle_validate(struct ion_client *client, struct ion_handle *handle);
+
+void lock_client(struct ion_client *client);
+
+void unlock_client(struct ion_client *client);
+
+struct ion_buffer *get_buffer(struct ion_handle *handle);
+
+/**
+ * This function is same as ion_free() except it won't use client->lock.
+ */
+void ion_free_nolock(struct ion_client *client, struct ion_handle *handle);
+
+/**
+ * This function is same as ion_phys() except it won't use client->lock.
+ */
+int ion_phys_nolock(struct ion_client *client, struct ion_handle *handle,
+		    ion_phys_addr_t *addr, size_t *len);
+
+/**
+ * This function is same as ion_import_dma_buf() except it won't use
+ * client->lock.
+ */
+struct ion_handle *ion_import_dma_buf_nolock(struct ion_client *client, int fd);
 
 void show_ion_system_heap_size(struct seq_file *s);
 void show_ion_system_heap_pool_size(struct ion_device *dev, struct seq_file *s);

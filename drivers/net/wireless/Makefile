@@ -51,6 +51,8 @@ obj-$(CONFIG_ATH_CARDS)		+= ath/
 
 obj-$(CONFIG_MAC80211_HWSIM)	+= mac80211_hwsim.o
 
+obj-$(CONFIG_VIRT_WIFI)	+= virt_wifi.o
+
 obj-$(CONFIG_WL_TI)	+= ti/
 
 obj-$(CONFIG_MWIFIEX)	+= mwifiex/
@@ -65,9 +67,9 @@ obj-$(CONFIG_ARCH_MSM) += bcmdhd4361/dhd_custom_msm.o
 endif
 
 ifneq ($(CONFIG_BCM4359),)
-obj-$(CONFIG_BCM4359)  += bcmdhd4359/
-obj-$(CONFIG_ARCH_MSM) += bcmdhd4359/dhd_custom_memprealloc.o
-obj-$(CONFIG_ARCH_MSM) += bcmdhd4359/dhd_custom_msm.o
+obj-$(CONFIG_BCM4359)  += bcmdhd4359_100/
+obj-$(CONFIG_ARCH_MSM) += bcmdhd4359_100/dhd_custom_memprealloc.o
+obj-$(CONFIG_ARCH_MSM) += bcmdhd4359_100/dhd_custom_msm.o
 endif
 
 obj-$(CONFIG_CW1200)	+= cw1200/
@@ -75,9 +77,9 @@ obj-$(CONFIG_RSI_91X)	+= rsi/
 
 
 # obj-$(CONFIG_WCNSS_CORE)	+= wcnss/
-# obj-$(CONFIG_CNSS_GENL) += cnss_genl/
+obj-$(CONFIG_CNSS_GENL) += cnss_genl/
 
-obj-$(CONFIG_QCA_CLD_WLAN)	+= wcn39xx/qcacld-3.0/
+obj-$(CONFIG_QCA_CLD_WLAN)	+= qualcomm/wcn39xx/qcacld-3.0/
 obj-$(CONFIG_CNSS_UTILS)	+= cnss_utils/
 obj-$(CONFIG_CNSS)	+= cnss/
 obj-$(CONFIG_WCNSS_MEM_PRE_ALLOC) += cnss_prealloc/

@@ -1051,6 +1051,9 @@ static void dsi_update_mdnie_data_dsi0(void)
 	mdnie_data.DSI0_CURTAIN = DSI0_SCREEN_CURTAIN_MDNIE;
 	mdnie_data.DSI0_NIGHT_MODE_MDNIE = DSI0_NIGHT_MODE_MDNIE;
 	mdnie_data.DSI0_NIGHT_MODE_MDNIE_1 = DSI0_NIGHT_MODE_MDNIE_1;
+	mdnie_data.DSI0_NIGHT_MODE_MDNIE_SCR = DSI0_NIGHT_MODE_MDNIE_1;
+	mdnie_data.DSI0_COLOR_LENS_MDNIE = DSI0_COLOR_LENS_MDNIE;
+	mdnie_data.DSI0_COLOR_LENS_MDNIE_SCR = DSI0_COLOR_LENS_MDNIE_1;
 	mdnie_data.DSI0_COLOR_BLIND_MDNIE_SCR = DSI0_COLOR_BLIND_MDNIE_1;
 	mdnie_data.DSI0_RGB_SENSOR_MDNIE_SCR = DSI0_RGB_SENSOR_MDNIE_1;
 
@@ -1069,6 +1072,7 @@ static void dsi_update_mdnie_data_dsi0(void)
 	mdnie_data.dsi0_adjust_ldu_table = adjust_ldu_data;
 	mdnie_data.dsi0_max_adjust_ldu = 6;
 	mdnie_data.dsi0_night_mode_table = night_mode_data;
+	mdnie_data.dsi0_color_lens_table = color_lens_data;
 	mdnie_data.dsi0_max_night_mode_index = 12;
 	mdnie_data.dsi0_scr_step_index = MDNIE_STEP1_INDEX;
 
@@ -1170,6 +1174,9 @@ static void dsi_update_mdnie_data_dsi1(void)
 	mdnie_data.DSI1_CURTAIN = DSI0_SCREEN_CURTAIN_MDNIE;
 	mdnie_data.DSI1_NIGHT_MODE_MDNIE = DSI0_NIGHT_MODE_MDNIE;
 	mdnie_data.DSI1_NIGHT_MODE_MDNIE_1 = DSI0_NIGHT_MODE_MDNIE_1;
+	mdnie_data.DSI1_NIGHT_MODE_MDNIE_SCR = DSI0_NIGHT_MODE_MDNIE_1;
+	mdnie_data.DSI1_COLOR_LENS_MDNIE = DSI0_COLOR_LENS_MDNIE;
+	mdnie_data.DSI1_COLOR_LENS_MDNIE_SCR = DSI0_COLOR_LENS_MDNIE_1;
 	mdnie_data.DSI1_COLOR_BLIND_MDNIE_SCR = DSI0_COLOR_BLIND_MDNIE_1;
 	mdnie_data.DSI1_RGB_SENSOR_MDNIE_SCR = DSI0_RGB_SENSOR_MDNIE_1;
 
@@ -1191,6 +1198,7 @@ static void dsi_update_mdnie_data_dsi1(void)
 	mdnie_data.dsi1_adjust_ldu_table = adjust_ldu_data;
 	mdnie_data.dsi1_max_adjust_ldu = 6;
 	mdnie_data.dsi1_night_mode_table = night_mode_data;
+	mdnie_data.dsi1_color_lens_table = color_lens_data;
 	mdnie_data.dsi1_max_night_mode_index = 12;
 	mdnie_data.dsi1_scr_step_index = MDNIE_STEP1_INDEX;
 

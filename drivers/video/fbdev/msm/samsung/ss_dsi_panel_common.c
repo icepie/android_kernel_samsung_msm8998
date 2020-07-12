@@ -347,9 +347,6 @@ static void mdss_samsung_event_frame_update(struct mdss_panel_data *pdata, int e
 				!vdd->lcd_flip_not_refresh &&
 				vdd->hall_ic_mode_change_trigger &&
 				vdd->lcd_flip_delay_ms) {
-				/* clear flag */
-				vdd_data.hall_ic_mode_change_trigger = false;
-				vdd_data.lcd_flip_not_refresh = false;
 				LCD_INFO("schedule delay_disp_on_work, ndx = %d\n", ndx);
 				schedule_delayed_work(&vdd->delay_disp_on_work, msecs_to_jiffies(vdd->lcd_flip_delay_ms));
 			} else {
@@ -370,6 +367,14 @@ static void mdss_samsung_event_frame_update(struct mdss_panel_data *pdata, int e
 				}
 				LCD_INFO("DISPLAY_ON:%d\n", ndx);
 				ATRACE_END(__func__);
+			}
+
+			if(vdd->support_hall_ic) {
+				/* clear flag */
+				mutex_lock(&vdd->vdd_hall_ic_lock);
+				vdd_data.hall_ic_mode_change_trigger = false;
+				vdd_data.lcd_flip_not_refresh = false;
+				mutex_unlock(&vdd->vdd_hall_ic_lock);
 			}
 		}
 	}
@@ -4020,7 +4025,7 @@ void mdss_samsung_panel_lpm_ctrl(struct mdss_panel_data *pdata, int enable)
 		if (unlikely(vdd->is_factory_mode)) {
 			LCD_INFO("[Panel LPM] Set low brightness for factory mode\n");
 			mutex_lock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
-			stored_bl_level = vdd->mfd_dsi[ndx]->bl_level;
+			stored_bl_level = vdd->mfd_dsi[DISPLAY_1]->bl_level;
 			pdata->set_backlight(pdata, 0);
 			mutex_unlock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
 		}
@@ -4090,7 +4095,7 @@ void mdss_samsung_panel_lpm_ctrl(struct mdss_panel_data *pdata, int enable)
 		LCD_DEBUG("[Panel LPM] Restore brightness level\n");
 		mutex_lock(&vdd->mfd_dsi[DISPLAY_1]->bl_lock);
 		if (unlikely(vdd->is_factory_mode &&
-					vdd->mfd_dsi[ndx]->unset_bl_level == 0)) {
+					vdd->mfd_dsi[DISPLAY_1]->unset_bl_level == 0)) {
 			LCD_INFO("[Panel LPM] restore bl_level for factory\n");
 
 			current_bl_level = stored_bl_level;
@@ -4257,8 +4262,12 @@ int display_ndx_check(struct mdss_dsi_ctrl_pdata *ctrl)
 			/* refresh a frame to panel */
 			if (vdd_data.ctrl_dsi[DISPLAY_1]->panel_mode == DSI_CMD_MODE &&
 					!flip_not_refresh) {
-					if (is_boot_recovery || lpcharge)
+					if (is_boot_recovery || lpcharge) {
+						mutex_unlock(&vdd_data.vdd_hall_ic_lock); /* HALL IC switching */
+						mutex_unlock(&vdd_data.vdd_hall_ic_blank_unblank_lock); /*HALL IC blank mode change */
 						fbi->fbops->fb_pan_display(&fbi->var, fbi);
+						return 0;
+					}
 					else
 						mdss_samsung_refresh_panel_via_hal(mfd);
 			}

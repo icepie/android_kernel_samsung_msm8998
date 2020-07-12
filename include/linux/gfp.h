@@ -37,6 +37,7 @@ struct vm_area_struct;
 #define ___GFP_WRITE		0x1000000u
 #define ___GFP_KSWAPD_RECLAIM	0x2000000u
 #define ___GFP_CMA		0x4000000u
+#define ___GFP_RBIN		0x8000000u
 /* If the above are modified, __GFP_BITS_SHIFT may need updating */
 
 /*
@@ -52,6 +53,7 @@ struct vm_area_struct;
 #define __GFP_MOVABLE	((__force gfp_t)___GFP_MOVABLE)  /* Page is movable */
 #define __GFP_MOVABLE	((__force gfp_t)___GFP_MOVABLE)  /* ZONE_MOVABLE allowed */
 #define __GFP_CMA	((__force gfp_t)___GFP_CMA)
+#define __GFP_RBIN	((__force gfp_t)___GFP_RBIN)     /* Allocate from RBIN */
 #define GFP_ZONEMASK	(__GFP_DMA|__GFP_HIGHMEM|__GFP_DMA32|__GFP_MOVABLE| \
 			__GFP_CMA)
 /*
@@ -185,7 +187,7 @@ struct vm_area_struct;
 #define __GFP_OTHER_NODE ((__force gfp_t)___GFP_OTHER_NODE)
 
 /* Room for N __GFP_FOO bits */
-#define __GFP_BITS_SHIFT 27
+#define __GFP_BITS_SHIFT 28
 #define __GFP_BITS_MASK ((__force gfp_t)((1 << __GFP_BITS_SHIFT) - 1))
 
 /*
@@ -279,6 +281,29 @@ static inline int gfpflags_to_migratetype(const gfp_t gfp_flags)
 static inline bool gfpflags_allow_blocking(const gfp_t gfp_flags)
 {
 	return (bool __force)(gfp_flags & __GFP_DIRECT_RECLAIM);
+}
+
+/**
+ * gfpflags_normal_context - is gfp_flags a normal sleepable context?
+ * @gfp_flags: gfp_flags to test
+ *
+ * Test whether @gfp_flags indicates that the allocation is from the
+ * %current context and allowed to sleep.
+ *
+ * An allocation being allowed to block doesn't mean it owns the %current
+ * context.  When direct reclaim path tries to allocate memory, the
+ * allocation context is nested inside whatever %current was doing at the
+ * time of the original allocation.  The nested allocation may be allowed
+ * to block but modifying anything %current owns can corrupt the outer
+ * context's expectations.
+ *
+ * %true result from this function indicates that the allocation context
+ * can sleep and use anything that's associated with %current.
+ */
+static inline bool gfpflags_normal_context(const gfp_t gfp_flags)
+{
+	return (gfp_flags & (__GFP_DIRECT_RECLAIM | __GFP_MEMALLOC)) ==
+		__GFP_DIRECT_RECLAIM;
 }
 
 #ifdef CONFIG_HIGHMEM
@@ -554,8 +579,7 @@ extern int alloc_contig_range(unsigned long start, unsigned long end,
 extern void free_contig_range(unsigned long pfn, unsigned nr_pages);
 
 /* CMA stuff */
-extern void init_cma_reserved_pageblock(struct page *page);
-
+extern void init_cma_reserved_pageblock(struct page *page, bool is_rbin);
 #endif
 
 #endif /* __LINUX_GFP_H */

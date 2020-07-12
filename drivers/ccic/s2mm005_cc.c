@@ -50,6 +50,7 @@ void process_cc_get_int_status(void *data, uint32_t *pPRT_MSG, MSG_IRQ_STATUS_Ty
 void process_cc_rid(void * data);
 void ccic_event_work(void *data, int dest, int id, int attach, int event, int sub);
 void process_cc_water_det(void * data);
+extern int dwc3_msm_is_suspended(void);
 
 ////////////////////////////////////////////////////////////////////////////////
 // modified by khoonk 2015.05.18
@@ -483,6 +484,7 @@ int s2mm005_port_type_set(const struct typec_capability *cap, enum typec_port_ty
 			usbpd_data->typec_try_state_change = 0;
 			s2mm005_rprd_mode_change(usbpd_data, TYPE_C_ATTACH_DRP);
 			enable_irq(usbpd_data->irq);
+			ccic_event_work(usbpd_data, CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_ROLE_SWAP_FAIL, 0, 0, 0);
 			return -EIO;
 		} else {
 			pr_err("%s: reverse success, one more check\n", __func__);
@@ -597,6 +599,7 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 #if defined(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET)
 	static int earphone_state = 0;
 #endif
+	uint timeleft = 0;
 
 	pr_info("%s\n",__func__);
 
@@ -718,6 +721,13 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 				/* muic */
 				ccic_event_work(usbpd_data,
 					CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_ATTACH, 1/*attach*/, 1/*rprd*/, 0);
+				reinit_completion(&usbpd_data->suspend_wait);
+				if(!dwc3_msm_is_suspended())
+				{
+					timeleft = wait_for_completion_interruptible_timeout(&usbpd_data->suspend_wait,
+								  msecs_to_jiffies(USB_PHY_SUSPEND_WAIT_MS));
+					dev_info(&i2c->dev, "%s suspend_wait timeleft = %d \n", __func__, timeleft);
+				}
 				/* otg */
 				usbpd_data->is_host = HOST_ON_BY_RD;
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)

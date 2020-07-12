@@ -1861,18 +1861,23 @@ static int mfc_chg_get_property(struct power_supply *psy,
 			}
 		} else if (val->intval == SEC_WIRELESS_MST_SWITCH_VERIFY) {
 			/* This is the WA codes that reduces VRECT invalid case. */
-			charger->mst_off_lock = 1;
-			gpio_direction_output(charger->pdata->mst_pwr_en, 1);
-			usleep_range(3600, 4000);
-			gpio_direction_output(charger->pdata->mst_pwr_en, 0);
-			mdelay(50);
-			charger->mst_off_lock = 0;
+			if (gpio_is_valid(charger->pdata->mst_pwr_en)) {
+				charger->mst_off_lock = 1;
+				gpio_direction_output(charger->pdata->mst_pwr_en, 1);
+				usleep_range(3600, 4000);
+				gpio_direction_output(charger->pdata->mst_pwr_en, 0);
+				msleep(50);
+				charger->mst_off_lock = 0;
 
-			gpio_direction_output(charger->pdata->mst_pwr_en, 1);
-			msleep(charger->pdata->mst_switch_delay);
-			val->intval = mfc_get_firmware_version(charger, MFC_RX_FIRMWARE);
-			pr_info("%s: check f/w revision, mst power on (0x%x)\n", __func__, val->intval);
-			gpio_direction_output(charger->pdata->mst_pwr_en, 0);
+				gpio_direction_output(charger->pdata->mst_pwr_en, 1);
+				msleep(charger->pdata->mst_switch_delay);
+				val->intval = mfc_get_firmware_version(charger, MFC_RX_FIRMWARE);
+				pr_info("%s: check f/w revision, mst power on (0x%x)\n", __func__, val->intval);
+				gpio_direction_output(charger->pdata->mst_pwr_en, 0);
+			} else {
+				pr_info("%s: MST_SWITCH_VERIFY, invalid gpio(mst_pwr_en)\n", __func__);
+				val->intval = -1;
+			}
 		} else {
 			val->intval = -ENODATA;
 			pr_err("%s wrong mode \n", __func__);
@@ -2285,7 +2290,7 @@ static int mfc_chg_set_property(struct power_supply *psy,
 				mfc_send_packet(charger, MFC_HEADER_AFC_CONF,
 					0x20, &tmp, 1);
 				pr_info("%s: send command after wc control\n", __func__);
-				mdelay(150);
+				msleep(150);
 			}
 			break;
 		case POWER_SUPPLY_EXT_PROP_CALL_EVENT:
@@ -2917,7 +2922,7 @@ void mfc_mst_routine(struct mfc_charger_data *charger, u8 *irq_src)
 		mfc_reg_write(charger->client, MFC_INT_A_CLEAR_H_REG, irq_src[1]); // clear int
 		mfc_set_cmd_l_reg(charger, 0x20, MFC_CMD_CLEAR_INT_MASK); // command
 		
-		mdelay(10);
+		msleep(10);
 	}
 }
 

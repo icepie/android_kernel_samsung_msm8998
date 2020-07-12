@@ -107,7 +107,23 @@ static inline struct hlist_head *m_hash(struct vfsmount *mnt, struct dentry *den
 	return &mount_hashtable[tmp & m_hash_mask];
 }
 
-static inline int sys_umount_trace_start(struct mount *mnt, int flags)
+enum {
+	UMOUNT_STATUS_ADD_TASK = 0,
+	UMOUNT_STATUS_REMAIN_NS,
+	UMOUNT_STATUS_REMAIN_MNT_COUNT,
+	UMOUNT_STATUS_ADD_DELAYED_WORK,
+	UMOUNT_STATUS_MAX
+};
+
+static const char *umount_exit_str[UMOUNT_STATUS_MAX] = {
+	"ADDED_TASK", "REMAIN_NS", "REMAIN_CNT", "DELAY_TASK"};
+
+static inline void sys_umount_trace_set_status(unsigned int status)
+{
+	sys_umount_trace_status = status;
+}
+
+static inline void sys_umount_trace_print(struct mount *mnt, int flags)
 {
 #ifdef CONFIG_RKP_NS_PROT
 	struct super_block *sb = mnt->mnt->mnt_sb;
@@ -116,44 +132,17 @@ static inline int sys_umount_trace_start(struct mount *mnt, int flags)
 	struct super_block *sb = mnt->mnt.mnt_sb;
 	int mnt_flags = mnt->mnt.mnt_flags;
 #endif
-	if ((sb->s_magic == SDFAT_SUPER_MAGIC) ||
-			(sb->s_magic == MSDOS_SUPER_MAGIC)) {
+	/* We don`t want to see what zygote`s umount */
+	if (((sb->s_magic == SDFAT_SUPER_MAGIC) ||
+		(sb->s_magic == MSDOS_SUPER_MAGIC)) &&
+		((current_uid().val == 0) && (strcmp(current->comm, "main")))) {
 		struct block_device *bdev = sb->s_bdev;
 		dev_t bd_dev = bdev ? bdev->bd_dev : 0;
 
-		ST_LOG("[SYSCALL](%s[%d:%d]): "
-			"enter umount(mf:0x%x, f:0x%x, %s)\n",
+		ST_LOG("[SYS](%s[%d:%d]): "
+			"umount(mf:0x%x, f:0x%x, %s)\n",
 			sb->s_id, MAJOR(bd_dev), MINOR(bd_dev), mnt_flags,
-			flags, mnt->mnt_mountpoint->d_name.name);
-		return 1;
-	}
-	return 0;
-}
-
-#define UMOUNT_END_ADD_TASK		(0x00)
-#define UMOUNT_END_REMAIN_NS		(0x01)
-#define UMOUNT_END_REMAIN_MNT_COUNT	(0x02)
-#define UMOUNT_END_ADD_DELAYED_WORK	(0x03)
-
-static inline void sys_umount_trace_set_status(unsigned int status)
-{
-	sys_umount_trace_status = status;
-}
-
-static inline void sys_umount_trace_end(struct mount *mnt, unsigned int stlog)
-{
-#ifdef CONFIG_RKP_NS_PROT
-	struct super_block *sb = mnt->mnt->mnt_sb;
-#else
-	struct super_block *sb = mnt->mnt.mnt_sb;
-#endif
-	if (stlog) {
-		struct block_device *bdev = sb->s_bdev;
-		dev_t bd_dev = bdev ? bdev->bd_dev : 0;
-
-		ST_LOG("[SYSCALL](%s[%d:%d]): exit umount(%d)\n",
-			sb->s_id, MAJOR(bd_dev), MINOR(bd_dev),
-			sys_umount_trace_status);
+			flags, umount_exit_str[sys_umount_trace_status]);
 	}
 }
 
@@ -1450,7 +1439,7 @@ static void mntput_no_expire(struct mount *mnt)
 		 */
 		mnt_add_count(mnt, -1);
 		rcu_read_unlock();
-		sys_umount_trace_set_status(UMOUNT_END_REMAIN_NS);
+		sys_umount_trace_set_status(UMOUNT_STATUS_REMAIN_NS);
 		return;
 	}
 	lock_mount_hash();
@@ -1463,7 +1452,7 @@ static void mntput_no_expire(struct mount *mnt)
 	if (mnt_get_count(mnt)) {
 		rcu_read_unlock();
 		unlock_mount_hash();
-		sys_umount_trace_set_status(UMOUNT_END_REMAIN_MNT_COUNT);
+		sys_umount_trace_set_status(UMOUNT_STATUS_REMAIN_MNT_COUNT);
 		return;
 	}
 
@@ -1502,13 +1491,13 @@ static void mntput_no_expire(struct mount *mnt)
 		if (likely(!(task->flags & PF_KTHREAD))) {
 			init_task_work(&mnt->mnt_rcu, __cleanup_mnt);
 			if (!task_work_add(task, &mnt->mnt_rcu, true)) {
-				sys_umount_trace_set_status(UMOUNT_END_ADD_TASK);
+				sys_umount_trace_set_status(UMOUNT_STATUS_ADD_TASK);
 				return;
 			}
 		}
 		if (llist_add(&mnt->mnt_llist, &delayed_mntput_list)) {
 			schedule_delayed_work(&delayed_mntput_work, 1);
-			sys_umount_trace_set_status(UMOUNT_END_ADD_DELAYED_WORK);
+			sys_umount_trace_set_status(UMOUNT_STATUS_ADD_DELAYED_WORK);
 		}
 		return;
 	}
@@ -1949,8 +1938,17 @@ static int do_umount(struct mount *mnt, int flags)
 
 	namespace_lock();
 	lock_mount_hash();
-	event++;
 
+	/* Recheck MNT_LOCKED with the locks held */
+	retval = -EINVAL;
+#ifdef CONFIG_RKP_NS_PROT
+	if (mnt->mnt->mnt_flags & MNT_LOCKED)
+#else
+	if (mnt->mnt.mnt_flags & MNT_LOCKED)
+#endif
+		goto out;
+
+	event++;
 	if (flags & MNT_DETACH) {
 		if (!list_empty(&mnt->mnt_list))
 			umount_tree(mnt, UMOUNT_PROPAGATE);
@@ -1964,6 +1962,7 @@ static int do_umount(struct mount *mnt, int flags)
 			retval = 0;
 		}
 	}
+out:
 	unlock_mount_hash();
 	namespace_unlock();
 	if (retval == -EBUSY)
@@ -2032,7 +2031,7 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 	struct path path;
 	struct mount *mnt;
 	int retval;
-	int lookup_flags = 0, stlog = 0;
+	int lookup_flags = 0;
 
 	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
 		return -EINVAL;
@@ -2056,20 +2055,20 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 #ifdef CONFIG_RKP_NS_PROT
 	if (mnt->mnt->mnt_flags & MNT_LOCKED)
 #else
-	if (mnt->mnt.mnt_flags & MNT_LOCKED)
+	if (mnt->mnt.mnt_flags & MNT_LOCKED) /* Check optimistically */
 #endif
 		goto dput_and_out;
 	retval = -EPERM;
 	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
 		goto dput_and_out;
 
-	stlog = sys_umount_trace_start(mnt, flags);
 	retval = do_umount(mnt, flags);
 dput_and_out:
 	/* we mustn't call path_put() as that would clear mnt_expiry_mark */
 	dput(path.dentry);
 	mntput_no_expire(mnt);
-	sys_umount_trace_end(mnt, stlog);
+	if (!retval)
+		sys_umount_trace_print(mnt, flags);
 out:
 	return retval;
 }
@@ -2137,8 +2136,18 @@ struct mount *copy_tree(struct mount *mnt, struct dentry *dentry,
 		for (s = r; s; s = next_mnt(s, r)) {
 			if (!(flag & CL_COPY_UNBINDABLE) &&
 			    IS_MNT_UNBINDABLE(s)) {
-				s = skip_mnt_tree(s);
-				continue;
+#ifdef CONFIG_RKP_NS_PROT
+				if (s->mnt->mnt_flags & MNT_LOCKED) {
+#else
+				if (s->mnt.mnt_flags & MNT_LOCKED) {
+#endif	
+					/* Both unbindable and locked. */
+					q = ERR_PTR(-EPERM);
+					goto out;
+				} else {
+					s = skip_mnt_tree(s);
+					continue;
+				}
 			}
 			if (!(flag & CL_COPY_MNT_NS_FILE) &&
 #ifdef CONFIG_RKP_NS_PROT
@@ -2203,7 +2212,7 @@ void drop_collected_mounts(struct vfsmount *mnt)
 {
 	namespace_lock();
 	lock_mount_hash();
-	umount_tree(real_mount(mnt), UMOUNT_SYNC);
+	umount_tree(real_mount(mnt), 0);
 	unlock_mount_hash();
 	namespace_unlock();
 }

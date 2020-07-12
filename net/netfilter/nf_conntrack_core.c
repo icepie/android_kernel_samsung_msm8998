@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/random.h>
 #include <linux/jhash.h>
+#include <linux/siphash.h>
 #include <linux/err.h>
 #include <linux/percpu.h>
 #include <linux/moduleparam.h>
@@ -238,6 +239,40 @@ nf_ct_invert_tuple(struct nf_conntrack_tuple *inverse,
 }
 EXPORT_SYMBOL_GPL(nf_ct_invert_tuple);
 
+/* Generate a almost-unique pseudo-id for a given conntrack.
+ *
+ * intentionally doesn't re-use any of the seeds used for hash
+ * table location, we assume id gets exposed to userspace.
+ *
+ * Following nf_conn items do not change throughout lifetime
+ * of the nf_conn:
+ *
+ * 1. nf_conn address
+ * 2. nf_conn->master address (normally NULL)
+ * 3. the associated net namespace
+ * 4. the original direction tuple
+ */
+u32 nf_ct_get_id(const struct nf_conn *ct)
+{
+	static __read_mostly siphash_key_t ct_id_seed;
+	unsigned long a, b, c, d;
+
+	net_get_random_once(&ct_id_seed, sizeof(ct_id_seed));
+
+	a = (unsigned long)ct;
+	b = (unsigned long)ct->master;
+	c = (unsigned long)nf_ct_net(ct);
+	d = (unsigned long)siphash(&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple,
+				   sizeof(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple),
+				   &ct_id_seed);
+#ifdef CONFIG_64BIT
+	return siphash_4u64((u64)a, (u64)b, (u64)c, (u64)d, &ct_id_seed);
+#else
+	return siphash_4u32((u32)a, (u32)b, (u32)c, (u32)d, &ct_id_seed);
+#endif
+}
+EXPORT_SYMBOL_GPL(nf_ct_get_id);
+
 static void
 clean_from_lists(struct nf_conn *ct)
 {
@@ -255,7 +290,7 @@ static void nf_ct_add_to_dying_list(struct nf_conn *ct)
 	struct ct_pcpu *pcpu;
 
 	/* START_OF_KNOX_NPA */
-	/* send dying conntrack entry to collect data */
+	del_timer(&ct->npa_timeout);
 	if ( (check_ncm_flag()) && (ct != NULL) && (atomic_read(&ct->startFlow)) ) {
 		knox_collect_conntrack_data(ct, NCM_FLOW_TYPE_CLOSE, 10);
 	}
@@ -430,8 +465,34 @@ bool nf_ct_delete(struct nf_conn *ct, u32 portid, int report)
 }
 EXPORT_SYMBOL_GPL(nf_ct_delete);
 
+/* START_OF_KNOX_NPA */
+/* Use this function only if struct nf_conn->timeout is of type struct timer_list */
+static void death_by_timeout_npa(unsigned long ul_conntrack)
+{
+	struct nf_conn *tmp = (struct nf_conn *)ul_conntrack;
+	if ( (tmp != NULL) && (check_ncm_flag()) && (check_intermediate_flag()) && (atomic_read(&tmp->startFlow)) && (atomic_read(&tmp->intermediateFlow)) ) {
+		unsigned long timeout = tmp->timeout.expires - jiffies;
+		if ( (timeout > 0) && ((timeout/HZ) > 5) ) {
+			tmp->npa_timeout.expires = (jiffies) + (get_intermediate_timeout() * HZ);
+			add_timer(&tmp->npa_timeout);
+		} else {
+			del_timer(&tmp->npa_timeout);
+		}
+		knox_collect_conntrack_data(tmp, NCM_FLOW_TYPE_INTERMEDIATE, 20);
+		return;
+	}
+	del_timer(&tmp->npa_timeout);
+	return;
+}
+/* END_OF_KNOX_NPA */
+
 static void death_by_timeout(unsigned long ul_conntrack)
 {
+	/* START_OF_KNOX_NPA */
+	struct nf_conn *tmp = (struct nf_conn *)ul_conntrack;
+	atomic_set(&tmp->intermediateFlow, 0);
+	del_timer(&tmp->npa_timeout);
+	/* END_OF_KNOX_NPA */
 	nf_ct_delete((struct nf_conn *)ul_conntrack, 0, 0);
 }
 
@@ -884,6 +945,10 @@ __nf_conntrack_alloc(struct net *net,
 		ct->knox_recv = 0;
 		memset(ct->interface_name,'\0',sizeof(ct->interface_name));
 		atomic_set(&ct->startFlow, 0);
+		/* Use 'ct->npa_timeout = 0' if struct nf_conn->timeout is of type u32;
+		   Use 'setup_timer(&ct->npa_timeout, death_by_timeout_npa, (unsigned long)ct)' if struct nf_conn->timeout is of type struct timer_list; */
+		setup_timer(&ct->npa_timeout, death_by_timeout_npa, (unsigned long)ct);
+		atomic_set(&ct->intermediateFlow, 0);
 	}
 	/* END_OF_KNOX_NPA */
 	ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple = *orig;

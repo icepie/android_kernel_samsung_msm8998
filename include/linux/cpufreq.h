@@ -212,6 +212,7 @@ enum {
 	DVFS_TOUCH_ID			= 1,
 	DVFS_FINGER_ID			= 2,
 	DVFS_MULTI_TOUCH_ID		= 3,
+	DVFS_ARGOS_ID			= 4,
 
 	DVFS_MAX_ID
 };
@@ -219,6 +220,7 @@ enum {
 #define DVFS_TOUCH_ID_MASK (1 << DVFS_TOUCH_ID)
 #define DVFS_FINGER_ID_MASK (1 << DVFS_FINGER_ID)
 #define DVFS_MULTI_TOUCH_ID_MASK (1 << DVFS_MULTI_TOUCH_ID)
+#define DVFS_ARGOS_ID_MASK (1 << DVFS_ARGOS_ID)
 
 int set_freq_limit(unsigned long id, unsigned int freq);
 #endif
@@ -248,20 +250,12 @@ __ATTR(_name, _perm, show_##_name, NULL)
 static struct freq_attr _name =			\
 __ATTR(_name, 0644, show_##_name, store_##_name)
 
-struct global_attr {
-	struct attribute attr;
-	ssize_t (*show)(struct kobject *kobj,
-			struct attribute *attr, char *buf);
-	ssize_t (*store)(struct kobject *a, struct attribute *b,
-			 const char *c, size_t count);
-};
-
 #define define_one_global_ro(_name)		\
-static struct global_attr _name =		\
+static struct kobj_attribute _name =		\
 __ATTR(_name, 0444, show_##_name, NULL)
 
 #define define_one_global_rw(_name)		\
-static struct global_attr _name =		\
+static struct kobj_attribute _name =		\
 __ATTR(_name, 0644, show_##_name, store_##_name)
 
 

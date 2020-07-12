@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -450,12 +450,12 @@ static bool mdss_debug_base_is_valid_range(u32 off, u32 cnt)
 
 	list_for_each_entry(base, &mdd->base_list, head) {
 		list_for_each_entry(node, &base->dump_list, head) {
-		pr_debug("%s: start=0x%x end=0x%x\n", node->range_name,
-			node->offset.start, node->offset.end);
+			pr_debug("%s: start=0x%x end=0x%x\n", node->range_name,
+					node->offset.start, node->offset.end);
 
-		if (node->offset.start <= off
-			&& off <= node->offset.end
-			&& off + cnt <= node->offset.end) {
+			if (node->offset.start <= off
+					&& off <= node->offset.end
+					&& off + cnt <= node->offset.end) {
 				pr_debug("valid range requested\n");
 				return true;
 			}
@@ -485,7 +485,8 @@ static ssize_t mdss_debug_base_offset_write(struct file *file,
 
 	buf[count] = 0;	/* end of string */
 
-	sscanf(buf, "%5x %x", &off, &cnt);
+	if (sscanf(buf, "%5x %x", &off, &cnt) != 2)
+		return -EFAULT;
 
 	if (off % sizeof(u32))
 		return -EINVAL;
@@ -1448,6 +1449,9 @@ static inline struct mdss_mdp_misr_map *mdss_misr_get_map(u32 block_id,
 						break;
 					case MDSS_MDP_INTF2:
 						block_id = DISPLAY_MISR_DSI1;
+						break;
+					case MDSS_MDP_INTF3:
+						block_id = DISPLAY_MISR_HDMI;
 						break;
 					default:
 						pr_err("Unmatch INTF for Dual LM single display configuration, INTF:%d\n",

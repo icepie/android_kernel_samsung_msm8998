@@ -546,6 +546,7 @@ struct dwc3_ep_events {
  * @dbg_ep_events: different events counter for endpoint
  * @dbg_ep_events_diff: differential events counter for endpoint
  * @dbg_ep_events_ts: timestamp for previous event counters
+ * @fifo_depth: allocated TXFIFO depth
  */
 struct dwc3_ep {
 	struct usb_ep		endpoint;
@@ -586,6 +587,7 @@ struct dwc3_ep {
 	struct dwc3_ep_events	dbg_ep_events;
 	struct dwc3_ep_events	dbg_ep_events_diff;
 	struct timespec		dbg_ep_events_ts;
+	int			fifo_depth;
 };
 
 enum dwc3_phy {
@@ -816,7 +818,6 @@ struct dwc3_scratchpad_array {
  * @is_fpga: true when we are using the FPGA board
  * @needs_fifo_resize: not all users might want fifo resizing, flag it
  * @pullups_connected: true when Run/Stop bit is set
- * @resize_fifos: tells us it's ok to reconfigure our TxFIFO sizes.
  * @setup_packet_pending: true when there's a Setup Packet in FIFO. Workaround
  * @start_config_issued: true when StartConfig command has been issued
  * @three_stage_setup: set if we perform a three phase setup
@@ -856,6 +857,7 @@ struct dwc3_scratchpad_array {
  * @imod_interval: set the interrupt moderation interval in 250ns
  *			increments or 0 to disable.
  * @create_reg_debugfs: create debugfs entry to allow dwc3 register dump
+ * @last_fifo_depth: total TXFIFO depth of all enabled USB IN/INT endpoints
  */
 struct dwc3 {
 	struct usb_ctrlrequest	*ctrl_req;
@@ -1053,10 +1055,13 @@ struct dwc3 {
 
 	wait_queue_head_t	wait_linkstate;
 	bool			create_reg_debugfs;
+	int			last_fifo_depth;
+
 #if IS_ENABLED(CONFIG_USB_CHARGING_EVENT)
 	struct work_struct      set_vbus_current_work;
 	int			vbus_current; /* 0 : 100mA, 1 : 500mA, 2: 900mA */
 #endif
+
 };
 
 /* -------------------------------------------------------------------------- */
@@ -1206,7 +1211,7 @@ struct dwc3_gadget_ep_cmd_params {
 
 /* prototypes */
 void dwc3_set_mode(struct dwc3 *dwc, u32 mode);
-int dwc3_gadget_resize_tx_fifos(struct dwc3 *dwc);
+int dwc3_gadget_resize_tx_fifos(struct dwc3 *dwc, struct dwc3_ep *dep);
 
 /* check whether we are on the DWC_usb3 core */
 static inline bool dwc3_is_usb3(struct dwc3 *dwc)

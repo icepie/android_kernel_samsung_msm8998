@@ -2,7 +2,7 @@
  * drivers/mmc/host/sdhci-msm.c - Qualcomm Technologies, Inc. MSM SDHCI Platform
  * driver source file
  *
- * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -40,6 +40,8 @@
 #include <linux/pm_runtime.h>
 #include <trace/events/mmc.h>
 #include <soc/qcom/boot_stats.h>
+#include <linux/msm_thermal.h>
+#include <linux/msm_tsens.h>
 
 #include "sdhci-msm.h"
 #include "sdhci-msm-ice.h"
@@ -168,6 +170,8 @@
 #define NUM_TUNING_PHASES		16
 #define MAX_DRV_TYPES_SUPPORTED_HS200	4
 #define MSM_AUTOSUSPEND_DELAY_MS 100
+
+#define CENTI_DEGREE_TO_DEGREE 10
 
 struct sdhci_msm_offset {
 	u32 CORE_MCI_DATA_CNT;
@@ -1285,6 +1289,34 @@ retry:
 		} else {
 			pr_debug("%s: %s: found ## bad ## phase = %d\n",
 				mmc_hostname(mmc), __func__, phase);
+
+			if (phase == 15 && tuned_phase_cnt) {
+				pr_err("%s: %s: Ping with known good phase\n",
+					mmc_hostname(mmc), __func__);
+				/* set the phase in delay line hw block */
+				rc = msm_config_cm_dll_phase(host,
+					tuned_phases[tuned_phase_cnt - 1]);
+				if (rc)
+					goto kfree;
+
+				cmd.opcode = opcode;
+				cmd.flags = MMC_RSP_R1 | MMC_CMD_ADTC;
+
+				data.blksz = size;
+				data.blocks = 1;
+				data.flags = MMC_DATA_READ;
+				data.timeout_ns = 1000 * 1000 * 1000;
+
+				data.sg = &sg;
+				data.sg_len = 1;
+				sg_init_one(&sg, data_buf, size);
+				memset(data_buf, 0, size);
+				mmc_wait_for_req(mmc, &mrq);
+
+				if ((cmd.error || data.error))
+					pr_err("%s: %s: Ping with known good phase failed\n",
+					mmc_hostname(mmc), __func__);
+			}
 		}
 	} while (++phase < 16);
 
@@ -3556,6 +3588,151 @@ int sdhci_msm_notify_load(struct sdhci_host *host, enum mmc_load state)
 	return 0;
 }
 
+static void sdhci_msm_tsens_threshold_notify(
+			struct therm_threshold *tsens_cb_data)
+{
+	struct threshold_info *info = tsens_cb_data->parent;
+	struct sdhci_msm_host *msm_host = container_of(info,
+			struct sdhci_msm_host, tsens_threshold_config);
+	int ret = 0;
+
+	pr_debug("%s: Triggered tsens-notification type=%d zone_id =%d\n",
+		mmc_hostname(msm_host->mmc), tsens_cb_data->trip_triggered,
+		tsens_cb_data->sensor_id);
+
+	switch (tsens_cb_data->trip_triggered) {
+	case THERMAL_TRIP_CONFIGURABLE_HI:
+		atomic_set(&msm_host->clk_scaling_disable, 0);
+		break;
+	case THERMAL_TRIP_CONFIGURABLE_LOW:
+		atomic_set(&msm_host->clk_scaling_disable, 1);
+		break;
+	default:
+		pr_err("%s: trip type %d not supported\n",
+			mmc_hostname(msm_host->mmc),
+			tsens_cb_data->trip_triggered);
+		break;
+	}
+
+	ret = sensor_mgr_set_threshold(tsens_cb_data->sensor_id,
+						tsens_cb_data->threshold);
+	if (ret < 0)
+		pr_err("%s: failed to set threshold temp, ret==%d\n",
+					__func__, ret);
+}
+
+static int sdhci_msm_check_tsens(struct sdhci_msm_host *msm_host)
+{
+	int ret = 0;
+	int temp = 0;
+	bool disable;
+	struct tsens_device tsens_dev;
+
+	if (tsens_is_ready() > 0) {
+		tsens_dev.sensor_num = msm_host->tsens_id;
+		ret = tsens_get_temp(&tsens_dev, &temp);
+		if (ret < 0) {
+			pr_err("%s: failed to read tsens, ret = %d\n",
+				mmc_hostname(msm_host->mmc), ret);
+			return ret;
+		}
+		/* convert centidegree to degree*/
+		temp /= CENTI_DEGREE_TO_DEGREE;
+		disable = temp <= msm_host->disable_scaling_threshold_temp;
+		if (disable)
+			atomic_set(&msm_host->clk_scaling_disable, 1);
+	}
+	return ret;
+}
+
+static int sdhci_msm_register_cb(struct sdhci_msm_host *msm_host)
+{
+	int ret;
+
+	ret = sdhci_msm_check_tsens(msm_host);
+	if (ret) {
+		pr_err("%s: unable to check tsens\n",
+				mmc_hostname(msm_host->mmc));
+		return ret;
+	}
+
+	ret  = sensor_mgr_init_threshold(&msm_host->tsens_threshold_config,
+				msm_host->tsens_id,
+				msm_host->enable_scaling_threshold_temp,/*high*/
+				msm_host->disable_scaling_threshold_temp,/*low*/
+				sdhci_msm_tsens_threshold_notify);
+	if (ret) {
+		pr_err("%s: failed to register cb for tsens, ret = %d\n",
+					mmc_hostname(msm_host->mmc), ret);
+		return ret;
+	}
+
+	ret = sensor_mgr_convert_id_and_set_threshold(
+				&msm_host->tsens_threshold_config);
+	if (ret) {
+		pr_err("%s: failed to set tsens threshold, ret = %d\n",
+					mmc_hostname(msm_host->mmc), ret);
+		return ret;
+	}
+	return ret;
+}
+
+static int sdhci_msm_tsens_pltfm_init(struct sdhci_msm_host *msm_host)
+{
+	int ret = 0;
+	struct device *dev = &msm_host->pdev->dev;
+	struct device_node *np = dev->of_node;
+
+	of_property_read_u32(np, "qcom,tsens-id", &msm_host->tsens_id);
+	of_property_read_s32(np, "qcom,disable_scaling_threshold_temp",
+				&msm_host->disable_scaling_threshold_temp);
+	of_property_read_s32(np, "qcom,enable_scaling_threshold_temp",
+				&msm_host->enable_scaling_threshold_temp);
+
+	if (msm_host->tsens_id)
+		msm_host->temp_control_scaling = true;
+	else
+		msm_host->temp_control_scaling = false;
+
+	atomic_set(&msm_host->clk_scaling_disable, 0);
+	return ret;
+}
+
+static int sdhci_msm_dereg_temp_callback(struct sdhci_host *host)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_msm_host *msm_host = pltfm_host->priv;
+
+	if (msm_host->temp_control_scaling)
+		sensor_mgr_remove_threshold(
+			&msm_host->tsens_threshold_config);
+	return 0;
+}
+
+static int sdhci_msm_reg_temp_callback(struct sdhci_host *host)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_msm_host *msm_host = pltfm_host->priv;
+	int ret = 0;
+
+	if (msm_host->temp_control_scaling) {
+		ret = sdhci_msm_register_cb(msm_host);
+		if (ret)
+			pr_err("%s: failed register temp monitoring call back, ret = %d\n",
+				mmc_hostname(msm_host->mmc), ret);
+	}
+	return ret;
+}
+
+static int sdhci_msm_check_temp(struct sdhci_host *host)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_msm_host *msm_host = pltfm_host->priv;
+
+	return atomic_read(&msm_host->clk_scaling_disable);
+}
+
+
 void sdhci_msm_reset_workaround(struct sdhci_host *host, u32 enable)
 {
 	u32 vendor_func2;
@@ -4111,6 +4288,9 @@ static struct sdhci_ops sdhci_msm_ops = {
 	.clear_set_dumpregs = sdhci_msm_clear_set_dumpregs,
 	.enhanced_strobe_mask = sdhci_msm_enhanced_strobe_mask,
 	.notify_load = sdhci_msm_notify_load,
+	.check_temp = sdhci_msm_check_temp,
+	.reg_temp_callback = sdhci_msm_reg_temp_callback,
+	.dereg_temp_callback = sdhci_msm_dereg_temp_callback,
 	.reset_workaround = sdhci_msm_reset_workaround,
 	.init = sdhci_msm_init,
 	.pre_req = sdhci_msm_pre_req,
@@ -4548,6 +4728,42 @@ out:
 	return len;
 }
 
+static ssize_t sd_health_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct mmc_host *host = dev_get_drvdata(dev);
+	struct mmc_card *card = host->card;
+	struct mmc_card_error_log *err_log;
+	u64 total_c_cnt = 0;
+	u64 total_t_cnt = 0;
+	int len = 0;
+	int i = 0;
+
+	if (!card) {
+		//There should be no spaces in 'No Card'(Vold Team).
+		len = snprintf(buf, PAGE_SIZE, "NOCARD\n");
+		goto out;
+	}
+
+	err_log = card->err_log;
+
+	for (i = 0; i < 6; i++) {
+		if (err_log[i].err_type == -EILSEQ && total_c_cnt < MAX_CNT_U64)
+			total_c_cnt += err_log[i].count;
+		if (err_log[i].err_type == -ETIMEDOUT && total_t_cnt < MAX_CNT_U64)
+			total_t_cnt += err_log[i].count;
+	}
+
+	if(err_log[0].ge_cnt > 100 || err_log[0].ecc_cnt > 0 || err_log[0].wp_cnt > 0 ||
+			err_log[0].oor_cnt > 10 || total_t_cnt > 100 || total_c_cnt > 100)
+		len = snprintf(buf, PAGE_SIZE, "BAD\n");
+	else
+		len = snprintf(buf, PAGE_SIZE, "GOOD\n");
+
+out:
+	return len;
+}
+
 static DEVICE_ATTR(status, S_IRUGO, t_flash_detect_show, NULL);
 static DEVICE_ATTR(cd_cnt, S_IRUGO, sd_detect_cnt_show, NULL);
 static DEVICE_ATTR(max_mode, S_IRUGO, sd_detect_maxmode_show, NULL);
@@ -4557,6 +4773,7 @@ static DEVICE_ATTR(sdcard_summary, S_IRUGO, sdcard_summary_show, NULL);
 static DEVICE_ATTR(sd_count, S_IRUGO, sd_count_show, NULL);
 static DEVICE_ATTR(data, S_IRUGO, sd_cid_show, NULL);
 static DEVICE_ATTR(sd_data, S_IRUGO, sd_data_show, NULL);
+static DEVICE_ATTR(fc, 0444, sd_health_show, NULL);
 
 /* Callback function for SD Card IO Error */
 static int sdcard_uevent(struct mmc_card *card)
@@ -5196,6 +5413,7 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 				MMC_CAP2_PACKED_WR_CONTROL);
 	}
 
+	sdhci_msm_tsens_pltfm_init(msm_host);
 	init_completion(&msm_host->pwr_irq_completion);
 
 	if (gpio_is_valid(msm_host->pdata->status_gpio)) {
@@ -5288,6 +5506,11 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 					&dev_attr_data) < 0)
                         pr_err("%s : Failed to create device file(%s)!\n",
                                         __func__, dev_attr_data.attr.name);
+
+		if (device_create_file(sd_info_dev,
+					&dev_attr_fc) < 0)
+			pr_err("%s : Failed to create device file(%s)!\n",
+					__func__, dev_attr_fc.attr.name);
 
                 dev_set_drvdata(sd_info_dev, msm_host->mmc);
 	}
@@ -5613,6 +5836,7 @@ static int sdhci_msm_suspend(struct device *dev)
 	struct sdhci_host *host = dev_get_drvdata(dev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_msm_host *msm_host = pltfm_host->priv;
+	struct mmc_host *mmc = host->mmc;
 	int ret = 0;
 	int sdio_cfg = 0;
 	ktime_t start = ktime_get();
@@ -5628,6 +5852,8 @@ static int sdhci_msm_suspend(struct device *dev)
 	}
 	ret = sdhci_msm_runtime_suspend(dev);
 out:
+	/* cancel any clock gating work scheduled by mmc_host_clk_release() */
+	cancel_delayed_work_sync(&mmc->clk_gate_work);
 	sdhci_msm_disable_controller_clock(host);
 	if (host->mmc->card && mmc_card_sdio(host->mmc->card)) {
 		sdio_cfg = sdhci_msm_cfg_sdio_wakeup(host, true);
@@ -5764,6 +5990,31 @@ static struct platform_driver sdhci_msm_driver = {
 };
 
 module_platform_driver(sdhci_msm_driver);
+
+static const struct of_device_id late_sdhci_msm_dt_match[] = {
+	{.compatible = "qcom,late-sdhci-msm"},
+	{.compatible = "qcom,sdhci-msm-v5"},
+	{},
+};
+MODULE_DEVICE_TABLE(of, late_sdhci_msm_dt_match);
+
+static struct platform_driver late_sdhci_msm_driver = {
+	.probe          = sdhci_msm_probe,
+	.remove         = sdhci_msm_remove,
+	.driver         = {
+		.name   = "late_sdhci_msm",
+		.owner  = THIS_MODULE,
+		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		.of_match_table = late_sdhci_msm_dt_match,
+		.pm     = SDHCI_MSM_PMOPS,
+	},
+};
+
+static int __init late_sdhci_msm_init_driver(void)
+{
+	return platform_driver_register(&late_sdhci_msm_driver);
+}
+late_initcall(late_sdhci_msm_init_driver);
 
 MODULE_DESCRIPTION("Qualcomm Technologies, Inc. Secure Digital Host Controller Interface driver");
 MODULE_LICENSE("GPL v2");

@@ -3454,7 +3454,7 @@ static int fts_pm_suspend(struct device *dev)
 
 	input_dbg(true, &info->client->dev, "%s\n", __func__);
 
-#ifdef USE_OPEN_CLOSE
+#if 0//def USE_OPEN_CLOSE
 	if (info->input_dev) {
 		int retval = mutex_lock_interruptible(&info->input_dev->mutex);
 

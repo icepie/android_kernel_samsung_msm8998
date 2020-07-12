@@ -139,7 +139,7 @@ static int ufs_get_device_info(struct ufs_hba *hba,
 		printk("%s: DEVICE_HEALTH desc read fail, err  = %d\n", __FUNCTION__, err);
 
 	/* getting Life Time at Device Health DESC*/
-	card_data->lifetime = health_buf[HEALTH_DEVICE_DESC_PARAM_LIFETIMEA];
+	card_data->lifetime = health_buf[HEALTH_DESC_PARAM_LIFE_TIME_EST_A];
 
 	hba->lifetime = card_data->lifetime;
 

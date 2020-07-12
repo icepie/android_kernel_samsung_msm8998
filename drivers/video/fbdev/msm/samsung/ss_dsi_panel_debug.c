@@ -1365,6 +1365,7 @@ static int dpci_notifier_callback(struct notifier_block *self,
 	if (lcd_debug.ftout.count) {
 		len += snprintf((tbuf + len), (SS_XLOG_DPCI_LENGTH - len),
 			"FTOUT CNT=%d ", lcd_debug.ftout.count);
+		lcd_debug.ftout.name[sizeof(lcd_debug.ftout.name) - 1] = '\0';
 		len += snprintf((tbuf + len), (SS_XLOG_DPCI_LENGTH - len),
 			"NAME=%s ", lcd_debug.ftout.name);
 	}

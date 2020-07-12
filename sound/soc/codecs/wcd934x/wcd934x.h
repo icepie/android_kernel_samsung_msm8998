@@ -17,7 +17,11 @@
 #include <linux/mfd/wcd9xxx/wcd9xxx-slimslave.h>
 #include "wcd934x-dsp-cntl.h"
 #include "../wcd9xxx-common-v2.h"
+#ifdef CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET
+#include "../wcd-mbhc-v2-usbc.h"
+#else
 #include "../wcd-mbhc-v2.h"
+#endif
 
 #define WCD934X_REGISTER_START_OFFSET  0x800
 #define WCD934X_SB_PGD_PORT_RX_BASE   0x40
@@ -192,4 +196,7 @@ extern int tavil_codec_enable_interp_clk(struct snd_soc_codec *codec,
 extern struct tavil_dsd_config *tavil_get_dsd_config(struct snd_soc_codec *);
 extern int tavil_codec_info_create_codec_entry(struct snd_info_entry *,
 					       struct snd_soc_codec *);
+extern int tavil_codec_enable_standalone_micbias(struct snd_soc_codec *codec,
+					  int micb_num,
+					  bool enable);
 #endif

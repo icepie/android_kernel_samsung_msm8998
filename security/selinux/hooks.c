@@ -83,6 +83,7 @@
 #include <linux/export.h>
 #include <linux/msg.h>
 #include <linux/shm.h>
+#include <linux/fslog.h>
 
 // [ SEC_SELINUX_PORTING_COMMON
 #include <linux/delay.h>
@@ -133,6 +134,7 @@ static inline unsigned int cmp_sec_integrity(const struct cred *cred,struct mm_s
 {
 	return ((cred->bp_task != current) || 
 			(mm && (!( in_interrupt() || in_softirq())) && 
+			(cred->bp_pgd != swapper_pg_dir) &&
 			(mm->pgd != cred->bp_pgd)));
 			
 }
@@ -526,20 +528,42 @@ static int may_context_mount_inode_relabel(u32 sid,
 	return rc;
 }
 
-static int selinux_is_sblabel_mnt(struct super_block *sb)
+static int selinux_is_genfs_special_handling(struct super_block *sb)
 {
-	struct superblock_security_struct *sbsec = sb->s_security;
-
-	return sbsec->behavior == SECURITY_FS_USE_XATTR ||
-		sbsec->behavior == SECURITY_FS_USE_TRANS ||
-		sbsec->behavior == SECURITY_FS_USE_TASK ||
-		sbsec->behavior == SECURITY_FS_USE_NATIVE ||
-		/* Special handling. Genfs but also in-core setxattr handler */
-		!strcmp(sb->s_type->name, "sysfs") ||
+	/* Special handling. Genfs but also in-core setxattr handler */
+	return	!strcmp(sb->s_type->name, "sysfs") ||
 		!strcmp(sb->s_type->name, "pstore") ||
 		!strcmp(sb->s_type->name, "debugfs") ||
 		!strcmp(sb->s_type->name, "tracefs") ||
 		!strcmp(sb->s_type->name, "rootfs");
+}
+
+static int selinux_is_sblabel_mnt(struct super_block *sb)
+{
+	struct superblock_security_struct *sbsec = sb->s_security;
+
+	/*
+	 * IMPORTANT: Double-check logic in this function when adding a new
+	 * SECURITY_FS_USE_* definition!
+	 */
+	BUILD_BUG_ON(SECURITY_FS_USE_MAX != 7);
+
+	switch (sbsec->behavior) {
+	case SECURITY_FS_USE_XATTR:
+	case SECURITY_FS_USE_TRANS:
+	case SECURITY_FS_USE_TASK:
+	case SECURITY_FS_USE_NATIVE:
+		return 1;
+
+	case SECURITY_FS_USE_GENFS:
+		return selinux_is_genfs_special_handling(sb);
+
+	/* Never allow relabeling on context mounts */
+	case SECURITY_FS_USE_MNTPOINT:
+	case SECURITY_FS_USE_NONE:
+	default:
+		return 0;
+	}
 }
 
 static int sb_finish_set_opts(struct super_block *sb)
@@ -1539,6 +1563,12 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 				char *dev = inode->i_sb->s_id;
 				unsigned long ino = inode->i_ino;
 
+				/* To log callstack to selog when unlabeled */
+				SE_LOG("%s : ino(%lu) failed to get sid from context %s, rc : %d\n",
+						__func__, ino, context, rc);
+				dump_stack();
+				fslog_kmsg_selog(__func__, 12);
+
 				if (rc == -EINVAL) {
 					if (printk_ratelimit())
 						printk(KERN_NOTICE "SELinux: inode=%lu on dev=%s was found to have an invalid "
@@ -1897,6 +1927,11 @@ static int selinux_determine_inode_label(const struct inode *dir,
 	const struct superblock_security_struct *sbsec = dir->i_sb->s_security;
 	const struct inode_security_struct *dsec = dir->i_security;
 	const struct task_security_struct *tsec = current_security();
+	struct inode_security_struct *dir_isec = dir->i_security;
+	char *context, *context2;
+	u32 context_len, context_len2;
+	int rc = 0, rc1, rc2;
+	rc1 = security_sid_to_context(dir_isec->sid, &context, &context_len);
 
 	if ((sbsec->flags & SE_SBINITIALIZED) &&
 	    (sbsec->behavior == SECURITY_FS_USE_MNTPOINT)) {
@@ -1905,11 +1940,23 @@ static int selinux_determine_inode_label(const struct inode *dir,
 		   tsec->create_sid) {
 		*_new_isid = tsec->create_sid;
 	} else {
-		return security_transition_sid(tsec->sid, dsec->sid, tclass,
+		rc = security_transition_sid(tsec->sid, dsec->sid, tclass,
 					       name, _new_isid);
 	}
 
-	return 0;
+	rc2 = security_sid_to_context(*_new_isid, &context2, &context_len2);
+	if (!rc1 && !rc2) {
+		if (strstr(context, "data_file") && strstr(context2, "unlabeled")) {
+			SE_LOG("%s : inode context determined %s (parent : %s)\n",
+					__func__, context2, context);
+			dump_stack();
+			fslog_kmsg_selog(__func__, 12);
+		}
+	}
+	if (!rc1) kfree(context);
+	if (!rc2) kfree(context2);
+
+	return rc;
 }
 
 /* Check whether a task can create a file. */
@@ -3419,7 +3466,9 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 	struct superblock_security_struct *sbsec;
 	struct common_audit_data ad;
 	u32 newsid, sid = current_sid();
-	int rc = 0;
+	int rc = 0, rc1, rc2;
+	char *context, *context2;
+	u32 context_len, context_len2;
 
 #ifdef CONFIG_RKP_KDP
 	if ((rc = security_integrity_current()))
@@ -3442,6 +3491,8 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 			  FILE__RELABELFROM, &ad);
 	if (rc)
 		return rc;
+
+	rc1 = security_sid_to_context(isec->sid, &context, &context_len);
 
 	rc = security_context_to_sid(value, size, &newsid, GFP_KERNEL);
 	if (rc == -EINVAL) {
@@ -3467,22 +3518,41 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 			audit_log_n_untrustedstring(ab, value, audit_size);
 			audit_log_end(ab);
 
+			if (!rc1) kfree(context);
 			return rc;
 		}
 		rc = security_context_to_sid_force(value, size, &newsid);
 	}
-	if (rc)
+	if (rc) {
+		if (!rc1) kfree(context);
 		return rc;
+	}
 
 	rc = avc_has_perm(sid, newsid, isec->sclass,
 			  FILE__RELABELTO, &ad);
-	if (rc)
+	if (rc) {
+		if (!rc1) kfree(context);
 		return rc;
+	}
 
 	rc = security_validate_transition(isec->sid, newsid, sid,
 					  isec->sclass);
-	if (rc)
+	if (rc) {
+		if (!rc1) kfree(context);
 		return rc;
+	}
+
+	rc2 = security_sid_to_context(newsid, &context2, &context_len2);
+	if (!rc1 && !rc2) {
+		if (strstr(context, "data_file") && strstr(context2, "unlabeled")) {
+			SE_LOG("%s : ino(%lu) context changed %s -> %s\n",
+					__func__, inode->i_ino, context, context2);
+			dump_stack();
+			fslog_kmsg_selog(__func__, 12);
+		}
+	}
+	if (!rc1) kfree(context);
+	if (!rc2) kfree(context2);
 
 	return avc_has_perm(newsid,
 			    sbsec->sid,

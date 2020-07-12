@@ -550,6 +550,7 @@ static ssize_t pressure_enable_strore(struct device *dev,
 	struct sec_ts_data *ts = container_of(sec, struct sec_ts_data, sec);
 	int ret;
 	unsigned long value = 0;
+	char addr[3] = { 0 };
 
 	if (count > 2)
 		return -EINVAL;
@@ -581,6 +582,20 @@ static ssize_t pressure_enable_strore(struct device *dev,
 	ts->pressure_caller_id = value;
 
 	sec_ts_set_custom_library(ts);
+
+	if (ts->pressure_caller_id == 1 || ts->pressure_caller_id == 3) {
+		addr[0] = SEC_TS_CMD_SPONGE_OFFSET_PRESSURE_LEVEL;
+		addr[1] = 0x00;
+		addr[2] = ts->pressure_user_level;
+
+		ret = ts->sec_ts_i2c_write(ts, SEC_TS_CMD_SPONGE_WRITE_PARAM, addr, 3);
+		if (ret < 0)
+			return -EINVAL;
+
+		ret = ts->sec_ts_i2c_write(ts, SEC_TS_CMD_SPONGE_NOTIFY_PACKET, NULL, 0);
+		if (ret < 0)
+			return -EINVAL;
+	}
 
 	return count;
 }
@@ -932,6 +947,38 @@ static ssize_t ic_status_show(struct device *dev,
 	return snprintf(buf, SEC_CMD_BUF_SIZE, "%s\n", buff);
 }
 
+static ssize_t prox_power_off_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct sec_cmd_data *sec = dev_get_drvdata(dev);
+	struct sec_ts_data *ts = container_of(sec, struct sec_ts_data, sec);
+
+	input_info(true, &ts->client->dev, "%s: %d\n", __func__,
+			ts->prox_power_off);
+
+	return snprintf(buf, SEC_CMD_BUF_SIZE, "%ld", ts->prox_power_off);
+}
+
+static ssize_t prox_power_off_store(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct sec_cmd_data *sec = dev_get_drvdata(dev);
+	struct sec_ts_data *ts = container_of(sec, struct sec_ts_data, sec);
+	long data;
+	int ret;
+
+	ret = kstrtol(buf, 10, &data);
+	if (ret < 0)
+		return ret;
+
+	input_info(true, &ts->client->dev, "%s: %ld\n", __func__, data);
+
+	ts->prox_power_off = data;
+
+	return count;
+}
+
 static ssize_t read_support_feature(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -971,6 +1018,7 @@ static DEVICE_ATTR(read_ambient_channel_delta, 0444, read_ambient_channel_delta_
 static DEVICE_ATTR(get_lp_dump, 0444, get_lp_dump, NULL);
 static DEVICE_ATTR(force_recal_count, 0444, get_force_recal_count, NULL);
 static DEVICE_ATTR(status, 0444, ic_status_show, NULL);
+static DEVICE_ATTR(prox_power_off, 0664, prox_power_off_show, prox_power_off_store);
 static DEVICE_ATTR(support_feature, 0444, read_support_feature, NULL);
 
 static struct attribute *cmd_attributes[] = {
@@ -995,6 +1043,7 @@ static struct attribute *cmd_attributes[] = {
 	&dev_attr_get_lp_dump.attr,
 	&dev_attr_force_recal_count.attr,
 	&dev_attr_status.attr,
+	&dev_attr_prox_power_off.attr,
 	&dev_attr_support_feature.attr,
 	NULL,
 };

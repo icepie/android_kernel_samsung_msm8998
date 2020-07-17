@@ -67,6 +67,9 @@ series
 cscope.*
 ncscope.*
 
+# py code object
+*.pyc
+
 # gnu global files
 GPATH
 GRTAGS

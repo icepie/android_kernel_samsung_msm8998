@@ -172,6 +172,14 @@ int msm_camera_clk_enable(struct device *dev,
 					struct clk **clk_ptr,
 					int num_clk,
 					int enable);
+
+int msm_camera_s_clk_enable(struct device *dev,
+					struct msm_cam_clk_info *clk_info,
+					struct clk **clk_ptr,
+					int num_clk,
+					int enable,
+					struct msm_camera_power_ctrl_t *shared_ctrl);
+
 /**
  * @brief      : Set clock rate
  *
@@ -246,23 +254,6 @@ int msm_camera_get_regulator_info(struct platform_device *pdev,
 
 int msm_camera_regulator_enable(struct msm_cam_regulator *vdd_info,
 				int cnt, int enable);
-
-/**
- * @brief      : set the regultors mode
- *
- * This function sets the regulators for a specific
- * mode. say:REGULATOR_MODE_FAST/REGULATOR_MODE_NORMAL
- *
- * @param vdd_info: Pointer to list of regulators
- * @param cnt: Number of regulators to enable/disable
- * @param mode: Flags specifies either enable/disable
- *
- * @return Status of operation. Negative in case of error. Zero otherwise.
- */
-
-int msm_camera_regulator_set_mode(struct msm_cam_regulator *vdd_info,
-				int cnt, bool mode);
-
 
 /**
  * @brief      : Release the regulators

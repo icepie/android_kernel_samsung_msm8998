@@ -15,6 +15,7 @@
 #include <linux/wait.h>
 #include <linux/stringify.h>
 #include <linux/power_supply.h>
+#include <linux/wakelock.h>
 #include "wcdcal-hwdep.h"
 
 #define TOMBAK_MBHC_NC	0
@@ -71,6 +72,7 @@ enum wcd_mbhc_register_function {
 	WCD_MBHC_HPHR_OCP_DET_EN,
 	WCD_MBHC_HPHL_OCP_STATUS,
 	WCD_MBHC_HPHR_OCP_STATUS,
+	WCD_MBHC_BCS_EN,
 	WCD_MBHC_REG_FUNC_MAX,
 };
 
@@ -396,6 +398,13 @@ struct wcd_mbhc_cb {
 	bool (*is_anc_on)(struct wcd_mbhc *mbhc);
 };
 
+#ifdef CONFIG_SND_SOC_WCD_MBHC_ADC
+struct jack_zone {
+	unsigned int adc_high;
+	unsigned int jack_type;
+};
+#endif
+
 struct wcd_mbhc {
 	/* Delayed work to report long button press */
 	struct delayed_work mbhc_btn_dwork;
@@ -465,11 +474,25 @@ struct wcd_mbhc {
 	unsigned long intr_status;
 	bool is_hph_ocp_pending;
 
-	bool usbc_force_pr_mode;
 	int usbc_mode;
 	struct notifier_block psy_nb;
 	struct power_supply *usb_psy;
 	struct work_struct usbc_analog_work;
+	bool pullup_enable;
+	bool button_click_suppressor;
+	int impedance_offset;
+	struct wake_lock det_wake_lock;
+
+#ifdef CONFIG_SND_SOC_WCD_MBHC_ADC
+	int debounce_time_ms;
+	uint32_t amux_channel;
+	struct qpnp_vadc_chip *earjack_vadc;
+	struct jack_zone jack_zones[4];
+#endif
+#if defined(CONFIG_SND_SOC_WCD_MBHC_SLOW_DET)
+	int default_impedance_offset;
+	bool slow_insertion;
+#endif
 };
 #define WCD_MBHC_CAL_SIZE(buttons, rload) ( \
 	sizeof(struct wcd_mbhc_general_cfg) + \

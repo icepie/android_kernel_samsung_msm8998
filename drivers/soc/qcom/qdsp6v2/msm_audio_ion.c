@@ -124,26 +124,23 @@ int msm_audio_ion_alloc(const char *name, struct ion_client **client,
 		goto err;
 	}
 
-	*handle = ion_alloc(*client, bufsz, SZ_4K,
-			ION_HEAP(ION_AUDIO_HEAP_ID), 0);
-	if (IS_ERR_OR_NULL((void *) (*handle))) {
-		if (msm_audio_ion_data.smmu_enabled == true) {
-			pr_debug("system heap is used");
-			msm_audio_ion_data.audioheap_enabled = 0;
-			*handle = ion_alloc(*client, bufsz, SZ_4K,
-					ION_HEAP(ION_SYSTEM_HEAP_ID), 0);
-		}
-		if (IS_ERR_OR_NULL((void *) (*handle))) {
-			if (IS_ERR((void *)(*handle)))
-				err_ion_ptr = PTR_ERR((int *)(*handle));
-			pr_err("%s:ION alloc fail err ptr=%ld, smmu_enabled=%d\n",
-			__func__, err_ion_ptr, msm_audio_ion_data.smmu_enabled);
-			rc = -ENOMEM;
-			goto err_ion_client;
-		}
+	if (msm_audio_ion_data.smmu_enabled == true) {
+		pr_debug("%s: system heap is used", __func__);
+		*handle = ion_alloc(*client, bufsz, SZ_4K,
+				    ION_HEAP(ION_SYSTEM_HEAP_ID), 0);
 	} else {
-		pr_debug("audio heap is used");
-		msm_audio_ion_data.audioheap_enabled = 1;
+		pr_debug("%s: audio heap is used", __func__);
+		*handle = ion_alloc(*client, bufsz, SZ_4K,
+				    ION_HEAP(ION_AUDIO_HEAP_ID), 0);
+	}
+	if (IS_ERR_OR_NULL((void *)(*handle))) {
+		if (IS_ERR((void *)(*handle)))
+			err_ion_ptr = PTR_ERR((int *)(*handle));
+
+		pr_err("%s:ION alloc fail err ptr=%ld, smmu_enabled=%d\n",
+		       __func__, err_ion_ptr, msm_audio_ion_data.smmu_enabled);
+		rc = -ENOMEM;
+		goto err_ion_client;
 	}
 
 	rc = msm_audio_ion_get_phys(*client, *handle, paddr, pa_len);

@@ -31,7 +31,7 @@
 #define WCD_PROCFS_ENTRY_MAX_LEN 16
 #define WCD_934X_RAMDUMP_START_ADDR 0x20100000
 #define WCD_934X_RAMDUMP_SIZE ((1024 * 1024) - 128)
-#define WCD_DSP_CNTL_MAX_COUNT 2
+#define WCD_MISCDEV_CMD_MAX_LEN 11
 
 #define WCD_CNTL_MUTEX_LOCK(codec, lock)             \
 {                                                    \
@@ -76,6 +76,50 @@ static u8 mem_enable_values[] = {
 	0xFE, 0xFC, 0xF8, 0xF0,
 	0xE0, 0xC0, 0x80, 0x00,
 };
+
+static int wdsp_reset_cnt = 0;
+static u16 regs_to_dump[] = {
+	0x21F,
+	0x201,
+	0x202,
+	0x203,
+	0x204,
+	0x205,
+	0x206,
+	0x207,
+	0x208,
+	0x209,
+	0x20A,
+	0x20B,
+	0x20F,
+	0x221,
+	0x222,
+	0x225,
+	0x226,
+};
+
+static void wdsp_dump_dbg_registers(struct snd_soc_codec *codec)
+{
+	u8 reg_val;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(regs_to_dump); i++) {
+		reg_val = snd_soc_read(codec, regs_to_dump[i]);
+		pr_err("%s: reg 0x%x, value = 0x%x\n",
+			__func__, regs_to_dump[i], reg_val);
+	}
+}
+
+static void wcd_cntl_reset_wdsp(struct wcd_dsp_cntl *cntl)
+{
+	struct snd_soc_codec *codec = cntl->codec;
+
+	snd_soc_write(codec, WCD934X_CPE_SS_BACKUP_INT, 0x02);
+	wdsp_reset_cnt++;
+
+	pr_info("%s: reset wdsp. count : %d\n",
+		__func__, wdsp_reset_cnt);
+}
 
 static ssize_t wdsp_boot_show(struct wcd_dsp_cntl *cntl, char *buf)
 {
@@ -664,6 +708,19 @@ static int wcd_cntl_do_boot(struct wcd_dsp_cntl *cntl)
 	if (!ret) {
 		dev_err(codec->dev, "%s: WDSP boot timed out\n",
 			__func__);
+		snd_soc_write(codec, WCD934X_CPE_SS_BACKUP_INT, 0x02);
+
+		wdsp_dump_dbg_registers(codec);
+
+		msleep(1000);
+		if (cntl->m_dev && cntl->m_ops &&
+		    cntl->m_ops->signal_handler)
+			ret = cntl->m_ops->signal_handler(cntl->m_dev, WDSP_DBG_RAMDUMP_SIGNAL,
+						  NULL);
+		else
+			dev_err(codec->dev, "%s: no signal handler callback ??\n",
+				__func__);
+
 		ret = -ETIMEDOUT;
 		goto err_boot;
 	} else {
@@ -875,6 +932,10 @@ static void wcd_cntl_debugfs_init(char *dir, struct wcd_dsp_cntl *cntl)
 			   cntl->entry, &cntl->debug_mode);
 	debugfs_create_bool("ramdump_enable", S_IRUGO | S_IWUSR,
 			    cntl->entry, &cntl->ramdump_enable);
+
+#ifdef CONFIG_SEC_SND_DEBUG
+	cntl->ramdump_enable = 1;
+#endif
 done:
 	return;
 }
@@ -910,13 +971,13 @@ static ssize_t wcd_miscdev_write(struct file *filep, const char __user *ubuf,
 {
 	struct wcd_dsp_cntl *cntl = container_of(filep->private_data,
 						 struct wcd_dsp_cntl, miscdev);
-	char val[WCD_DSP_CNTL_MAX_COUNT + 1];
+	char val[WCD_MISCDEV_CMD_MAX_LEN + 1];
 	bool vote;
 	int ret = 0;
 
-	memset(val, 0, WCD_DSP_CNTL_MAX_COUNT + 1);
+	memset(val, 0, WCD_MISCDEV_CMD_MAX_LEN + 1);
 
-	if (count == 0 || count > WCD_DSP_CNTL_MAX_COUNT) {
+	if (count == 0 || count > WCD_MISCDEV_CMD_MAX_LEN) {
 		pr_err("%s: Invalid count = %zd\n", __func__, count);
 		ret = -EINVAL;
 		goto done;
@@ -943,6 +1004,11 @@ static ssize_t wcd_miscdev_write(struct file *filep, const char __user *ubuf,
 		}
 		cntl->boot_reqs--;
 		vote = false;
+	} else if (!strcmp(val, "DEBUG_DUMP")) {
+		dev_dbg(cntl->codec->dev,
+			"%s: Collect dumps for debug use\n", __func__);
+		wcd_cntl_reset_wdsp(cntl);
+		goto done;
 	} else {
 		dev_err(cntl->codec->dev, "%s: Invalid value %s\n",
 			__func__, val);
@@ -950,7 +1016,7 @@ static ssize_t wcd_miscdev_write(struct file *filep, const char __user *ubuf,
 		goto done;
 	}
 
-	dev_dbg(cntl->codec->dev,
+	dev_info(cntl->codec->dev,
 		"%s: booted = %s, ref_cnt = %d, vote = %s\n",
 		__func__, cntl->is_wdsp_booted ? "true" : "false",
 		cntl->boot_reqs, vote ? "true" : "false");

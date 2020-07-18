@@ -71,18 +71,6 @@ int msm_cpp_get_clock_index(struct cpp_device *cpp_dev, const char *clk_name)
 	return -EINVAL;
 }
 
-int msm_cpp_get_regulator_index(struct cpp_device *cpp_dev,
-	const char *regulator_name)
-{
-	uint32_t i = 0;
-
-	for (i = 0; i < cpp_dev->num_reg; i++) {
-		if (!strcmp(regulator_name, cpp_dev->cpp_vdd[i].name))
-			return i;
-	}
-	return -EINVAL;
-}
-
 static int cpp_get_clk_freq_tbl_dt(struct cpp_device *cpp_dev)
 {
 	uint32_t i, count, min_clk_rate;
@@ -103,7 +91,7 @@ static int cpp_get_clk_freq_tbl_dt(struct cpp_device *cpp_dev)
 	hw_info = &cpp_dev->hw_info;
 
 	if ((hw_info == NULL) || (of_node == NULL)) {
-		pr_err("Invalid hw_info %pK or ofnode %pK\n", hw_info, of_node);
+		pr_err("Invalid hw_info %p or ofnode %p\n", hw_info, of_node);
 		rc = -EINVAL;
 		goto err;
 

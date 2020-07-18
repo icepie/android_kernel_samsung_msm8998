@@ -246,6 +246,42 @@ static ssize_t __ref store_sched_static_cpu_pwr_cost(struct device *dev,
 	return err;
 }
 
+static ssize_t show_sched_ignore_cstate_awareness(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct cpu *cpu = container_of(dev, struct cpu, dev);
+	ssize_t rc;
+	int cpuid = cpu->dev.id;
+	int value;
+
+	value = sched_get_ignore_cstate_awareness(cpuid);
+
+	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", value);
+
+	return rc;
+}
+
+static ssize_t __ref store_sched_ignore_cstate_awareness(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct cpu *cpu = container_of(dev, struct cpu, dev);
+	int err;
+	int cpuid = cpu->dev.id;
+	int value;
+
+	err = kstrtouint(strstrip((char *)buf), 0, &value);
+	if (err)
+		return err;
+
+	err = sched_set_ignore_cstate_awareness(cpuid, value);
+
+	if (err >= 0)
+		err = count;
+
+	return err;
+}
+
 static ssize_t show_sched_static_cluster_pwr_cost(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
@@ -321,6 +357,9 @@ static ssize_t __ref store_sched_cluster_wake_idle(struct device *dev,
 static DEVICE_ATTR(sched_static_cpu_pwr_cost, 0644,
 					show_sched_static_cpu_pwr_cost,
 					store_sched_static_cpu_pwr_cost);
+static DEVICE_ATTR(sched_ignore_cstate_awareness, 0644,
+					show_sched_ignore_cstate_awareness,
+					store_sched_ignore_cstate_awareness);
 static DEVICE_ATTR(sched_static_cluster_pwr_cost, 0644,
 					show_sched_static_cluster_pwr_cost,
 					store_sched_static_cluster_pwr_cost);
@@ -332,6 +371,7 @@ static struct attribute *hmp_sched_cpu_attrs[] = {
 	&dev_attr_sched_static_cpu_pwr_cost.attr,
 	&dev_attr_sched_static_cluster_pwr_cost.attr,
 	&dev_attr_sched_cluster_wake_up_idle.attr,
+	&dev_attr_sched_ignore_cstate_awareness.attr,
 	NULL
 };
 

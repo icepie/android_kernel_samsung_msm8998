@@ -414,12 +414,23 @@ static int gic_suspend(void)
 	return 0;
 }
 
+#ifdef CONFIG_SEC_PM
+extern char last_resume_kernel_reason[];
+extern int last_resume_kernel_reason_len;
+#endif
+
 static void gic_show_resume_irq(struct gic_chip_data *gic)
 {
 	unsigned int i;
 	u32 enabled;
 	u32 pending[32];
 	void __iomem *base = gic_data_dist_base(gic);
+#ifdef CONFIG_SEC_PM
+	char reason[256] = { 0, };
+	int len = 0;
+	bool ismpm = false, isrpm = false;
+	int irq_cnt = 0;
+#endif
 
 	if (!msm_show_resume_irq_mask)
 		return;
@@ -442,8 +453,43 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 		else if (desc->action && desc->action->name)
 			name = desc->action->name;
 
-		pr_warn("%s: %d triggered %s\n", __func__, irq, name);
+		pr_warn("%s: %d triggered %s(gic%d)\n", __func__, irq, name, i);
+
+#ifdef CONFIG_SEC_PM
+		/* for detecting alarm wakeup by mpm */
+		if (i == 203)	ismpm = true;
+		if (i == 200)	isrpm = true;
+		irq_cnt++;
+
+		/* bypass basic irq and make shorten irq name */
+		if (i == 203)	continue;
+		else if (i == 484)	name = "modem";
+		else if (i == 189)	name = "adsp";
+		else if (i == 211)	name = "dsps";
+		else if (i == 200)	continue;
+
+		len += sprintf(reason + len, "[irq%d,%s]", i, name);
+#endif
 	}
+
+#ifdef CONFIG_SEC_PM
+	/* alarm detected or not */
+	if ((irq_cnt == 2) && ismpm && isrpm) {
+		last_resume_kernel_reason_len +=
+			sprintf(last_resume_kernel_reason +
+				last_resume_kernel_reason_len,
+				"[alarm]");
+	} else {
+		last_resume_kernel_reason_len +=
+			sprintf(last_resume_kernel_reason +
+				last_resume_kernel_reason_len,
+				reason);
+	}
+
+	/* reset value for detecting alarm */
+	isrpm = ismpm = false;
+	irq_cnt = 0;
+#endif
 }
 
 static void gic_resume_one(struct gic_chip_data *gic)

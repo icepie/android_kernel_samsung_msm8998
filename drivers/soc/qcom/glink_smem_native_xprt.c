@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -256,7 +256,7 @@ static DEFINE_MUTEX(probe_lock);
 static struct glink_core_version versions[] = {
 	{1, TRACER_PKT_FEATURE, negotiate_features_v1},
 };
-
+void *smem_mpss_ipc_log = NULL;
 /**
  * send_irq() - send an irq to a remote entity as an event signal
  * @einfo:	Which remote entity that should receive the irq.
@@ -446,6 +446,9 @@ static int fifo_read(struct edge_info *einfo, void *_data, int len)
 	uint32_t fifo_size = einfo->rx_fifo_size;
 	uint32_t n;
 
+	if (read_index >= fifo_size || write_index >= fifo_size)
+		return 0;
+
 	while (len) {
 		ptr = einfo->rx_fifo + read_index;
 		if (read_index <= write_index)
@@ -466,6 +469,7 @@ static int fifo_read(struct edge_info *einfo, void *_data, int len)
 		if (read_index >= fifo_size)
 			read_index -= fifo_size;
 	}
+	trace_printk("%p, %x, %x\n", einfo, einfo->rx_ch_desc->read_index, read_index);
 	einfo->rx_ch_desc->read_index = read_index;
 
 	return orig_len - len;
@@ -488,6 +492,9 @@ static uint32_t fifo_write_body(struct edge_info *einfo, const void *_data,
 	uint32_t read_index = einfo->tx_ch_desc->read_index;
 	uint32_t fifo_size = einfo->tx_fifo_size;
 	uint32_t n;
+
+	if (read_index >= fifo_size || *write_index >= fifo_size)
+		return 0;
 
 	while (len) {
 		ptr = einfo->tx_fifo + *write_index;
@@ -681,14 +688,24 @@ static void process_rx_data(struct edge_info *einfo, uint16_t cmd_id,
 	char trash[FIFO_ALIGNMENT];
 	int alignment;
 	bool err = false;
+	uint32_t read_index = einfo->rx_ch_desc->read_index; 
+	uint32_t write_index = einfo->rx_ch_desc->write_index; 
+	uint32_t bytes_read = 0; 
+	uint32_t counter = 0; 
 
-	fifo_read(einfo, &cmd, sizeof(cmd));
+	memset(&cmd, 0, sizeof(cmd));
+
+	bytes_read = fifo_read(einfo, &cmd, sizeof(cmd));
 
 	intent = einfo->xprt_if.glink_core_if_ptr->rx_get_pkt_ctx(
 					&einfo->xprt_if, rcid, intent_id);
 	if (intent == NULL) {
 		GLINK_ERR("%s: no intent for ch %d liid %d\n", __func__, rcid,
 								intent_id);
+		GLINK_ERR("%s: [SSdebug] cmd frag size:%d size_remaining:%d\n", 
+			__func__, cmd.frag_size, cmd.size_remaining); 
+		GLINK_ERR("%s: [SSdebug] read index:%d write index:%d bytes_read:%d\n", 
+			__func__, read_index, write_index, bytes_read); 
 		err = true;
 	} else if (intent->data == NULL) {
 		if (einfo->intentless) {
@@ -729,12 +746,21 @@ static void process_rx_data(struct edge_info *einfo, uint16_t cmd_id,
 		alignment = ALIGN(cmd.frag_size, FIFO_ALIGNMENT);
 		alignment -= cmd.frag_size;
 		while (cmd.frag_size) {
+			counter++; 
 			if (cmd.frag_size > FIFO_ALIGNMENT) {
-				fifo_read(einfo, trash, FIFO_ALIGNMENT);
+				bytes_read = fifo_read(einfo, trash, FIFO_ALIGNMENT);
 				cmd.frag_size -= FIFO_ALIGNMENT;
 			} else {
-				fifo_read(einfo, trash, cmd.frag_size);
+				bytes_read = fifo_read(einfo, trash, cmd.frag_size);
 				cmd.frag_size = 0;
+			}
+			if (counter > 512) {
+				counter = 0;
+				GLINK_ERR("%s: [SSdebug] cmd frag size:%d size_remaining:%d\n", 
+					__func__, cmd.frag_size, cmd.size_remaining);
+				GLINK_ERR("%s: [SSdebug] read index:%d write index:%d bytes_read:%d\n", 
+					__func__, einfo->rx_ch_desc->read_index, 
+					einfo->rx_ch_desc->write_index, bytes_read);
 			}
 		}
 		if (alignment)
@@ -756,6 +782,10 @@ static void process_rx_data(struct edge_info *einfo, uint16_t cmd_id,
 		intent->tracer_pkt = true;
 	}
 
+	if (einfo->remote_proc_id==6) //RPM 
+	GLINK_INFO("%s: QMCK: fifo_read done, calling rx_put_pkt_ctx, r:%u w:%u intent:%p\n", 
+	__func__, einfo->rx_ch_desc->read_index, einfo->rx_ch_desc->write_index, intent); 
+ 
 	einfo->xprt_if.glink_core_if_ptr->rx_put_pkt_ctx(&einfo->xprt_if,
 							rcid,
 							intent,
@@ -812,14 +842,15 @@ static bool get_rx_fifo(struct edge_info *einfo)
 							&einfo->rx_fifo_size,
 							einfo->remote_proc_id,
 							SMEM_ITEM_CACHED_FLAG);
-		if (!einfo->rx_fifo)
-			einfo->rx_fifo = smem_get_entry(
-						SMEM_GLINK_NATIVE_XPRT_FIFO_1,
-							&einfo->rx_fifo_size,
-							einfo->remote_proc_id,
-							0);
-		if (!einfo->rx_fifo)
-			return false;
+		if (!einfo->rx_fifo){
+			einfo->rx_fifo = smem_get_entry( 
+			SMEM_GLINK_NATIVE_XPRT_FIFO_1, 
+			&einfo->rx_fifo_size, 
+			einfo->remote_proc_id, 
+			0); 
+			if (!einfo->rx_fifo) 
+				return false;
+		}
 	}
 
 	return true;
@@ -970,6 +1001,9 @@ static void __rx_worker(struct edge_info *einfo, bool atomic_ctx)
 				name = cmd_data;
 			} else {
 				len = ALIGN(name_len, FIFO_ALIGNMENT);
+				if (len > einfo->rx_fifo_size) {
+					BUG();
+				}
 				name = kmalloc(len, GFP_ATOMIC);
 				if (!name) {
 					pr_err("No memory available to rx ch open cmd name.  Discarding cmd.\n");
@@ -1188,6 +1222,11 @@ static void __rx_worker(struct edge_info *einfo, bool atomic_ctx)
 		default:
 			pr_err("Unrecognized command: %d\n", cmd.id);
 			break;
+		}
+		if (einfo == edge_infos[1]) {
+			if (smem_mpss_ipc_log)
+				ipc_log_string(smem_mpss_ipc_log, "%s: QMCK smem mpss last cmd %u, write/read after cmd : 0x%x/0x%x\n",
+					__func__, cmd.id, einfo->rx_ch_desc->write_index, einfo->rx_ch_desc->read_index);
 		}
 	}
 	spin_unlock_irqrestore(&einfo->rx_lock, flags);
@@ -3145,6 +3184,7 @@ static int __init glink_smem_native_xprt_init(void)
 		return rc;
 	}
 
+	smem_mpss_ipc_log = ipc_log_context_create (10, "glink_smem_mpss_native1", 0);
 	return 0;
 }
 arch_initcall(glink_smem_native_xprt_init);

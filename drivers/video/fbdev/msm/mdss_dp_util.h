@@ -15,6 +15,10 @@
 
 #include "mdss_dp.h"
 
+#ifdef CONFIG_SEC_DISPLAYPORT
+#include <linux/dp_logger.h>
+#endif
+
 /* DP_TX Registers */
 #define	DP_HW_VERSION				(0x00000000)
 #define	DP_SW_RESET				(0x00000010)
@@ -316,10 +320,17 @@ void mdss_dp_state_ctrl(struct dss_io_data *ctrl_io, u32 data);
 int mdss_dp_irq_setup(struct mdss_dp_drv_pdata *dp_drv);
 void mdss_dp_irq_enable(struct mdss_dp_drv_pdata *dp_drv);
 void mdss_dp_irq_disable(struct mdss_dp_drv_pdata *dp_drv);
+#ifdef SECDP_BLOCK_DFP_VGA
+void mdss_dp_sw_config_msa(struct dss_io_data *ctrl_io,
+				char lrate, struct dss_io_data *dp_cc_io);
+#else
 void mdss_dp_sw_config_msa(struct mdss_dp_drv_pdata *dp);
+#endif
+#ifndef CONFIG_SEC_DISPLAYPORT
 void mdss_dp_usbpd_ext_capabilities(struct usbpd_dp_capabilities *dp_cap);
 void mdss_dp_usbpd_ext_dp_status(struct usbpd_dp_status *dp_status);
 u32 mdss_dp_usbpd_gen_config_pkt(struct mdss_dp_drv_pdata *dp);
+#endif
 void mdss_dp_phy_share_lane_config(struct dss_io_data *phy_io,
 		u8 orientation, u8 ln_cnt, u32 phy_reg_offset);
 void mdss_dp_config_audio_acr_ctrl(struct dss_io_data *ctrl_io,
@@ -335,5 +346,7 @@ int mdss_dp_aux_read_rx_status(struct mdss_dp_drv_pdata *dp, u8 *rx_status);
 void mdss_dp_phy_send_test_pattern(struct mdss_dp_drv_pdata *dp);
 void mdss_dp_config_ctl_frame_crc(struct mdss_dp_drv_pdata *dp, bool enable);
 int mdss_dp_read_ctl_frame_crc(struct mdss_dp_drv_pdata *dp);
+void mdss_dp_setup_test_80bit_custom_pattern(struct dss_io_data *ctrl_io);
+void mdss_dp_setup_hbr2_compliance_scramber(struct dss_io_data *ctrl_io, u32 enable);
 
 #endif /* __DP_UTIL_H__ */

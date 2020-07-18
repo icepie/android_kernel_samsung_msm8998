@@ -53,6 +53,7 @@ enum freq_reporting_policy {
 
 extern int sysctl_sched_freq_inc_notify;
 extern int sysctl_sched_freq_dec_notify;
+extern unsigned int sysctl_sched_ilb_ctl;
 extern unsigned int sysctl_sched_freq_reporting_policy;
 extern unsigned int sysctl_sched_window_stats_policy;
 extern unsigned int sysctl_sched_ravg_hist_size;

@@ -56,6 +56,9 @@ struct msm_camera_tz_i2c_cci_generic_req_t {
 struct msm_camera_tz_i2c_power_up_req_t {
 	enum msm_camera_tz_cmd_id_t cmd_id;
 	int32_t                     sensor_id;
+#if 1 // SS iris
+	uint32_t                    model;
+#endif
 };
 
 #define msm_camera_tz_i2c_power_up_rsp_t msm_camera_tz_generic_rsp_t
@@ -122,6 +125,10 @@ struct msm_camera_tz_i2c_sensor_info_t {
 
 static struct msm_camera_tz_i2c_sensor_info_t sensor_info[MAX_CAMERAS];
 
+#if 1 // SS iris
+#define ADDR_STOP_STREAM 0x2
+#endif
+
 static int32_t msm_camera_tz_i2c_is_sensor_secure(
 	struct msm_camera_i2c_client *client)
 {
@@ -181,6 +188,14 @@ static int32_t msm_camera_tz_i2c_ta_power_up(
 	if (!rc)  {
 		cmd->cmd_id = MSM_CAMERA_TZ_CMD_POWER_UP;
 		cmd->sensor_id = sensor_id;
+#if defined (CONFIG_SEC_DREAMQLTE_PROJECT) // SS iris
+		cmd->model = 1;
+#elif defined (CONFIG_SEC_DREAM2QLTE_PROJECT) || defined (CONFIG_SEC_CRUISERLTE_PROJECT) || defined (CONFIG_SEC_GREATQLTE_PROJECT) || \
+      defined (CONFIG_SEC_GTS4LLTE_PROJECT) || defined (CONFIG_SEC_GTS4LWIFI_PROJECT)
+		cmd->model = 2;
+#else
+		cmd->model = 0;
+#endif
 
 		rc = qseecom_send_command(ta_qseecom_handle,
 			(void *)cmd, cmd_len, (void *)rsp, rsp_len);
@@ -407,6 +422,12 @@ static int32_t msm_camera_tz_i2c_ta_cci_write(
 				rc);
 			return rc;
 		}
+#if 1 // SS iris
+		if (addr == ADDR_STOP_STREAM) {
+			CDBG("delay for stop_stream\n");
+			msleep(50);
+		}
+#endif
 		rc = rsp->rc;
 	}
 	CDBG("Done: rc=%d, SN=%d, MS=%d, SID=%d, CID=%d, ", rc,
@@ -524,12 +545,12 @@ int32_t msm_camera_tz_i2c_power_up(
 				/* Sensor validated by TA*/
 				sensor_info[sensor_id].ready++;
 				msm_camera_tz_unlock();
-			}
-			else {
+			} else {
 				msm_camera_tz_unlock();
 				msm_camera_tz_unload_ta();
 				rc = -EFAULT;
 			}
+			//msm_camera_tz_unlock();
 		}
 	} else
 		rc = -EFAULT;

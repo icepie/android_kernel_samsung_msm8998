@@ -40,6 +40,8 @@
 #include <linux/mutex.h>
 #include <asm/arch_timer.h>
 
+#include <soc/qcom/watchdog.h>
+
 enum {
 	MSM_MPM_GIC_IRQ_DOMAIN,
 	MSM_MPM_GPIO_IRQ_DOMAIN,
@@ -135,6 +137,10 @@ enum mpm_state {
 	MSM_MPM_DEVICE_PROBED = BIT(2),
 };
 
+/* Add debug purpose */
+u64 expected_wakeup_cycles = 0;
+extern u64 suspend_cycles;
+
 static enum mpm_state msm_mpm_initialized;
 static int mpm_init_irq_domain(struct device_node *node, int irq_domain);
 
@@ -187,6 +193,15 @@ static void msm_mpm_timer_write(uint32_t *expiry)
 {
 	__raw_writel(expiry[0], msm_mpm_dev_data.mpm_request_reg_base);
 	__raw_writel(expiry[1], msm_mpm_dev_data.mpm_request_reg_base + 0x4);
+}
+
+static u64 msm_mpm_timer_read(void)
+{
+	u64 low_val, high_val;
+	low_val = (u32)__raw_readl(msm_mpm_dev_data.mpm_request_reg_base);
+	high_val = __raw_readl(msm_mpm_dev_data.mpm_request_reg_base + 0x4);
+
+	return (high_val & 0xFFFFFFFF) << 0x20 | low_val;
 }
 
 static void msm_mpm_set(cycle_t wakeup, bool wakeset)
@@ -542,6 +557,18 @@ void msm_mpm_enter_sleep(uint64_t sclk_count, bool from_idle,
 		wakeup = (~0ULL);
 	}
 
+	/* Add debug Code */
+	if (!from_idle && sclk_count) {
+		expected_wakeup_cycles = wakeup;
+		pr_err("[%s] next expected wake up : %lld \
+			suspend_cycle %lld \n",
+			__func__, expected_wakeup_cycles, suspend_cycles);
+		if (expected_wakeup_cycles < suspend_cycles)
+			BUG();
+	} else {
+		expected_wakeup_cycles = 0;
+	}
+
 	msm_mpm_gpio_irqs_detectable(from_idle);
 	msm_mpm_irqs_detectable(from_idle);
 	msm_mpm_set(wakeup, !from_idle);
@@ -563,6 +590,22 @@ void msm_mpm_exit_sleep(bool from_idle)
 
 	enabled_intr = from_idle ? msm_mpm_enabled_irq :
 						msm_mpm_wake_irq;
+	/* Add debug Code  */
+	if (!from_idle && expected_wakeup_cycles) {
+		u64 actual_wakeup = arch_counter_get_cntvct();
+		u64 programmed_wakeup = msm_mpm_timer_read();
+		 /* 3 secs behind the scheduled wakeup */
+		if (((s64)actual_wakeup - (s64)expected_wakeup_cycles)
+			>= (3 * 19200000)) {
+			pr_err("[%s] late wakeup, expected :\
+				%lld, programmed : %lld, actual :\
+				%lld, delta : %lld\n",
+				__func__, expected_wakeup_cycles, programmed_wakeup,
+				actual_wakeup, actual_wakeup-expected_wakeup_cycles);
+			msm_trigger_wdog_bite();
+		}
+		expected_wakeup_cycles = 0;
+	}
 
 	for (i = 0; i < MSM_MPM_REG_WIDTH; i++) {
 		pending = msm_mpm_read(MSM_MPM_REG_STATUS, i);

@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  *
  */
-
+#define DEBUG
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
@@ -666,7 +666,7 @@ skip_sync:
 		kref_init(&uadev[card_num].kref);
 		init_waitqueue_head(&uadev[card_num].disconnect_wq);
 		uadev[card_num].num_intf =
-			subs->dev->config->desc.bNumInterfaces;
+			subs->dev->config->desc.bNumInterfaces;		
 		uadev[card_num].info =
 			kzalloc(sizeof(struct intf_info) *
 			uadev[card_num].num_intf, GFP_KERNEL);

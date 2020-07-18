@@ -102,7 +102,11 @@ static int __apr_tal_write(struct apr_svc_ch_dev *apr_ch, void *data,
 	spin_unlock_irqrestore(&apr_ch->w_lock, flags);
 
 	if (rc)
+#ifdef CONFIG_SEC_SND_DEBUG
+		panic("glink_tx failed\n");
+#else
 		pr_err("%s: glink_tx failed, rc[%d]\n", __func__, rc);
+#endif
 	else
 		rc = len;
 

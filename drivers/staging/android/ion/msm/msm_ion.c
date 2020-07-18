@@ -117,14 +117,44 @@ static struct ion_heap_desc ion_heap_meta[] = {
 		.name	= ION_ADSP_HEAP_NAME,
 	},
 	{
+		.id	= ION_SECURE_CAMERA_HEAP_ID,
+		.name	= ION_SECURE_CAMERA_HEAP_NAME,
+	},
+	{
+		.id	= ION_SECURE_CAMERA_SCRATCH_HEAP_ID,
+		.name	= ION_SECURE_CAMERA_SCRATCH_HEAP_NAME,
+	},
+	{
 		.id	= ION_SECURE_DISPLAY_HEAP_ID,
 		.name	= ION_SECURE_DISPLAY_HEAP_NAME,
 	}
 };
 #endif
 
+static int ion_system_heap_size_notifier(struct notifier_block *nb,
+					 unsigned long action, void *data)
+{
+	show_ion_system_heap_size((struct seq_file *)data);
+	return 0;
+}
+
+static struct notifier_block ion_system_heap_nb = {
+	.notifier_call = ion_system_heap_size_notifier,
+};
+
+static int ion_system_heap_pool_size_notifier(struct notifier_block *nb,
+					      unsigned long action, void *data)
+{
+	show_ion_system_heap_pool_size(idev, (struct seq_file *)data);
+	return 0;
+}
+
+static struct notifier_block ion_system_heap_pool_nb = {
+	.notifier_call = ion_system_heap_pool_size_notifier,
+};
+
 static int msm_ion_lowmem_notifier(struct notifier_block *nb,
-					unsigned long action, void *data)
+				   unsigned long action, void *data)
 {
 	show_ion_usage(idev);
 	return 0;
@@ -684,7 +714,7 @@ bool is_buffer_hlos_assigned(struct ion_buffer *buffer)
 	bool is_hlos = false;
 
 	if (buffer->heap->type == (enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA &&
-	    (buffer->flags & ION_FLAG_CP_HLOS))
+		(buffer->flags & ION_FLAG_CP_HLOS))
 		is_hlos = true;
 
 	if (get_secure_vmid(buffer->flags) <= 0)
@@ -1101,6 +1131,9 @@ static int msm_ion_probe(struct platform_device *pdev)
 	idev = new_dev;
 
 	show_mem_notifier_register(&msm_ion_nb);
+	show_mem_extra_notifier_register(&ion_system_heap_nb);
+	show_mem_extra_notifier_register(&ion_system_heap_pool_nb);
+
 	return 0;
 
 freeheaps:
@@ -1121,6 +1154,8 @@ static int msm_ion_remove(struct platform_device *pdev)
 
 	ion_device_destroy(idev);
 	kfree(heaps);
+	show_mem_extra_notifier_unregister(&ion_system_heap_nb);
+	show_mem_extra_notifier_unregister(&ion_system_heap_pool_nb);
 	return 0;
 }
 

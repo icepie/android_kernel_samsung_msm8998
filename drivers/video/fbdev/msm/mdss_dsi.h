@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -108,6 +108,9 @@ enum dsi_panel_status_mode {
 	ESD_BTA,
 	ESD_REG,
 	ESD_REG_NT35596,
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	ESD_REG_IRQ,
+#endif
 	ESD_TE,
 	ESD_MAX,
 };
@@ -147,6 +150,10 @@ enum dsi_physical_lane_id {
 enum dsi_pm_type {
 	/* PANEL_PM not used as part of power_data in dsi_shared_data */
 	DSI_PANEL_PM,
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	DSI_PANEL_PM_LP11,
+	DSI_PANEL_PM_LP11_OFF,
+#endif
 	DSI_CORE_PM,
 	DSI_CTRL_PM,
 	DSI_PHY_PM,
@@ -258,6 +265,13 @@ enum {
  */
 struct dsi_shared_data {
 	u32 hw_config; /* DSI setup configuration i.e. single/dual/split */
+
+	/* In split dsi mode, if ctrl_power_slave_dsi is
+	 * 0: control display power and reset signal in master (left) ctrl, DSI0
+	 * 1: control display power and reset signal in slave (right) ctrl, DSI1
+	 */
+	bool ctrl_power_slave_dsi;
+
 	u32 pll_src_config; /* PLL source selection for DSI link clocks */
 	u32 hw_rev; /* DSI h/w revision */
 	u32 phy_rev; /* DSI PHY revision*/
@@ -351,6 +365,13 @@ struct dsi_panel_cmds {
 	struct dsi_cmd_desc *cmds;
 	int cmd_cnt;
 	int link_state;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	char *read_size;
+	char *read_startoffset;
+	char *name;
+	int exclusive_pass;
+#endif
+
 };
 
 struct dsi_panel_timing {
@@ -375,6 +396,12 @@ struct dsi_pinctrl_res {
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *gpio_state_active;
 	struct pinctrl_state *gpio_state_suspend;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct pinctrl_state *samsung_gpio_control0_state_active;
+	struct pinctrl_state *samsung_gpio_control0_state_suspend;
+	struct pinctrl_state *samsung_gpio_control1_state_active;
+	struct pinctrl_state *samsung_gpio_control1_state_suspend;
+#endif
 };
 
 struct panel_horizontal_idle {
@@ -425,6 +452,9 @@ struct mdss_dsi_ctrl_pdata {
 	int (*check_read_status) (struct mdss_dsi_ctrl_pdata *pdata);
 	int (*cmdlist_commit)(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp);
 	void (*switch_mode) (struct mdss_panel_data *pdata, int mode);
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	int (*event_handler) (struct mdss_panel_data *pdata, int event, void *arg);
+#endif
 	struct mdss_panel_data panel_data;
 	unsigned char *ctrl_base;
 	struct dss_io_data ctrl_io;
@@ -451,6 +481,9 @@ struct mdss_dsi_ctrl_pdata {
 	int irq_cnt;
 	int disp_te_gpio;
 	int rst_gpio;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	int tconrdy_gpio;
+#endif
 	int disp_en_gpio;
 	int bklt_en_gpio;
 	bool bklt_en_gpio_invert;
@@ -486,6 +519,14 @@ struct mdss_dsi_ctrl_pdata {
 	u32 esc_clk_rate_hz;
 	bool refresh_clk_rate; /* flag to recalculate clk_rate */
 	struct dss_module_power panel_power_data;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	/* panel_power_data: tx before LP11
+	 * panel_power_data_lp11: tx after LP11
+	 */
+	struct dss_module_power panel_power_data_lp11;
+	struct dss_module_power panel_power_data_lp11_off;
+
+#endif
 	struct dss_module_power power_data[DSI_MAX_PM]; /* for 8x10 */
 	u32 dsi_irq_mask;
 	struct mdss_hw *dsi_hw;
@@ -633,8 +674,8 @@ void disable_esd_thread(void);
 void mdss_dsi_irq_handler_config(struct mdss_dsi_ctrl_pdata *ctrl_pdata);
 
 void mdss_dsi_set_tx_power_mode(int mode, struct mdss_panel_data *pdata);
-u64 mdss_dsi_calc_bitclk(struct mdss_panel_info *panel_info, int frame_rate);
-u32 mdss_dsi_get_pclk_rate(struct mdss_panel_info *panel_info, u64 clk_rate);
+int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
+			    int frame_rate);
 int mdss_dsi_clk_refresh(struct mdss_panel_data *pdata, bool update_phy);
 int mdss_dsi_link_clk_init(struct platform_device *pdev,
 		      struct mdss_dsi_ctrl_pdata *ctrl_pdata);
@@ -714,6 +755,11 @@ int mdss_dsi_check_panel_status(struct mdss_dsi_ctrl_pdata *ctrl, void *arg);
 
 void mdss_dsi_debug_bus_init(struct mdss_dsi_data *sdata);
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+void mdss_dsi_samsung_poc_perf_mode_ctl(struct mdss_dsi_ctrl_pdata *ctrl, int enable);
+int mdss_dsi_clk_config(struct mdss_panel_data *pdata, u64 new_clk_rate);
+#endif
+
 static inline const char *__mdss_dsi_pm_name(enum dsi_pm_type module)
 {
 	switch (module) {
@@ -733,6 +779,10 @@ static inline const char *__mdss_dsi_pm_supply_node_name(
 	case DSI_CTRL_PM:	return "qcom,ctrl-supply-entries";
 	case DSI_PHY_PM:	return "qcom,phy-supply-entries";
 	case DSI_PANEL_PM:	return "qcom,panel-supply-entries";
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	case DSI_PANEL_PM_LP11:	return "qcom,panel-supply-entries-lp11";
+	case DSI_PANEL_PM_LP11_OFF:	return "qcom,panel-supply-entries-lp11-off";
+#endif
 	default:		return "???";
 	}
 }
@@ -917,6 +967,11 @@ static inline bool mdss_dsi_is_panel_on_lp(struct mdss_panel_data *pdata)
 	return mdss_panel_is_power_on_lp(pdata->panel_info.panel_power_state);
 }
 
+static inline bool mdss_dsi_is_panel_on_ulp(struct mdss_panel_data *pdata)
+{
+	return mdss_panel_is_power_on_ulp(pdata->panel_info.panel_power_state);
+}
+
 static inline bool mdss_dsi_ulps_feature_enabled(
 	struct mdss_panel_data *pdata)
 {
@@ -956,5 +1011,14 @@ static inline enum dsi_physical_lane_id mdss_dsi_logical_to_physical_lane(
 
 	return i;
 }
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+int mdss_samsung_parse_dcs_cmds(struct device_node *np,
+		struct dsi_panel_cmds *pcmds, char *cmd_key, char *link_key);
+u32 mdss_samsung_panel_cmd_read(struct mdss_dsi_ctrl_pdata *ctrl,
+		struct dsi_panel_cmds *pcmds, int read_size);
+int mdss_samsung_dsi_pinctrl_set_state(
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata, int control_number, bool active);
+#endif
 
 #endif /* MDSS_DSI_H */

@@ -585,9 +585,13 @@ struct mdp_layer_commit_v1 {
 
 	/* Backlight level that would update when display commit */
 	uint32_t		bl_level;
+	/* MULTI_RESOLUTION
+	 * 0 : WQHD, 1 : FHD, 2 : HD
+	 */
+	uint32_t		dsu_mode;
 
 	/* 32-bits reserved value for future usage. */
-	uint32_t		reserved[MDP_LAYER_COMMIT_V1_PAD];
+	uint32_t		reserved[MDP_LAYER_COMMIT_V1_PAD - 1];
 };
 
 /*

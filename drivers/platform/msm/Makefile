@@ -15,4 +15,4 @@ obj-$(CONFIG_MSM_11AD) += msm_11ad/
 obj-$(CONFIG_SEEMP_CORE) += seemp_core/
 obj-$(CONFIG_USB_BAM) += usb_bam.o
 obj-$(CONFIG_MSM_MHI_DEV) += mhi_dev/
-obj-$(CONFIG_MSM_EXT_DISPLAY) += msm_ext_display.o
+obj-$(CONFIG_SEC_DISPLAYPORT) += msm_ext_display.o

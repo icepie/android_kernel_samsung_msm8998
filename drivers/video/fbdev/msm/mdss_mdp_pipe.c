@@ -2270,8 +2270,10 @@ static int mdss_mdp_src_addr_setup(struct mdss_mdp_pipe *pipe,
 			&pipe->src_planes, pipe->src_fmt);
 	}
 
-	for (i = 0; i < MAX_PLANES; i++)
+	for (i = 0; i < MAX_PLANES; i++) {
 		addr[i] = src_data->p[i].addr;
+		MDSS_XLOG(src_data->p[i].addr, src_data->p[i].len);
+	}
 
 	/* planar format expects YCbCr, swap chroma planes if YCrCb */
 	if (mdata->mdp_rev < MDSS_MDP_HW_REV_102 &&
@@ -2693,7 +2695,7 @@ int mdss_mdp_pipe_queue_data(struct mdss_mdp_pipe *pipe,
 	params_changed = (pipe->params_changed) ||
 		((pipe->type == MDSS_MDP_PIPE_TYPE_DMA) &&
 		 (pipe->mixer_left->type == MDSS_MDP_MIXER_TYPE_WRITEBACK) &&
-		 (ctl->mdata->mixer_switched)) || roi_changed;
+		 (ctl->mdata->mixer_switched)) || roi_changed || (ctl->power_state == MDSS_PANEL_POWER_LP1);
 
 	/* apply changes that are common in case of multi rects only once */
 	if (params_changed && !delayed_programming) {

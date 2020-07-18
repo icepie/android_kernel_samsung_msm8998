@@ -39,11 +39,20 @@
  *	ldp	x29, x30, [sp]
  *	add	sp, sp, #0x10
  */
+
+#if defined(CONFIG_RKP_CFP_ROPP) && (defined CONFIG_RKP_CFP_TEST)
+unsigned long ropp_enable_backtrace(unsigned long where, struct task_struct *tsk);
+#endif
+
 int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 {
 	unsigned long high, low;
 	unsigned long fp = frame->fp;
 	unsigned long irq_stack_ptr;
+
+#if defined(CONFIG_RKP_CFP_ROPP) && (defined CONFIG_RKP_CFP_TEST)
+	unsigned long old_pc = 0;
+#endif
 
 	/*
 	 * Switching between stacks is valid when tracing current and in
@@ -68,7 +77,16 @@ int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 
 	frame->sp = fp + 0x10;
 	frame->fp = *(unsigned long *)(fp);
+#if defined(CONFIG_RKP_CFP_ROPP) && (defined CONFIG_RKP_CFP_TEST)
+	old_pc = *(unsigned long *)(fp + 8);
+	if ((old_pc >> 40) != 0xffffff){
+		frame->pc = ropp_enable_backtrace(old_pc, tsk); //not current
+	} else {
+		frame->pc = old_pc;
+	}
+#else
 	frame->pc = *(unsigned long *)(fp + 8);
+#endif
 
 	kasan_enable_current();
 

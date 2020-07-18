@@ -21,7 +21,11 @@
 #include <linux/wakeup_reason.h>
 #include <linux/cpuset.h>
 
-/*
+#ifdef CONFIG_SEC_BSP
+#include <linux/sec_bsp.h>
+#endif
+
+/* 
  * Timeout for stopping processes
  */
 unsigned int __read_mostly freeze_timeout_msecs = 20 * MSEC_PER_SEC;
@@ -143,11 +147,15 @@ int freeze_processes(void)
 	pm_wakeup_clear();
 	pr_info("Freezing user space processes ... ");
 	pm_freezing = true;
+#ifdef CONFIG_SEC_BSP
+	sec_suspend_resume_add("Freeze User Process+");
+#endif
 	error = try_to_freeze_tasks(true);
 	if (!error) {
 		__usermodehelper_set_disable_depth(UMH_DISABLED);
 		pr_cont("done.");
 	}
+	sec_suspend_resume_add("Freeze User Process-");
 	pr_cont("\n");
 	BUG_ON(in_atomic());
 
@@ -177,13 +185,14 @@ int freeze_kernel_threads(void)
 	int error;
 
 	pr_info("Freezing remaining freezable tasks ... ");
-
+	sec_suspend_resume_add("Freeze Remaining+");
 	pm_nosig_freezing = true;
 	error = try_to_freeze_tasks(false);
 	if (!error)
 		pr_cont("done.");
 
 	pr_cont("\n");
+	sec_suspend_resume_add("Freeze Remaining-");
 	BUG_ON(in_atomic());
 
 	if (error)

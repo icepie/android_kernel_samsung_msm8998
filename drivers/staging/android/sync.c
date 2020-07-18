@@ -27,6 +27,7 @@
 #include <linux/anon_inodes.h>
 
 #include "sync.h"
+#include <linux/spinlock.h>
 
 #define CREATE_TRACE_POINTS
 #define SYNC_DUMP_TIME_LIMIT 7000
@@ -393,6 +394,7 @@ int sync_fence_wait(struct sync_fence *fence, long timeout)
 		if (timeout) {
 			pr_info("fence timeout on [%pK] after %dms\n", fence,
 				jiffies_to_msecs(timeout));
+			sync_target_dump(fence);
 			if (jiffies_to_msecs(timeout) >=
 				SYNC_DUMP_TIME_LIMIT)
 				sync_dump();
@@ -531,9 +533,14 @@ static void sync_fence_free(struct kref *kref)
 {
 	struct sync_fence *fence = container_of(kref, struct sync_fence, kref);
 	int i;
+	unsigned long flags;
 
 	for (i = 0; i < fence->num_fences; ++i) {
-		fence_remove_callback(fence->cbs[i].sync_pt, &fence->cbs[i].cb);
+		spin_lock_irqsave(fence->cbs[i].sync_pt->lock, flags);
+		if (atomic_read(&fence->status))
+			fence_remove_callback_locked(fence->cbs[i].sync_pt,
+					      &fence->cbs[i].cb);
+		spin_unlock_irqrestore(fence->cbs[i].sync_pt->lock, flags);
 		fence_put(fence->cbs[i].sync_pt);
 	}
 

@@ -35,6 +35,9 @@
 #include "kgsl_trace.h"
 #include "kgsl_cffdump.h"
 #include "kgsl_pwrctrl.h"
+#if defined(CONFIG_SEC_ABC)
+#include <linux/sti/abc_common.h>
+#endif
 
 #define _IOMMU_PRIV(_mmu) (&((_mmu)->priv.iommu))
 
@@ -141,12 +144,32 @@ static void kgsl_iommu_unmap_globals(struct kgsl_pagetable *pagetable)
 static int kgsl_iommu_map_globals(struct kgsl_pagetable *pagetable)
 {
 	unsigned int i;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	int retry_cnt;
+#endif
 
 	for (i = 0; i < global_pt_count; i++) {
 		if (global_pt_entries[i].memdesc != NULL) {
 			int ret = kgsl_mmu_map(pagetable,
 					global_pt_entries[i].memdesc);
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+			if (!in_interrupt()) {
+				if (ret != 0) {
+					for (retry_cnt = 0; retry_cnt < 62 ; retry_cnt++) {
+						/* To wait free page by memory reclaim*/
+						msleep(16);
+						
+						pr_err("kgsl_mmu_map failed : retry (%d)\n", retry_cnt);
+						ret = kgsl_mmu_map(pagetable,
+						global_pt_entries[i].memdesc);
+
+						if (ret == 0)
+							break;
+					}
+				}
+			}
+#endif
 			if (ret)
 				return ret;
 		}
@@ -926,6 +949,9 @@ static int kgsl_iommu_fault_handler(struct iommu_domain *domain,
 	}
 
 	kgsl_context_put(context);
+#if defined(CONFIG_SEC_ABC)
+	sec_abc_send_event("MODULE=gpu_qc@ERROR=gpu_page_fault");
+#endif
 	return ret;
 }
 

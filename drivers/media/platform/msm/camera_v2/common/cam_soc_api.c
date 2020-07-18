@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,6 +38,16 @@ struct msm_cam_bus_pscale_data {
 };
 
 struct msm_cam_bus_pscale_data g_cv[CAM_BUS_CLIENT_MAX];
+
+
+#define CAM_MAX_SHARED_CLK_INFO 10
+#define CAM_MAX_SHARED_CLK_NAME 20
+
+struct shared_clk_info {
+	char clk_name[CAM_MAX_SHARED_CLK_NAME];
+};
+struct shared_clk_info g_shared_clk_info[CAM_MAX_SHARED_CLK_INFO];
+uint8_t g_shared_clk_cnt;
 
 
 /* Get all clocks from DT */
@@ -354,7 +364,7 @@ int msm_camera_clk_enable(struct device *dev,
 
 	if (enable) {
 		for (i = 0; i < num_clk; i++) {
-			CDBG("enable %s\n", clk_info[i].clk_name);
+			CDBG("enable %s, %ld\n", clk_info[i].clk_name, clk_info[i].clk_rate);
 			if (clk_info[i].clk_rate > 0) {
 				clk_rate = clk_round_rate(clk_ptr[i],
 					clk_info[i].clk_rate);
@@ -385,7 +395,7 @@ int msm_camera_clk_enable(struct device *dev,
 				rc = clk_set_rate(clk_ptr[i], clk_rate);
 				if (rc < 0) {
 					pr_err("%s set rate failed\n",
-						clk_info[i].clk_name);
+						  clk_info[i].clk_name);
 					goto cam_clk_set_err;
 				}
 			}
@@ -422,6 +432,138 @@ cam_clk_set_err:
 	return rc;
 }
 EXPORT_SYMBOL(msm_camera_clk_enable);
+
+int msm_camera_s_clk_enable(struct device *dev,
+		struct msm_cam_clk_info *clk_info,
+		struct clk **clk_ptr, int num_clk, int enable,
+		struct msm_camera_power_ctrl_t *shared_ctrl)
+{
+	int i = 0;
+	size_t j = 0;
+	int rc = 0;
+	long clk_rate;
+	bool skip_flag = false;
+
+	if (enable) {
+		for (i = 0; i < num_clk; i++) {
+			CDBG("enable %s, %ld\n", clk_info[i].clk_name, clk_info[i].clk_rate);
+			if (shared_ctrl) {
+				skip_flag = false;
+				for(j = 0; j < shared_ctrl->clk_info_size; j++) {
+					if (!strcmp(shared_ctrl->clk_info[j].clk_name,
+					    clk_info[i].clk_name)) {
+					    if (g_shared_clk_cnt >= CAM_MAX_SHARED_CLK_INFO) {
+						    pr_info("[POWER_DBG] g_shared_clk_cnt(%d) reached MAX!!\n",
+						        g_shared_clk_cnt);
+						    g_shared_clk_cnt = CAM_MAX_SHARED_CLK_INFO - 1;
+					    }
+					    strncpy(g_shared_clk_info[g_shared_clk_cnt].clk_name,
+						    clk_info[i].clk_name, strlen(clk_info[i].clk_name));
+					    CDBG("[POWER_DBG] g_shared_clk_cnt(%d) clk name %s\n",
+					        g_shared_clk_cnt,
+					        g_shared_clk_info[g_shared_clk_cnt].clk_name);
+					    ++g_shared_clk_cnt;
+					    skip_flag = true;
+					    break;
+					}
+				}
+				if (skip_flag) {
+					CDBG("[POWER_DBG] Enable : %s skipped\n",
+						clk_info[i].clk_name);
+					continue;
+				}
+			}
+			if (clk_info[i].clk_rate > 0) {
+				clk_rate = clk_round_rate(clk_ptr[i],
+					clk_info[i].clk_rate);
+				if (clk_rate < 0) {
+					pr_err("%s round failed\n",
+						   clk_info[i].clk_name);
+					goto cam_clk_set_err;
+				}
+				rc = clk_set_rate(clk_ptr[i],
+					clk_rate);
+				if (rc < 0) {
+					pr_err("%s set failed\n",
+						clk_info[i].clk_name);
+					goto cam_clk_set_err;
+				}
+
+			} else if (clk_info[i].clk_rate == INIT_RATE) {
+				clk_rate = clk_get_rate(clk_ptr[i]);
+				if (clk_rate == 0) {
+					clk_rate =
+						  clk_round_rate(clk_ptr[i], 0);
+					if (clk_rate < 0) {
+						pr_err("%s round rate failed\n",
+							  clk_info[i].clk_name);
+						goto cam_clk_set_err;
+					}
+					rc = clk_set_rate(clk_ptr[i],
+								clk_rate);
+					if (rc < 0) {
+						pr_err("%s set rate failed\n",
+							  clk_info[i].clk_name);
+						goto cam_clk_set_err;
+					}
+				}
+			}
+			rc = clk_prepare_enable(clk_ptr[i]);
+			if (rc < 0) {
+				pr_err("%s enable failed\n",
+					   clk_info[i].clk_name);
+				goto cam_clk_enable_err;
+			}
+			if (clk_info[i].delay > 20) {
+				msleep(clk_info[i].delay);
+			} else if (clk_info[i].delay) {
+				usleep_range(clk_info[i].delay * 1000,
+					(clk_info[i].delay * 1000) + 1000);
+			}
+		}
+	} else {
+		for (i = num_clk - 1; i >= 0; i--) {
+			if (clk_ptr[i] != NULL) {
+				if (g_shared_clk_cnt > 0) {
+					skip_flag = false;
+					for(j = 0; j < g_shared_clk_cnt; j++) {
+					    if (!strcmp(g_shared_clk_info[j].clk_name,
+					        clk_info[i].clk_name)) {
+					        CDBG("[POWER_DBG] g_shared_clk_cnt(%d) clk name %s\n",
+					            (g_shared_clk_cnt - 1),
+					            g_shared_clk_info[j].clk_name);
+					        --g_shared_clk_cnt;
+					        if (g_shared_clk_cnt == 0)
+					            CDBG("[POWER_DBG] g_shared_clk_info flushed!!\n");
+					        skip_flag = true;
+					        break;
+					    }
+					}
+					if (skip_flag) {
+					    CDBG("[POWER_DBG] Disable : %s skipped\n",
+					        clk_info[i].clk_name);
+					    continue;
+					}
+				}
+
+				CDBG("%s disable %s\n", __func__,
+					clk_info[i].clk_name);
+				clk_disable_unprepare(clk_ptr[i]);
+			}
+		}
+	}
+	return rc;
+
+cam_clk_enable_err:
+cam_clk_set_err:
+	for (i--; i >= 0; i--) {
+		if (clk_ptr[i] != NULL)
+			clk_disable_unprepare(clk_ptr[i]);
+	}
+	return rc;
+}
+EXPORT_SYMBOL(msm_camera_s_clk_enable);
+
 
 /* Set rate on a specific clock */
 long msm_camera_clk_set_rate(struct device *dev,
@@ -684,50 +826,6 @@ error:
 	return rc;
 }
 EXPORT_SYMBOL(msm_camera_regulator_enable);
-
-/* set regulator mode */
-int msm_camera_regulator_set_mode(struct msm_cam_regulator *vdd_info,
-				int cnt, bool mode)
-{
-	int i;
-	int rc;
-	struct msm_cam_regulator *tmp = vdd_info;
-
-	if (!tmp) {
-		pr_err("Invalid params");
-		return -EINVAL;
-	}
-	CDBG("cnt : %d\n", cnt);
-
-	for (i = 0; i < cnt; i++) {
-		if (tmp && !IS_ERR_OR_NULL(tmp->vdd)) {
-			CDBG("name : %s, enable : %d\n", tmp->name, mode);
-			if (mode) {
-				rc = regulator_set_mode(tmp->vdd,
-					REGULATOR_MODE_FAST);
-				if (rc < 0) {
-					pr_err("regulator enable failed %d\n",
-						i);
-					goto error;
-				}
-			} else {
-				rc = regulator_set_mode(tmp->vdd,
-					REGULATOR_MODE_NORMAL);
-				if (rc < 0)
-					pr_err("regulator disable failed %d\n",
-						i);
-					goto error;
-			}
-		}
-		tmp++;
-	}
-
-	return 0;
-error:
-	return rc;
-}
-EXPORT_SYMBOL(msm_camera_regulator_set_mode);
-
 
 /* Put regulators regulators */
 void msm_camera_put_regulators(struct platform_device *pdev,

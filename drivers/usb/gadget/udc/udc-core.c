@@ -505,11 +505,14 @@ static int udc_bind_to_driver(struct usb_udc *udc, struct usb_gadget_driver *dri
 	udc->gadget->dev.driver = &driver->driver;
 
 	ret = driver->bind(udc->gadget, driver);
-	if (ret)
+	if (ret) {
+		pr_err("usb: %s - failed to bind driver\n", __func__);
 		goto err1;
+	}
 	ret = usb_gadget_udc_start(udc);
 	if (ret) {
 		driver->unbind(udc->gadget);
+		pr_err("usb: %s - failed to udc start\n", __func__);
 		goto err1;
 	}
 	usb_udc_connect_control(udc);
@@ -539,10 +542,12 @@ int usb_udc_attach_driver(const char *name, struct usb_gadget_driver *driver)
 	}
 	if (ret) {
 		ret = -ENODEV;
+		pr_err("usb: %s - failed to get udc name\n", __func__);
 		goto out;
 	}
 	if (udc->driver) {
 		ret = -EBUSY;
+		pr_err("usb: %s - failed to get udc driver\n", __func__);
 		goto out;
 	}
 	ret = udc_bind_to_driver(udc, driver);

@@ -2,7 +2,13 @@
 #define __ASM_SUSPEND_H
 
 #define NR_CTX_REGS 12
+
+#if (defined CONFIG_RKP_CFP_ROPP) && !(defined CONFIG_RKP_CFP_ROPP_SYSREGKEY)
+#define NR_CALLEE_SAVED_REGS 14
+#else
 #define NR_CALLEE_SAVED_REGS 12
+#endif
+
 
 /*
  * struct cpu_suspend_ctx must be 16-byte aligned since it is allocated on
@@ -33,6 +39,12 @@ struct sleep_stack_data {
 	struct cpu_suspend_ctx	system_regs;
 	unsigned long		callee_saved_regs[NR_CALLEE_SAVED_REGS];
 };
+
+struct sleep_save_sp {
+	phys_addr_t *save_ptr_stash;
+	phys_addr_t save_ptr_stash_phys;
+};
+
 
 extern unsigned long *sleep_save_stash;
 

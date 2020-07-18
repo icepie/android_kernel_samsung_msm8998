@@ -17,6 +17,10 @@
 #include <linux/device.h>
 #include "mdss_fb.h"
 #include "mdss_hdmi_edid.h"
+#ifdef CONFIG_SEC_DISPLAYPORT
+#include <linux/dp_logger.h>
+#include "mdss_dp.h"
+#endif
 
 #define DBC_START_OFFSET 4
 #define EDID_DTD_LEN 18
@@ -26,8 +30,13 @@
  */
 #define MAX_DATA_BLOCK_SIZE 31
 
+#ifndef CONFIG_SEC_DISPLAYPORT
 #define HDMI_VSDB_3D_EVF_DATA_OFFSET(vsd) \
 	(!((vsd)[8] & BIT(7)) ? 9 : (!((vsd)[8] & BIT(6)) ? 11 : 13))
+#else
+#define HDMI_VSDB_3D_EVF_DATA_OFFSET(vsd) \
+	(!((vsd)[8] & BIT(7)) ? (!((vsd)[8] & BIT(6)) ? 9 : 11) : (!((vsd)[8] & BIT(6)) ? 11 : 13))
+#endif
 
 /*
  * As per the CEA-861E spec, there can be a total of 10 short audio
@@ -153,13 +162,250 @@ struct hdmi_edid_ctrl {
 	struct hdmi_edid_sink_caps sink_caps;
 	struct hdmi_edid_override_data override_data;
 	struct hdmi_edid_hdr_data hdr_data;
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	int audio_channel_info;
+#endif
 };
+
+#if defined(CONFIG_SEC_DISPLAYPORT)
+
+/* Index of max resolution which supported by sink */
+static int g_max_res_index;
+
+/* Index of max resolution which supported by dex station */
+static int g_dex_max_res_index;
+static bool g_ignore_ratio;
+static enum mon_aspect_ratio_t g_aspect_ratio;
+
+static struct secdp_display_timing secdp_supported_resolution[] = {
+	{ 0,   640,    480,  60, false, DEX_RES_1920X1080},
+	{ 1,   720,    480,  60, false, DEX_RES_1920X1080},
+	{ 2,   720,    576,  50, false, DEX_RES_1920X1080},
+
+	{ 3,   1280,   720,  50, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{ 4,   1280,   720,  60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	{ 5,   1280,   768,  60, false, DEX_RES_1920X1080},                    /* CTS 4.4.1.3 */
+#endif
+	{ 6,   1280,   800,  60, false, DEX_RES_1920X1080,   MON_RATIO_16_10}, /* CTS 18bpp */
+	{ 7,   1280,  1024,  60, false, DEX_RES_1920X1080},                    /* CTS 18bpp */
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	{ 8,   1360,   768,  60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},   /* CTS 4.4.1.3 */
+#endif
+
+	{ 9,   1366,  768,   60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{10,   1600,  900,   60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+
+	{20,   1920,  1080,  24, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{21,   1920,  1080,  25, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{22,   1920,  1080,  30, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{23,   1920,  1080,  50, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+	{24,   1920,  1080,  60, false, DEX_RES_1920X1080,   MON_RATIO_16_9},
+
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	{25,   1920,  1200,  60, false, DEX_RES_1920X1200,   MON_RATIO_16_10},
+#endif
+
+	{30,   1920,  1440,  60, false, DEX_RES_NOT_SUPPORT},                  /* CTS 400.3.3.1 */
+	{40,   2048,  1536,  60, false, DEX_RES_NOT_SUPPORT},                  /* CTS 18bpp */
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	/* {45,   2400,  1200,  90, false, DEX_RES_NOT_SUPPORT}, */                 /* relumino */
+#endif
+
+#ifdef SECDP_WIDE_21_9_SUPPORT
+	{60,   2560,  1080,  60, false, DEX_RES_2560X1080,   MON_RATIO_21_9},
+#endif
+
+	{61,   2560,  1440,  60, false, DEX_RES_2560X1440,   MON_RATIO_16_9},
+#ifdef CONFIG_SEC_NEW_RESOLUTION
+	{62,   2560,  1600,  60, false, DEX_RES_2560X1600,   MON_RATIO_16_10},
+#endif
+
+	{70,   1440,  2560,  60, false, DEX_RES_NOT_SUPPORT},                  /* TVR test */
+	{71,   1440,  2560,  75, false, DEX_RES_NOT_SUPPORT},                  /* TVR test */
+
+#ifdef SECDP_WIDE_21_9_SUPPORT
+	{80,   3440,  1440,  50, false, DEX_RES_3440X1440,   MON_RATIO_21_9},
+	{81,   3440,  1440,  60, false, DEX_RES_3440X1440,   MON_RATIO_21_9},
+#ifdef SECDP_HIGH_REFRESH_SUPPORT
+	{82,   3440,  1440,	100, false, DEX_RES_NOT_SUPPORT, MON_RATIO_21_9},
+#endif
+#endif
+
+#ifdef SECDP_WIDE_32_9_SUPPORT
+	{100,  3840, 1080,   60, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_9},
+#ifdef SECDP_HIGH_REFRESH_SUPPORT
+	{101,  3840,  1080, 100, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_9},
+	{102,  3840,  1080, 120, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_9},
+	{104,  3840,  1080, 144, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_9},
+#endif
+#endif
+
+#ifdef SECDP_WIDE_32_10_SUPPORT
+	{110,  3840,  1200,	 60, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_10},
+#ifdef SECDP_HIGH_REFRESH_SUPPORT
+	{111,  3840,  1200, 100, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_10},
+	{112,  3840,  1200, 120, false, DEX_RES_NOT_SUPPORT, MON_RATIO_32_10},
+#endif
+#endif
+
+	{150,  3840,  2160,  24, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+	{151,  3840,  2160,  25, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+	{152,  3840,  2160,  30, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+	{153,  3840,  2160,  50, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+	{154,  3840,  2160,  60, false, DEX_RES_NOT_SUPPORT, MON_RATIO_16_9},
+
+	{200,  4096,  2160,  24, false, DEX_RES_NOT_SUPPORT},
+	{201,  4096,  2160,  25, false, DEX_RES_NOT_SUPPORT},
+	{202,  4096,  2160,  30, false, DEX_RES_NOT_SUPPORT},
+	{203,  4096,  2160,  50, false, DEX_RES_NOT_SUPPORT},
+	{204,  4096,  2160,  60, false, DEX_RES_NOT_SUPPORT},
+};
+
+void secdp_init_resolution_config(void)
+{
+	int i;
+	int res_cnt = ARRAY_SIZE(secdp_supported_resolution);
+
+	pr_info("%s\n", __func__);
+
+	g_max_res_index = g_dex_max_res_index = -1;
+#if defined(CONFIG_SEC_CHECK_RATIO)
+	g_ignore_ratio = false;
+#else
+	g_ignore_ratio = true;
+#endif
+
+	for (i = 0; i < res_cnt; i++)
+		secdp_supported_resolution[i].checked = false;
+}
+
+static inline char *secdp_aspect_ratio_to_string(enum mon_aspect_ratio_t ratio)
+{
+	switch (ratio) {
+	case MON_RATIO_16_9:    return DP_ENUM_STR(MON_RATIO_16_9);
+	case MON_RATIO_16_10:   return DP_ENUM_STR(MON_RATIO_16_10);
+	case MON_RATIO_21_9:    return DP_ENUM_STR(MON_RATIO_21_9);
+	case MON_RATIO_32_9:    return DP_ENUM_STR(MON_RATIO_32_9);
+	case MON_RATIO_32_10:   return DP_ENUM_STR(MON_RATIO_32_10);
+	case MON_RATIO_NA:      return DP_ENUM_STR(MON_RATIO_NA);
+	default:                return "unknown";
+	}
+}
+
+void secdp_set_preferred_resolution_ratio(int hdisplay, int vdisplay)
+{
+	enum mon_aspect_ratio_t aspect_ratio = MON_RATIO_NA;
+
+	if ((hdisplay == 3840 && vdisplay == 2160) ||
+		(hdisplay == 2560 && vdisplay == 1440) ||
+		(hdisplay == 1920 && vdisplay == 1080) ||
+		(hdisplay == 1600 && vdisplay == 900) ||
+		(hdisplay == 1366 && vdisplay == 768)  ||
+		(hdisplay == 1280 && vdisplay == 720))
+		aspect_ratio = MON_RATIO_16_9;
+	else if ((hdisplay == 2560 && vdisplay == 1600) ||
+		(hdisplay == 1920 && vdisplay == 1200) ||
+		(hdisplay == 1680 && vdisplay == 1050) ||
+		(hdisplay == 1440 && vdisplay == 900)  ||
+		(hdisplay == 1280 && vdisplay == 800))
+		aspect_ratio = MON_RATIO_16_10;
+	else if ((hdisplay == 3440 && vdisplay == 1440) ||
+		(hdisplay == 2560 && vdisplay == 1080))
+		aspect_ratio = MON_RATIO_21_9;
+	else if (hdisplay == 3840 && vdisplay == 1080)
+		aspect_ratio = MON_RATIO_32_9;
+	else if (hdisplay == 3840 && vdisplay == 1200)
+		aspect_ratio = MON_RATIO_32_10;
+
+	g_aspect_ratio = aspect_ratio;
+	pr_info("preferred_timing! %dx%d, %s\n",
+			hdisplay, vdisplay, secdp_aspect_ratio_to_string(g_aspect_ratio));
+}
+
+static enum mon_aspect_ratio_t secdp_get_aspect_ratio(void)
+{
+	pr_info("%s, %s\n",__func__, secdp_aspect_ratio_to_string(g_aspect_ratio));
+	return g_aspect_ratio; 
+}
+
+bool secdp_check_dex_reconnect(void)
+{
+	pr_info("%s, %d %d\n", __func__, g_max_res_index, g_dex_max_res_index);
+	if (g_max_res_index == g_dex_max_res_index)
+		return false;
+
+	return true;
+}
+
+extern bool secdp_check_dex_mode(void);
+extern enum dex_support_res_t secdp_get_dex_res(void);
+
+static int secdp_check_supported_resolution(struct msm_hdmi_mode_timing_info *info)
+{
+	int i, ret = 0;
+	int res_cnt = ARRAY_SIZE(secdp_supported_resolution);
+	struct secdp_display_timing *support = secdp_supported_resolution;
+	enum mon_aspect_ratio_t prefer_ratio = secdp_get_aspect_ratio();
+
+	for (i=0; i < res_cnt; i++) {
+		if (support[i].active_h == info->active_h &&
+			support[i].active_v == info->active_v &&
+			support[i].interlaced == info->interlaced) {
+
+			int diff = support[i].refresh_rate - (info->refresh_rate / 1000);
+			diff *= diff;
+			if (diff < 2) {
+				pr_info("diff is less than 2\n");
+				if (support[i].checked) {
+					pr_info("%s, this resolution is already checked, skip\n", __func__);
+					goto exit;
+				}
+
+				/* find max resolution which supported by sink */
+				if (g_max_res_index < support[i].index)
+					g_max_res_index = support[i].index;
+
+				if (support[i].dex_res != DEX_RES_NOT_SUPPORT &&
+						support[i].dex_res <= secdp_get_dex_res()) {
+					if (g_ignore_ratio)
+						ret = 1;
+					else if (support[i].mon_ratio == prefer_ratio)
+						ret = 1;
+					else
+						ret = 0;
+				} else
+					ret = 0;
+
+				/* find max resolution which supported by dex station */
+				if (ret && g_dex_max_res_index < support[i].index)
+					g_dex_max_res_index = support[i].index;
+
+				if (secdp_check_dex_mode())
+					goto exit;
+
+				ret = 1;
+				goto exit;
+			}
+		}
+	}
+exit:
+	if (ret && !support[i].checked)
+		support[i].checked = true;
+
+	return ret;
+}
+#endif
 
 static bool hdmi_edid_is_mode_supported(struct hdmi_edid_ctrl *edid_ctrl,
 		struct msm_hdmi_mode_timing_info *timing, u32 out_format)
 {
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	u32 pclk = timing->pixel_freq;
+#else
 	u32 pclk = hdmi_tx_setup_tmds_clk_rate(timing->pixel_freq,
 		out_format, false);
+#endif
 
 	if (!timing->supported ||
 		pclk > edid_ctrl->init_data.max_pclk_khz)
@@ -169,6 +415,10 @@ static bool hdmi_edid_is_mode_supported(struct hdmi_edid_ctrl *edid_ctrl,
 			!edid_ctrl->init_data.yc420_support)
 		return false;
 
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	if (!secdp_check_supported_resolution(timing))
+		return false;
+#endif
 	return true;
 }
 
@@ -373,6 +623,11 @@ error:
 	return ret;
 }
 
+#ifdef CONFIG_SEC_DISPLAYPORT                                                                     
+/*int forced_resolution = HDMI_VFRMT_1920x1080p60_16_9 + 1;*/
+int forced_resolution;
+#endif
+
 static ssize_t hdmi_edid_sysfs_rda_modes(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -395,6 +650,15 @@ static ssize_t hdmi_edid_sysfs_rda_modes(struct device *dev,
 		edid_ctrl->sink_data.disp_mode_list[0].video_format =
 			edid_ctrl->override_data.vic;
 	}
+
+#ifdef CONFIG_SEC_DISPLAYPORT
+	if (forced_resolution) {
+		hdmi_reset_resv_timing_info();
+		hdmi_edid_set_video_resolution(edid_ctrl, forced_resolution - 1, true);
+		num_of_elements = edid_ctrl->sink_data.num_of_elements;
+		video_mode = edid_ctrl->sink_data.disp_mode_list;
+	}
+#endif 
 
 	buf[0] = 0;
 	if (num_of_elements) {
@@ -718,6 +982,7 @@ static ssize_t hdmi_edid_sysfs_rda_3d_modes(struct device *dev,
 		}
 	}
 
+	/*DEV_DBG("%s: '%s'\n", __func__, buf);*/
 	ret += scnprintf(buf + ret, PAGE_SIZE - ret, "\n");
 
 	return ret;
@@ -1159,7 +1424,7 @@ static void hdmi_edid_extract_extended_data_blocks(
 				(etag[2] & (BIT(3) | BIT(2))) >> 2;
 			edid_ctrl->ce_scan_info =
 				etag[2] & (BIT(1) | BIT(0));
-			DEV_DBG("%s: Scan Info (pt|it|ce): (%d|%d|%d)",
+			DEV_DBG("%s: Scan Info (pt|it|ce): (%d|%d|%d)\n",
 				__func__,
 				edid_ctrl->pt_scan_info,
 				edid_ctrl->it_scan_info,
@@ -1171,17 +1436,17 @@ static void hdmi_edid_extract_extended_data_blocks(
 			hdmi_edid_parse_hvdb(edid_ctrl, etag);
 			break;
 		case Y420_CAPABILITY_MAP_DATA_BLOCK:
-			DEV_DBG("%s found Y420CMDB byte 3 = 0x%x",
+			DEV_DBG("%s found Y420CMDB byte 3 = 0x%x\n",
 				__func__, etag[2]);
 			hdmi_edid_parse_Y420CMDB(edid_ctrl, etag);
 			break;
 		case Y420_VIDEO_DATA_BLOCK:
-			DEV_DBG("%s found Y420VDB byte 3 = 0x%x",
+			DEV_DBG("%s found Y420VDB byte 3 = 0x%x\n",
 				__func__, etag[2]);
 			hdmi_edid_parse_Y420VDB(edid_ctrl, etag);
 			break;
 		case HDR_STATIC_METADATA_DATA_BLOCK:
-			DEV_DBG("%s found HDR Static Metadata. Byte 3 = 0x%x",
+			DEV_DBG("%s found HDR Static Metadata. Byte 3 = 0x%x\n",
 				__func__, etag[2]);
 			hdmi_edid_parse_hdrdb(edid_ctrl, etag);
 			edid_ctrl->hdr_supported = true;
@@ -1233,12 +1498,24 @@ static void hdmi_edid_extract_audio_data_blocks(
 	u8 adb_max = 0;
 	const u8 *adb = NULL;
 	u32 offset = DBC_START_OFFSET;
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	u16 audio_ch = 0;
+	u32 bit_rate = 0;
+	const u8 *adb_temp = NULL;
+	u8 len_temp = 0;
+#endif
 
 	if (!edid_ctrl) {
 		DEV_ERR("%s: invalid input\n", __func__);
 		return;
 	}
 
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	if (in_buf[3] & (1<<6)) {
+		DEV_INFO("%s: default audio format\n", __func__);
+		edid_ctrl->audio_channel_info |= 2;
+	}
+#endif
 	edid_ctrl->adb_size = 0;
 
 	memset(edid_ctrl->audio_data_block, 0,
@@ -1263,6 +1540,25 @@ static void hdmi_edid_extract_audio_data_blocks(
 			continue;
 		}
 
+#if defined(CONFIG_SEC_DISPLAYPORT)
+		adb_temp = adb;
+		len_temp = len;
+		while(len > 0) {
+			if (adb[1]>>3 == 1) {
+				audio_ch |= (1 << (adb[1] & 0x7));
+				if((adb[1] & 0x7) > 0x04)
+					audio_ch |= 0x20;
+				if (adb[3] & 0x07) {
+					bit_rate = adb[3] & 0x7;
+					bit_rate |= (adb[2] & 0x7F) << 3;
+				}
+			}
+			len -= 3;
+			adb += 3;
+		}
+		adb = adb_temp;
+		len = len_temp;
+#endif
 		memcpy(edid_ctrl->audio_data_block + edid_ctrl->adb_size,
 			adb + 1, len);
 		offset = (adb - in_buf) + 1 + len;
@@ -1271,13 +1567,37 @@ static void hdmi_edid_extract_audio_data_blocks(
 		adb_max++;
 	} while (adb);
 
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	edid_ctrl->audio_channel_info |= (bit_rate << 16);
+	edid_ctrl->audio_channel_info |= audio_ch;
+	pr_info("%s: Displayport Audio info : 0x%x\n", __func__,
+			edid_ctrl->audio_channel_info);
+#endif
+
 } /* hdmi_edid_extract_audio_data_blocks */
+
+#if defined(CONFIG_SEC_DISPLAYPORT)
+int get_audio_ch(void *input)
+{
+	struct hdmi_edid_ctrl *edid_ctrl = (struct hdmi_edid_ctrl *)input;
+	return edid_ctrl->audio_channel_info;
+}
+
+u32 secdp_get_max_pclk(void *input)
+{
+	struct hdmi_edid_ctrl *edid_ctrl = (struct hdmi_edid_ctrl *)input;
+	return edid_ctrl->init_data.max_pclk_khz;
+}
+#endif
 
 static void hdmi_edid_extract_speaker_allocation_data(
 	struct hdmi_edid_ctrl *edid_ctrl, const u8 *in_buf)
 {
 	u8 len;
 	const u8 *sadb = NULL;
+#ifdef CONFIG_SEC_DISPLAYPORT
+	u16 speaker_allocation = 0;
+#endif
 
 	if (!edid_ctrl) {
 		DEV_ERR("%s: invalid input\n", __func__);
@@ -1294,6 +1614,9 @@ static void hdmi_edid_extract_speaker_allocation_data(
 
 	memcpy(edid_ctrl->spkr_alloc_data_block, sadb + 1, len);
 	edid_ctrl->sadb_size = len;
+#ifdef CONFIG_SEC_DISPLAYPORT
+	speaker_allocation |= (sadb[1] & 0x7F);
+#endif
 
 	DEV_DBG("%s: EDID: speaker alloc data SP byte = %08x %s%s%s%s%s%s%s\n",
 		__func__, sadb[1],
@@ -1304,6 +1627,9 @@ static void hdmi_edid_extract_speaker_allocation_data(
 		(sadb[1] & BIT(4)) ? "RC," : "",
 		(sadb[1] & BIT(5)) ? "FLC/FRC," : "",
 		(sadb[1] & BIT(6)) ? "RLC/RRC," : "");
+#ifdef CONFIG_SEC_DISPLAYPORT
+	edid_ctrl->audio_channel_info |= (speaker_allocation << 8);
+#endif
 } /* hdmi_edid_extract_speaker_allocation_data */
 
 static void hdmi_edid_extract_sink_caps(struct hdmi_edid_ctrl *edid_ctrl,
@@ -1662,7 +1988,6 @@ static void hdmi_edid_detail_desc(struct hdmi_edid_ctrl *edid_ctrl,
 			(timing.refresh_rate % khz_to_hz) / 100,
 			(timing.refresh_rate % 100) / 10,
 			timing.refresh_rate % 10);
-
 		/*
 		 * Always add resolutions parsed from DTD in the reserved
 		 * timing info. This can avoid matching resolutions that have
@@ -1725,7 +2050,7 @@ static void hdmi_edid_add_sink_video_format(struct hdmi_edid_ctrl *edid_ctrl,
 		return;
 	}
 
-	DEV_DBG("%s: EDID: format: %d [%s], %s\n", __func__,
+	DEV_INFO("%s: EDID: format: %d [%s], %s\n", __func__,
 		video_format, msm_hdmi_mode_2string(video_format),
 		supported ? "Supported" : "Not-Supported");
 
@@ -2110,6 +2435,7 @@ static void hdmi_edid_get_display_mode(struct hdmi_edid_ctrl *edid_ctrl)
 		}
 	}
 
+
 	i = 0;
 	/* Read DTD resolutions from block0 */
 	while (4 > i && 0 != edid_blk0[0x36+desc_offset]) {
@@ -2302,6 +2628,11 @@ int hdmi_edid_parser(void *input)
 
 	edid_buf = edid_ctrl->edid_buf;
 
+#ifdef CONFIG_SEC_DISPLAYPORT
+	edid_ctrl->audio_channel_info = 1<<26;
+	secdp_init_resolution_config();
+#endif
+
 	DEV_DBG("%s: === HDMI EDID BLOCK 0 ===\n", __func__);
 	print_hex_dump(KERN_DEBUG, "HDMI EDID: ", DUMP_PREFIX_NONE, 16, 1,
 		edid_buf, EDID_BLOCK_SIZE, false);
@@ -2359,6 +2690,11 @@ int hdmi_edid_parser(void *input)
 	hdmi_edid_extract_3d_present(edid_ctrl, edid_buf);
 	hdmi_edid_extract_extended_data_blocks(edid_ctrl, edid_buf);
 
+#ifdef CONFIG_SEC_DISPLAYPORT
+	if (edid_ctrl->audio_channel_info & 0xff)
+		edid_ctrl->sink_mode = SINK_MODE_HDMI;
+#endif
+
 bail:
 	for (i = 1; i <= num_of_cea_blocks; i++) {
 		DEV_DBG("%s: === HDMI EDID BLOCK %d ===\n", __func__, i);
@@ -2369,11 +2705,28 @@ bail:
 
 	edid_ctrl->cea_blks = num_of_cea_blocks;
 
+#if defined(CONFIG_SEC_DISPLAYPORT) && defined(CONFIG_SEC_CHECK_RATIO)
+check_again:
+#endif
 	hdmi_edid_get_display_mode(edid_ctrl);
 
 	if (edid_ctrl->keep_resv_timings)
 		hdmi_edid_add_resv_timings(edid_ctrl);
 
+#if defined(CONFIG_SEC_DISPLAYPORT) && defined(CONFIG_SEC_CHECK_RATIO)
+	pr_info("%s, dex_res:%d, mirror_res:%d, g_ignore_ratio:%d\n", __func__, g_dex_max_res_index, g_max_res_index, g_ignore_ratio);
+	if (g_dex_max_res_index < 10 && !g_ignore_ratio) {
+
+		secdp_init_resolution_config();
+
+		g_ignore_ratio = true;
+		memset(&edid_ctrl->sink_data, 0, sizeof(edid_ctrl->sink_data));
+		hdmi_edid_set_video_resolution(edid_ctrl, edid_ctrl->default_vic, true);
+
+		pr_info("%s, edid parsing, again!\n", __func__);
+		goto check_again;
+	}
+#endif
 	return 0;
 
 err_invalid_header:

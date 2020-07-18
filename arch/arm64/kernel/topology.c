@@ -450,9 +450,6 @@ static void update_cpu_capacity(unsigned int cpu)
 	}
 
 	set_capacity_scale(cpu, capacity);
-
-	pr_info("CPU%d: update cpu_capacity %lu\n",
-		cpu, arch_scale_cpu_capacity(NULL, cpu));
 }
 
 static void update_siblings_masks(unsigned int cpuid)

@@ -61,6 +61,9 @@
 
 DEFINE_PER_CPU_READ_MOSTLY(int, cpu_number);
 EXPORT_PER_CPU_SYMBOL(cpu_number);
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/qcom/sec_debug.h>
+#endif
 
 /*
  * as from 2.5, kernels no longer have an init_tasks structure
@@ -131,6 +134,7 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
 	secondary_data.task = NULL;
 #endif
 	secondary_data.stack = NULL;
+	restore_pcpu_tick(cpu);
 
 	return ret;
 }
@@ -294,6 +298,8 @@ void __cpu_die(unsigned int cpu)
 	if (err)
 		pr_warn("CPU%d may not have shut down cleanly: %d\n",
 			cpu, err);
+
+	save_pcpu_tick(cpu);
 }
 
 /*
@@ -755,6 +761,9 @@ static void ipi_cpu_stop(unsigned int cpu, struct pt_regs *regs)
 		dump_stack();
 		dump_stack_minidump(regs->sp);
 		arm64_check_cache_ecc(NULL);
+#ifdef CONFIG_SEC_DEBUG
+		sec_debug_save_context();
+#endif
 		raw_spin_unlock(&stop_lock);
 	}
 

@@ -60,6 +60,10 @@
 
 #include "mdss_mdp_trace.h"
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#include "samsung/ss_dsi_panel_common.h"
+#endif
+
 #define AXI_HALT_TIMEOUT_US	0x4000
 #define AUTOSUSPEND_TIMEOUT_MS	200
 #define DEFAULT_MDP_PIPE_WIDTH	2048
@@ -105,7 +109,11 @@ static struct mdss_panel_intf pan_types[] = {
 	{"edp", MDSS_PANEL_INTF_EDP},
 	{"hdmi", MDSS_PANEL_INTF_HDMI},
 };
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+char mdss_mdp_panel[MDSS_MAX_PANEL_LEN];
+#else
 static char mdss_mdp_panel[MDSS_MAX_PANEL_LEN];
+#endif
 
 struct mdss_hw mdss_mdp_hw = {
 	.hw_ndx = MDSS_HW_MDP,
@@ -387,6 +395,8 @@ static irqreturn_t mdss_irq_handler(int irq, void *ptr)
 		return IRQ_NONE;
 	else if (!mdss_get_irq_enable_state(&mdss_mdp_hw))
 		return IRQ_HANDLED;
+
+	MDSS_XLOG(mdss_get_irq_enable_state(&mdss_mdp_hw),0x1111);
 
 	intr = MDSS_REG_READ(mdata, MDSS_REG_HW_INTR_STATUS);
 
@@ -825,11 +835,13 @@ u32 mdss_mdp_get_irq_mask(u32 intr_type, u32 intf_num)
 
 void mdss_mdp_enable_hw_irq(struct mdss_data_type *mdata)
 {
+	MDSS_XLOG(0x1111);
 	mdata->mdss_util->enable_irq(&mdss_mdp_hw);
 }
 
 void mdss_mdp_disable_hw_irq(struct mdss_data_type *mdata)
 {
+	MDSS_XLOG(0x1111);
 	if (!is_mdp_irq_enabled())
 		mdata->mdss_util->disable_irq(&mdss_mdp_hw);
 }
@@ -851,6 +863,8 @@ void mdss_mdp_irq_clear(struct mdss_data_type *mdata,
 
 	irq = mdp_irq_map[irq_idx];
 	reg = mdp_intr_reg[irq.reg_idx];
+
+	MDSS_XLOG(irq.irq_mask);
 
 	pr_debug("clearing mdp irq mask=%x\n", irq.irq_mask);
 	spin_lock_irqsave(&mdp_lock, irq_flags);
@@ -876,6 +890,8 @@ int mdss_mdp_irq_enable(u32 intr_type, u32 intf_num)
 	irq = mdp_irq_map[irq_idx];
 	reg = mdp_intr_reg[irq.reg_idx];
 
+	MDSS_XLOG(mdata->mdp_irq_mask[irq.reg_idx],irq.irq_mask);
+
 	spin_lock_irqsave(&mdp_lock, irq_flags);
 	if (mdata->mdp_irq_mask[irq.reg_idx] & irq.irq_mask) {
 		pr_warn("MDSS MDP IRQ-0x%x is already set, mask=%x\n",
@@ -898,6 +914,8 @@ int mdss_mdp_hist_irq_enable(u32 irq)
 {
 	int ret = 0;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+
+	MDSS_XLOG(mdata->mdp_hist_irq_mask,irq);
 
 	if (mdata->mdp_hist_irq_mask & irq) {
 		pr_warn("MDSS MDP Hist IRQ-0x%x is already set, mask=%x\n",
@@ -933,6 +951,8 @@ void mdss_mdp_irq_disable(u32 intr_type, u32 intf_num)
 
 	irq =  mdp_irq_map[irq_idx];
 	reg = mdp_intr_reg[irq.reg_idx];
+
+	MDSS_XLOG(mdata->mdp_irq_mask[irq.reg_idx],irq.irq_mask);
 
 	spin_lock_irqsave(&mdp_lock, irq_flags);
 	if (!(mdata->mdp_irq_mask[irq.reg_idx] & irq.irq_mask)) {
@@ -982,6 +1002,8 @@ void mdss_mdp_hist_irq_disable(u32 irq)
 {
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 
+	MDSS_XLOG(mdata->mdp_hist_irq_mask,irq,is_mdp_irq_enabled());
+
 	if (!(mdata->mdp_hist_irq_mask & irq)) {
 		pr_warn("MDSS MDP IRQ-%x is NOT set, mask=%x\n",
 				irq, mdata->mdp_hist_irq_mask);
@@ -1019,6 +1041,8 @@ void mdss_mdp_irq_disable_nosync(u32 intr_type, u32 intf_num)
 
 	irq = mdp_irq_map[irq_idx];
 	reg = mdp_intr_reg[irq.reg_idx];
+
+	MDSS_XLOG(mdata->mdp_irq_mask[irq.reg_idx],irq.irq_mask);
 
 	if (!(mdata->mdp_irq_mask[irq.reg_idx] & irq.irq_mask)) {
 		pr_warn("MDSS MDP IRQ-%x is NOT set, mask=%x\n",
@@ -1223,6 +1247,7 @@ static int mdss_mdp_clk_update(u32 clk_idx, u32 enable)
 						mdata->max_mdp_clk_rate, true);
 				} else {
 					clk_set_rate(clk, mdata->mdp_clk_rate);
+					pr_debug("mdp clk rate=%lu\n", mdata->mdp_clk_rate);
 				}
 			}
 
@@ -1266,6 +1291,7 @@ void mdss_mdp_set_clk_rate(unsigned long rate, bool locked)
 
 		if (!locked)
 			mutex_lock(&mdp_clk_lock);
+
 		if (min_clk_rate < mdata->max_mdp_clk_rate)
 			clk_rate = clk_round_rate(clk, min_clk_rate);
 		else
@@ -1823,7 +1849,8 @@ static int mdss_mdp_gdsc_notifier_call(struct notifier_block *self,
 	mdata = container_of(self, struct mdss_data_type, gdsc_cb);
 
 	if (event & REGULATOR_EVENT_ENABLE) {
-		__mdss_restore_sec_cfg(mdata);
+		if (mdss_mdp_req_init_restore_cfg(mdata))
+			__mdss_restore_sec_cfg(mdata);
 	} else if (event & REGULATOR_EVENT_PRE_DISABLE) {
 		int active_cnt = atomic_read(&mdata->active_intf_cnt);
 
@@ -2033,8 +2060,8 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 	mdata->hflip_buffer_reused = true;
 	/* prevent disable of prefill calculations */
 	mdata->min_prefill_lines = 0xffff;
-	/* clock gating feature is enabled by default */
-	mdata->enable_gate = true;
+	/* clock gating feature is disabled by default */
+	mdata->enable_gate = false;
 	mdata->pixel_ram_size = 0;
 	mem_protect_sd_ctrl_id = MEM_PROTECT_SD_CTRL_FLAT;
 
@@ -3140,6 +3167,10 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 			mdss_mdp_footswitch_ctrl_splash(true);
 	}
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	if (!mdss_panel_attached(DISPLAY_1) && !mdss_panel_attached(DISPLAY_2))
+		mdata->handoff_pending = false;
+#endif
 	mdp_intr_cb  = kcalloc(ARRAY_SIZE(mdp_irq_map),
 			sizeof(struct intr_callback), GFP_KERNEL);
 	if (mdp_intr_cb == NULL)
@@ -3232,7 +3263,7 @@ int mdss_mdp_parse_dt_hw_settings(struct platform_device *pdev)
 	vbif_arr = of_get_property(pdev->dev.of_node, "qcom,vbif-settings",
 			&vbif_len);
 	if (!vbif_arr || (vbif_len & 1)) {
-		pr_debug("MDSS VBIF settings not found\n");
+		pr_warn("MDSS VBIF settings not found\n");
 		vbif_len = 0;
 	}
 	vbif_len /= 2 * sizeof(u32);
@@ -3248,7 +3279,7 @@ int mdss_mdp_parse_dt_hw_settings(struct platform_device *pdev)
 	mdp_arr = of_get_property(pdev->dev.of_node, "qcom,mdp-settings",
 			&mdp_len);
 	if (!mdp_arr || (mdp_len & 1)) {
-		pr_debug("MDSS MDP settings not found\n");
+		pr_warn("MDSS MDP settings not found\n");
 		mdp_len = 0;
 	}
 	mdp_len /= 2 * sizeof(u32);
@@ -5195,7 +5226,7 @@ void mdss_mdp_footswitch_ctrl(struct mdss_data_type *mdata, int on)
 {
 	int ret;
 	int active_cnt = 0;
-	bool footswitch_suspend = false;
+	bool footswitch_suspend = false; 
 
 	if (!mdata->fs)
 		return;
@@ -5212,11 +5243,11 @@ void mdss_mdp_footswitch_ctrl(struct mdss_data_type *mdata, int on)
 					pr_err("core_gdsc failed to enable\n");
 			}
 
-			/*
-			 * Advise RPM to not turn MMSS GDSC off, this will
-			 * ensure that GDSC off is maintained during Active
-			 * display and during Idle display
-			 */
+			/* 
+			* Advise RPM to not turn MMSS GDSC off, this will 
+			* ensure that GDSC off is maintained during Active 
+			* display and during Idle display 
+			*/ 
 			if (mdss_has_quirk(mdata,
 					MDSS_QUIRK_MMSS_GDSC_COLLAPSE))
 				mdss_rpm_set_msg_ram(true);
@@ -5263,14 +5294,14 @@ void mdss_mdp_footswitch_ctrl(struct mdss_data_type *mdata, int on)
 			regulator_disable(mdata->fs);
 			if (mdata->core_gdsc)
 				regulator_disable(mdata->core_gdsc);
-
-			if (footswitch_suspend) {
-				/*
-				 * Advise RPM to turn MMSS GDSC off during
-				 * suspend case, do this after the MDSS GDSC
-				 * regulator OFF, so we can ensure that MMSS
-				 * GDSC will go OFF after the MDSS GDSC
-				 * regulator
+			
+			if (footswitch_suspend) { 
+				/* 
+			 	 * Advise RPM to turn MMSS GDSC off during 
+				 * suspend case, do this after the MDSS GDSC 
+				 * regulator OFF, so we can ensure that MMSS 
+				 * GDSC will go OFF after the MDSS GDSC 
+				 * regulator 
 				 */
 				if (mdss_has_quirk(mdata,
 						MDSS_QUIRK_MMSS_GDSC_COLLAPSE))

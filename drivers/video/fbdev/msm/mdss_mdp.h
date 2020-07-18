@@ -57,7 +57,11 @@
 #define C0_G_Y		0	/* G/luma */
 
 /* wait for at most 2 vsync for lowest refresh rate (24hz) */
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#define KOFF_TIMEOUT_MS 1000
+#else
 #define KOFF_TIMEOUT_MS 84
+#endif
 #define KOFF_TIMEOUT msecs_to_jiffies(KOFF_TIMEOUT_MS)
 
 #define OVERFETCH_DISABLE_TOP		BIT(0)
@@ -268,6 +272,8 @@ enum mdss_mdp_csc_type {
 	MDSS_MDP_CSC_YUV2RGB_709L,
 	MDSS_MDP_CSC_YUV2RGB_2020L,
 	MDSS_MDP_CSC_YUV2RGB_2020FR,
+	MDSS_MDP_CSC_YUV2RGB_P3L,
+	MDSS_MDP_CSC_YUV2RGB_P3FR,	
 	MDSS_MDP_CSC_RGB2YUV_601L,
 	MDSS_MDP_CSC_RGB2YUV_601FR,
 	MDSS_MDP_CSC_RGB2YUV_709L,
@@ -451,6 +457,10 @@ struct mdss_mdp_ctl_intfs_ops {
 
 	/* to wait for vsync */
 	int (*wait_for_vsync_fnc)(struct mdss_mdp_ctl *ctl);
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	int (*wait_video_pingpong) (struct mdss_mdp_ctl *ctl, void *arg);
+#endif
 };
 
 struct mdss_mdp_cwb {
@@ -933,6 +943,7 @@ struct mdss_mdp_writeback_arg {
 struct mdss_mdp_wfd;
 
 struct mdss_overlay_private {
+	bool vsync_en;
 	ktime_t vsync_time;
 	ktime_t lineptr_time;
 	struct kernfs_node *vsync_event_sd;
@@ -1517,6 +1528,10 @@ static inline uint8_t pp_vig_csc_pipe_val(struct mdss_mdp_pipe *pipe)
 		return MDSS_MDP_CSC_YUV2RGB_2020L;
 	case MDP_CSC_ITU_R_2020_FR:
 		return MDSS_MDP_CSC_YUV2RGB_2020FR;
+	case MDP_CSC_ITU_R_P3:
+		return MDSS_MDP_CSC_YUV2RGB_P3L;
+	case MDP_CSC_ITU_R_P3_FR:
+		return MDSS_MDP_CSC_YUV2RGB_P3FR;		
 	case MDP_CSC_ITU_R_709:
 	default:
 		return  MDSS_MDP_CSC_YUV2RGB_709L;
@@ -2014,6 +2029,10 @@ bool mdss_mdp_is_wb_mdp_intf(u32 num, u32 reg_index);
 struct mdss_mdp_writeback *mdss_mdp_wb_assign(u32 id, u32 reg_index);
 struct mdss_mdp_writeback *mdss_mdp_wb_alloc(u32 caps, u32 reg_index);
 void mdss_mdp_wb_free(struct mdss_mdp_writeback *wb);
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+void samsung_timing_engine_control(int enable);
+#endif
 
 void mdss_mdp_ctl_dsc_setup(struct mdss_mdp_ctl *ctl,
 	struct mdss_panel_info *pinfo);

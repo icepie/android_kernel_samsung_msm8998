@@ -22,6 +22,10 @@
 #include "mdss_mdp.h"
 #include "mdss_debug.h"
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#include "samsung/ss_dsi_panel_common.h" /* UTIL HEADER */
+#endif
+
 #ifdef CONFIG_FB_MSM_MDSS_XLOG_DEBUG
 #define XLOG_DEFAULT_ENABLE 1
 #else
@@ -46,7 +50,7 @@
  * number must be greater than print entry to prevent out of bound xlog
  * entry array access.
  */
-#define MDSS_XLOG_ENTRY	(MDSS_XLOG_PRINT_ENTRY * 4)
+#define MDSS_XLOG_ENTRY	(MDSS_XLOG_PRINT_ENTRY * 16)
 #define MDSS_XLOG_MAX_DATA 15
 #define MDSS_XLOG_BUF_MAX 512
 #define MDSS_XLOG_BUF_ALIGN 32
@@ -193,11 +197,21 @@ static bool __mdss_xlog_dump_calc_range(void)
 			xlog->last += MDSS_XLOG_ENTRY;
 	}
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	/* To pull out more log */
+	if ((xlog->last - xlog->first) > MDSS_XLOG_ENTRY) {
+		pr_warn("xlog buffer overflow before dump: %d\n",
+			xlog->last - xlog->first);
+		xlog->first = xlog->last - MDSS_XLOG_ENTRY;
+	}
+#else
 	if ((xlog->last - xlog->first) > MDSS_XLOG_PRINT_ENTRY) {
 		pr_warn("xlog buffer overflow before dump: %d\n",
 			xlog->last - xlog->first);
 		xlog->first = xlog->last - MDSS_XLOG_PRINT_ENTRY;
 	}
+#endif
+
 	next = xlog->first + 1;
 
 dump_exit:
@@ -504,9 +518,14 @@ void mdss_dump_reg(const char *dump_name, u32 reg_dump_flag, char *addr,
 		x8 = readl_relaxed(addr+0x8);
 		xc = readl_relaxed(addr+0xc);
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		if (in_log)
+			pr_err("%04x : %08x %08x %08x %08x\n", i * 16, x0, x4, x8, xc);
+#else
 		if (in_log)
 			pr_info("%pK : %08x %08x %08x %08x\n", addr, x0, x4, x8,
 				xc);
+#endif
 
 		if (dump_addr && in_mem) {
 			dump_addr[i*4] = x0;
@@ -627,6 +646,7 @@ static void mdss_xlog_dump_array(struct mdss_debug_base *blk_arr[],
 	u32 len, bool dead, const char *name, bool dump_dbgbus,
 	bool dump_vbif_dbgbus, bool dump_dsi_dbgbus)
 {
+#if !defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 	int i;
 
 	for (i = 0; i < len; i++) {
@@ -634,8 +654,31 @@ static void mdss_xlog_dump_array(struct mdss_debug_base *blk_arr[],
 			mdss_dump_reg_by_ranges(blk_arr[i],
 				mdss_dbg_xlog.enable_reg_dump);
 	}
+#endif
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = samsung_get_vdd();
+
+	pr_err("%s : blank_mode = %d\n", __func__, vdd->vdd_blank_mode[DISPLAY_1]);
+	if (mdss_samsung_dsi_te_check(vdd) && 
+		(vdd->vdd_blank_mode[DISPLAY_1] != FB_BLANK_POWERDOWN)) {
+		pr_err("%s : recovery need..\n", __func__);
+		mdss_fb_report_panel_dead(pstatus_data->mfd);
+		return;
+	}
+
+	mdss_samsung_store_xlog_panic_dbg();
+	mdss_samsung_dump_xlog();
+#endif
 
 	mdss_xlog_dump_all();
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	mdss_samsung_dump_regs();
+	mdss_samsung_dsi_dump_regs(vdd, DSI_CTRL_0);
+	mdss_samsung_dsi_dump_regs(vdd, DSI_CTRL_1);
+	pr_err("dbgbus:%d vbifbus:%d\n", dump_dbgbus, dump_vbif_dbgbus);
+#endif
 
 	if (dump_dbgbus)
 		mdss_dump_debug_bus(mdss_dbg_xlog.enable_dbgbus_dump,
@@ -724,6 +767,13 @@ void mdss_xlog_tout_handler_default(bool queue, const char *name, ...)
 		if (!strcmp(blk_name, "panic"))
 			dead = true;
 	}
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	dump_stack();
+	if (dead == true)
+		mdss_dbg_xlog.xlog_enable = 0;
+#endif
+
 	va_end(args);
 
 	if (queue) {
@@ -771,7 +821,19 @@ static ssize_t mdss_xlog_dump_read(struct file *file, char __user *buff,
 static ssize_t mdss_xlog_dump_write(struct file *file,
 	const char __user *user_buf, size_t count, loff_t *ppos)
 {
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = samsung_get_vdd();
+#endif
+
 	mdss_dump_reg_all();
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	mdss_samsung_dsi_te_check(vdd);
+	mdss_samsung_dump_regs();
+	mdss_samsung_dump_xlog();
+	mdss_samsung_dsi_dump_regs(vdd, DSI_CTRL_0);
+	mdss_samsung_dsi_dump_regs(vdd, DSI_CTRL_1);
+#endif
 
 	mdss_xlog_dump_all();
 
@@ -829,6 +891,11 @@ int mdss_create_xlog_debug(struct mdss_debug_data *mdd)
 	pr_info("xlog_status: enable:%d, panic:%d, dump:%d\n",
 		mdss_dbg_xlog.xlog_enable, mdss_dbg_xlog.panic_on_err,
 		mdss_dbg_xlog.enable_reg_dump);
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	mdss_dbg_xlog.xlog_enable = MDSS_XLOG_DEFAULT | MDSS_XLOG_IOMMU \
+		| MDSS_XLOG_DBG | MDSS_XLOG_ALL;
+#endif
 
 	return 0;
 }

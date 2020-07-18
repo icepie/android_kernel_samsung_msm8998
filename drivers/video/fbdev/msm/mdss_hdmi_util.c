@@ -559,6 +559,11 @@ int msm_hdmi_get_timing_info(
 	case HDMI_VFRMT_640x480p59_4_3:
 		MSM_HDMI_MODES_GET_DETAILS(mode, HDMI_VFRMT_640x480p59_4_3);
 		break;
+#ifdef CONFIG_SEC_DISPLAYPORT
+	case HDMI_VFRMT_2560x1080p60_64_27:
+		MSM_HDMI_MODES_GET_DETAILS(mode, HDMI_VFRMT_2560x1080p60_64_27);
+		break;
+#endif
 	default:
 		ret = hdmi_get_resv_timing_info(mode, id);
 	}

@@ -109,6 +109,9 @@ ENDPROC(flush_cache_all)
  *	- end     - virtual end address of region
  */
 ENTRY(flush_icache_range)
+#ifdef CONFIG_RKP_CFP_JOPP
+FALLTHROUGH(__flush_cache_user_range)
+#endif
 	/* FALLTHROUGH */
 
 /*
@@ -187,6 +190,9 @@ ENDPROC(__clean_dcache_area_pou)
  *	- end     - end address of region
  */
 ENTRY(__inval_cache_range)
+#ifdef CONFIG_RKP_CFP_JOPP
+FALLTHROUGH(__dma_inv_range)
+#endif
 	/* FALLTHROUGH */
 
 /*

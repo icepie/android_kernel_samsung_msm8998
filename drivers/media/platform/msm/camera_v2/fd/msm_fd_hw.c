@@ -1233,6 +1233,7 @@ int msm_fd_hw_buffer_done(struct msm_fd_device *fd,
 		atomic_set(&buffer->active, 0);
 		complete_all(&buffer->completion);
 	} else {
+		dev_err(fd->dev, "Buffer is not active in buf done\n");
 		ret = -1;
 	}
 
@@ -1317,8 +1318,6 @@ int msm_fd_hw_schedule_next_buffer(struct msm_fd_device *fd, u8 lock_flag)
 			dev_err(fd->dev, "No Buffer in recovery mode.Device Idle\n");
 	}
 	MSM_FD_SPIN_UNLOCK(fd->slock, lock_flag);
-
-	msm_fd_hw_update_settings(fd, buf);
 
 	return 0;
 }

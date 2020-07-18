@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -133,11 +133,14 @@ static int qti_ice_setting_config(struct request *req,
 		memcpy(&setting->crypto_data, crypto_data,
 				sizeof(setting->crypto_data));
 
-		if (rq_data_dir(req) == WRITE)
+		if (unlikely(req->cmd_flags & REQ_BYPASS)) {
+			setting->encr_bypass = true;
+			setting->decr_bypass = true;
+		} else if (rq_data_dir(req) == WRITE) {
 			setting->encr_bypass = false;
-		else if (rq_data_dir(req) == READ)
+		} else if (rq_data_dir(req) == READ) {
 			setting->decr_bypass = false;
-		else {
+		} else {
 			/* Should I say BUG_ON */
 			setting->encr_bypass = true;
 			setting->decr_bypass = true;
@@ -1140,7 +1143,6 @@ static int qcom_ice_finish_power_collapse(struct ice_device *ice_dev)
 				err = -EFAULT;
 				goto out;
 			}
-
 		/*
 		 * ICE looses its key configuration when UFS is reset,
 		 * restore it
@@ -1729,7 +1731,7 @@ int qcom_ice_setup_ice_hw(const char *storage_type, int enable)
 	if (ice_dev == ERR_PTR(-EPROBE_DEFER))
 		return -EPROBE_DEFER;
 
-	if (!ice_dev)
+	if (!ice_dev || (ice_dev->is_ice_enabled == false))
 		return ret;
 
 	if (enable)

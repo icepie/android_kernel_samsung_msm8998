@@ -671,6 +671,17 @@ static void sde_hw_rotator_setup_fetchengine(struct sde_hw_rotator_context *ctx,
 	 * shaping when content is 4k@30fps. The actual traffic shaping
 	 * bandwidth calculation is done in output setup.
 	 */
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	/* UHD Performance : enable traffic shaper just for UHD video clip of which the fomat is UBWC */
+	if (((cfg->src_rect->w * cfg->src_rect->h) >= RES_UHD) &&
+			(cfg->fps <= 30) && (sde_mdp_is_ubwc_format(fmt))) {
+		SDEROT_DBG("Enable Traffic Shaper \n");
+		ctx->is_traffic_shaping = true;
+	} else {
+		SDEROT_DBG("Disable Traffic Shaper\n");
+		ctx->is_traffic_shaping = false;
+	}
+#else
 	if (((cfg->src_rect->w * cfg->src_rect->h) >= RES_UHD) &&
 			(cfg->fps <= 30)) {
 		SDEROT_DBG("Enable Traffic Shaper\n");
@@ -679,7 +690,7 @@ static void sde_hw_rotator_setup_fetchengine(struct sde_hw_rotator_context *ctx,
 		SDEROT_DBG("Disable Traffic Shaper\n");
 		ctx->is_traffic_shaping = false;
 	}
-
+#endif
 	/* Update command queue write ptr */
 	sde_hw_rotator_put_regdma_segment(ctx, wrptr);
 }
@@ -1847,7 +1858,7 @@ static int sde_hw_rotator_config(struct sde_rot_hw_resource *hw,
 		sde_mdp_set_ot_limit(&ot_params);
 	}
 
-	if (mdata->default_ot_wr_limit) {
+	if (mdata->default_ot_wr_limit && !ctx->is_traffic_shaping) {
 		struct sde_mdp_set_ot_params ot_params;
 
 		memset(&ot_params, 0, sizeof(struct sde_mdp_set_ot_params));

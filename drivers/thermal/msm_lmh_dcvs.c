@@ -56,7 +56,7 @@
 
 #define MSM_LIMITS_DOMAIN_MAX		0x444D4158
 
-#define MSM_LIMITS_HIGH_THRESHOLD_VAL	95000
+#define MSM_LIMITS_HIGH_THRESHOLD_VAL	85000
 #define MSM_LIMITS_ARM_THRESHOLD_VAL	65000
 #define MSM_LIMITS_LOW_THRESHOLD_OFFSET 500
 #define MSM_LIMITS_POLLING_DELAY_MS	10
@@ -92,9 +92,25 @@ struct msm_lmh_dcvs_hw {
 	uint32_t hw_freq_limit;
 	struct list_head list;
 	DECLARE_BITMAP(is_irq_enabled, 1);
+#ifdef CONFIG_SEC_PM
+	uint32_t prev_max_freq;
+	uint32_t lowest_freq;
+	bool limiting;
+#endif
 };
 
 LIST_HEAD(lmh_dcvs_hw_list);
+
+#ifdef CONFIG_SEC_PM
+#include <linux/ipc_logging.h>
+void *lmh_dcvs_ipc_log;
+#define LMHDCVS_IPC_LOG_PAGES	10
+#define LMHDCVS_IPC_LOG(msg...)					\
+	do {							\
+		if (lmh_dcvs_ipc_log)				\
+			ipc_log_string(lmh_dcvs_ipc_log, msg);	\
+	} while (0)
+#endif
 
 static void msm_lmh_dcvs_get_max_freq(uint32_t cpu, uint32_t *max_freq)
 {
@@ -166,12 +182,27 @@ static void msm_lmh_dcvs_poll(unsigned long data)
 	max_limit = msm_lmh_mitigation_notify(hw);
 	if (max_limit >= hw->max_freq) {
 		del_timer(&hw->poll_timer);
+#ifdef CONFIG_SEC_PM
+		LMHDCVS_IPC_LOG("Finished lmh cpu%d, lowest freq %d\n",
+			cpumask_first(&hw->core_map), hw->lowest_freq);
+		hw->limiting = false;
+		hw->lowest_freq = UINT_MAX;
+#endif
 		writel_relaxed(0xFF, hw->int_clr_reg);
 		set_bit(1, hw->is_irq_enabled);
 		enable_irq(hw->irq_num);
 	} else {
 		mod_timer(&hw->poll_timer, jiffies + msecs_to_jiffies(
 			MSM_LIMITS_POLLING_DELAY_MS));
+	}
+
+#ifdef CONFIG_SEC_PM
+	if (max_limit < hw->lowest_freq)
+		hw->lowest_freq = max_limit;
+
+	if ((hw->limiting == true) && (hw->prev_max_freq != max_limit)) {
+		hw->prev_max_freq = max_limit;
+#endif
 	}
 }
 
@@ -190,6 +221,12 @@ static irqreturn_t lmh_dcvs_handle_isr(int irq, void *data)
 	struct msm_lmh_dcvs_hw *hw = data;
 
 	lmh_dcvs_notify(hw);
+#ifdef CONFIG_SEC_PM
+		LMHDCVS_IPC_LOG("Start lmh cpu%d @%d\n",
+			cpumask_first(&hw->core_map), hw->hw_freq_limit);
+#endif
+	hw->limiting = true;
+
 	return IRQ_HANDLED;
 }
 
@@ -415,6 +452,9 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 	uint32_t id, max_freq, request_reg, clear_reg;
 	int cpu;
 	cpumask_t mask = { CPU_BITS_NONE };
+#ifdef CONFIG_SEC_PM
+	int hi_temp;	/* for dynamic thermal threshold for each model from dt */
+#endif
 
 	for_each_possible_cpu(cpu) {
 		cpu_node = of_cpu_device_node_get(cpu);
@@ -465,9 +505,27 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 	hw->default_lo.trip = THERMAL_TRIP_CONFIGURABLE_LOW;
 	hw->default_lo.notify = trip_notify;
 
+
+/* for dynamic thermal threshold for each model from dt */
+#ifdef CONFIG_SEC_PM
+	hi_temp = 0;
+	ret = of_property_read_u32(dn, "ss,high-thresh", &hi_temp);
+	if (ret)
+		hw->default_hi.temp = MSM_LIMITS_HIGH_THRESHOLD_VAL;
+	else
+		hw->default_hi.temp = hi_temp;
+
+	pr_info("%s: LMh threshold: %lu\n", __func__, hw->default_hi.temp);
+#else
 	hw->default_hi.temp = MSM_LIMITS_HIGH_THRESHOLD_VAL;
+#endif
+
 	hw->default_hi.trip = THERMAL_TRIP_CONFIGURABLE_HI;
 	hw->default_hi.notify = trip_notify;
+
+#ifdef CONFIG_SEC_PM
+	hw->limiting = false;
+#endif	
 
 	/*
 	 * Setup virtual thermal zones for each LMH-DCVS hardware
@@ -562,6 +620,15 @@ static int msm_lmh_dcvs_probe(struct platform_device *pdev)
 	/* Better register explicitly for 1st CPU of each HW */
 	lmh_dcvs_cpu_callback(&lmh_dcvs_cpu_notifier, CPU_ONLINE,
 			(void *)(long)cpumask_first(&hw->core_map));
+
+#ifdef CONFIG_SEC_PM
+	if (!lmh_dcvs_ipc_log)
+		lmh_dcvs_ipc_log = ipc_log_context_create(
+					LMHDCVS_IPC_LOG_PAGES, "lmh_dcvs", 0);
+
+	if (!lmh_dcvs_ipc_log)
+		pr_err("%s: Failed to create lmh logging context\n", __func__);
+#endif
 
 	return ret;
 }

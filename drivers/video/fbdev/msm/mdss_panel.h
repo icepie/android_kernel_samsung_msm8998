@@ -114,6 +114,15 @@ enum {
 	MDSS_PANEL_POWER_LCD_DISABLED,
 };
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+enum {
+	MDSS_PANEL_BLANK_BLANK = 0,
+	MDSS_PANEL_BLANK_UNBLANK,
+	MDSS_PANEL_BLANK_LOW_POWER,
+	MDSS_PANEL_BLANK_READY_TO_UNBLANK,
+};
+#endif
+
 enum {
 	MDSS_PANEL_LOW_PERSIST_MODE_OFF = 0,
 	MDSS_PANEL_LOW_PERSIST_MODE_ON,
@@ -308,6 +317,16 @@ enum mdss_intf_events {
 	MDSS_EVENT_DSI_TIMING_DB_CTRL,
 	MDSS_EVENT_AVR_MODE,
 	MDSS_EVENT_REGISTER_CLAMP_HANDLER,
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	MDSS_SAMSUNG_EVENT_START,
+	MDSS_SAMSUNG_EVENT_FRAME_UPDATE,
+	MDSS_SAMSUNG_EVENT_FB_EVENT_CALLBACK,
+	MDSS_SAMSUNG_EVENT_PANEL_RECOVERY,
+	MDSS_SAMSUNG_EVENT_PANEL_ESD_RECOVERY,
+	MDSS_SAMSUNG_EVENT_MULTI_RESOLUTION_START,
+	MDSS_SAMSUNG_EVENT_MULTI_RESOLUTION_END,
+	MDSS_SAMSUNG_EVENT_MAX,
+#endif
 	MDSS_EVENT_MAX,
 };
 
@@ -515,6 +534,8 @@ struct mipi_panel_info {
 	char insert_dcs_cmd;
 	char wr_mem_continue;
 	char wr_mem_start;
+	char wr_sidemem_continue;
+	char wr_sidemem_start;
 	char te_sel;
 	char stream;	/* 0 or 1 */
 	char mdp_trigger;
@@ -805,9 +826,6 @@ struct mdss_panel_info {
 	int pwm_lpg_chan;
 	int pwm_period;
 	bool dynamic_fps;
-	bool dynamic_bitclk;
-	u32 *supp_bitclks;
-	u32 supp_bitclk_len;
 	bool ulps_feature_enabled;
 	bool ulps_suspend_enabled;
 	bool panel_ack_disabled;
@@ -845,6 +863,9 @@ struct mdss_panel_info {
 	u32 partial_update_roi_merge;
 	struct ion_handle *splash_ihdl;
 	int panel_power_state;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	int blank_state;
+#endif
 	int compression_mode;
 
 	uint32_t panel_dead;
@@ -932,6 +953,9 @@ struct mdss_panel_info {
 
 	/* esc clk recommended for the panel */
 	u32 esc_clk_rate_hz;
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	int panel_state;
+#endif
 };
 
 struct mdss_panel_timing {
@@ -1005,6 +1029,10 @@ struct mdss_panel_data {
 
 	int panel_te_gpio;
 	struct completion te_done;
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	void *panel_private;
+#endif
 };
 
 struct mdss_panel_debugfs_info {

@@ -72,6 +72,7 @@
 #include <linux/types.h>
 #include <linux/socket.h>
 #include <linux/in.h>
+#include <linux/in6.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -99,6 +100,7 @@
 #include <linux/netdevice.h>
 #include <net/checksum.h>
 #include <net/ip.h>
+#include <net/ipv6.h>
 #include <net/protocol.h>
 #include <net/arp.h>
 #include <net/route.h>
@@ -402,7 +404,6 @@ out_rcu_unlock:
 	rcu_read_unlock();
 	goto out;
 }
-
 
 /*
  *	The peer socket should always be NULL (or else). When we call this
@@ -746,7 +747,7 @@ EXPORT_SYMBOL(inet_getname);
 int inet_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
-
+	int err;
 	sock_rps_record_flow(sk);
 
 	/* We may need to bind the socket. */
@@ -754,7 +755,8 @@ int inet_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 	    inet_autobind(sk))
 		return -EAGAIN;
 
-	return sk->sk_prot->sendmsg(sk, msg, size);
+	err = sk->sk_prot->sendmsg(sk, msg, size);
+	return err;
 }
 EXPORT_SYMBOL(inet_sendmsg);
 
@@ -787,8 +789,9 @@ int inet_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 
 	err = sk->sk_prot->recvmsg(sk, msg, size, flags & MSG_DONTWAIT,
 				   flags & ~MSG_DONTWAIT, &addr_len);
-	if (err >= 0)
+	if (err >= 0) {
 		msg->msg_namelen = addr_len;
+	}
 	return err;
 }
 EXPORT_SYMBOL(inet_recvmsg);

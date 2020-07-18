@@ -143,6 +143,9 @@ out:
 }
 
 struct workqueue_struct *ext4_read_workqueue;
+#if defined(CONFIG_EXT4_SEC_CRYPTO_EXTENSION) && defined (CONFIG_CRYPTO_FIPS)
+struct crypto_rng *ext4_crypto_rng;
+#endif
 static DEFINE_MUTEX(crypto_init);
 
 /**
@@ -167,6 +170,11 @@ void ext4_exit_crypto(void)
 	if (ext4_crypt_info_cachep)
 		kmem_cache_destroy(ext4_crypt_info_cachep);
 	ext4_crypt_info_cachep = NULL;
+#if defined(CONFIG_EXT4_SEC_CRYPTO_EXTENSION) && defined (CONFIG_CRYPTO_FIPS)
+	if (ext4_crypto_rng)
+		ext4_sec_free_rng(ext4_crypto_rng);
+	ext4_crypto_rng = NULL;
+#endif
 }
 
 /**

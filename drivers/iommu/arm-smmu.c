@@ -55,6 +55,8 @@
 
 #include "io-pgtable.h"
 
+#include <linux/qcom/sec_debug.h>
+
 /* Maximum number of stream IDs assigned to a single device */
 #define MAX_MASTER_STREAMIDS		45
 
@@ -1375,6 +1377,8 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 	bool non_fatal_fault = smmu_domain->non_fatal_faults;
 	struct arm_smmu_master *master;
 
+	ex_info_smmu_t sec_dbg_smmu;
+
 	static DEFINE_RATELIMIT_STATE(_rs,
 				      DEFAULT_RATELIMIT_INTERVAL,
 				      DEFAULT_RATELIMIT_BURST);
@@ -1407,6 +1411,11 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 	if (fatal_asf && (fsr & FSR_ASF)) {
 		dev_err(smmu->dev,
 			"Took an address size fault.  Refusing to recover.\n");
+		snprintf(sec_dbg_smmu.dev_name, sizeof(sec_dbg_smmu.dev_name), "%s", dev_name(smmu->dev));
+		sec_dbg_smmu.fsr = fsr;
+		
+		sec_debug_save_smmu_info(&sec_dbg_smmu);
+
 		BUG();
 	}
 
@@ -1480,6 +1489,19 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 		if (!non_fatal_fault) {
 			dev_err(smmu->dev,
 				"Unhandled context faults are fatal on this domain. Going down now...\n");
+			snprintf(sec_dbg_smmu.dev_name, sizeof(sec_dbg_smmu.dev_name), "%s", dev_name(smmu->dev));
+			sec_dbg_smmu.fsr = fsr;
+			sec_dbg_smmu.fsynr = fsynr;
+			sec_dbg_smmu.iova = iova;
+			sec_dbg_smmu.far = far;
+			snprintf(sec_dbg_smmu.mas_name, sizeof(sec_dbg_smmu.mas_name), "%s", master ? master->of_node->name : "Unknown SID");
+			sec_dbg_smmu.cbndx = cfg->cbndx;
+			sec_dbg_smmu.phys_soft = phys_soft;
+			sec_dbg_smmu.phys_atos = phys_atos;
+			sec_dbg_smmu.sid = sid;
+
+			sec_debug_save_smmu_info(&sec_dbg_smmu);
+
 			BUG();
 		}
 	}

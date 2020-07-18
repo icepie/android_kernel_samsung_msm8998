@@ -201,6 +201,7 @@ struct ion_heap {
 
 	int (*debug_show)(struct ion_heap *heap, struct seq_file *, void *);
 	atomic_long_t total_allocated;
+	atomic_long_t total_allocated_peak;
 	atomic_long_t total_handles;
 };
 
@@ -510,4 +511,7 @@ struct ion_handle *ion_handle_get_by_id(struct ion_client *client,
 
 int ion_handle_put(struct ion_handle *handle);
 
+void show_ion_system_heap_size(struct seq_file *s);
+void show_ion_system_heap_pool_size(struct ion_device *dev, struct seq_file *s);
+void show_ion_system_heap_pool_size_locked(struct seq_file *s);
 #endif /* _ION_PRIV_H */

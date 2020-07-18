@@ -51,6 +51,24 @@
 #include <asm/cpuidle.h>
 #include "lpm-levels.h"
 #include "lpm-workarounds.h"
+
+#ifdef CONFIG_SEC_DEBUG_SUMMARY
+#include <linux/qcom/sec_debug.h>
+#include <linux/qcom/sec_debug_summary.h>
+#endif
+
+#ifdef CONFIG_SEC_PM
+#include <linux/regulator/consumer.h>
+#include <linux/qpnp/pin.h>
+#endif
+
+#ifdef CONFIG_SEC_PM_DEBUG
+#include <linux/sec-pinmux.h>
+#ifdef CONFIG_SEC_GPIO_DVS
+#include <linux/secgpio_dvs.h>
+#endif
+#endif
+
 #include <trace/events/power.h>
 #define CREATE_TRACE_POINTS
 #include <trace/events/trace_msm_low_power.h>
@@ -138,6 +156,12 @@ static struct notifier_block __refdata lpm_cpu_nblk = {
 	.notifier_call = lpm_cpu_callback,
 };
 
+#ifdef CONFIG_SEC_PM_DEBUG
+static int msm_pm_sleep_sec_debug;
+module_param_named(secdebug,
+	msm_pm_sleep_sec_debug, int, S_IRUGO | S_IWUSR | S_IWGRP);
+#endif
+
 static bool menu_select;
 module_param_named(
 	menu_select, menu_select, bool, S_IRUGO | S_IWUSR | S_IWGRP
@@ -156,6 +180,10 @@ module_param_named(
 static bool sleep_disabled;
 module_param_named(sleep_disabled,
 	sleep_disabled, bool, S_IRUGO | S_IWUSR | S_IWGRP);
+
+#ifdef CONFIG_SEC_PM
+extern int wakeup_irq_flag;
+#endif
 
 s32 msm_cpuidle_get_deep_idle_latency(void)
 {
@@ -1025,9 +1053,14 @@ static int cluster_select(struct lpm_cluster *cluster, bool from_idle,
 	uint32_t cpupred_us = 0, pred_us = 0;
 	int pred_mode = 0, predicted = 0;
 
+	unsigned int debug;
+	int wait_for_rpm_ack[2] = {-1, 1};
+
 	if (!cluster)
 		return -EINVAL;
 
+	debug = (cluster == lpm_root_node) && (from_idle == false)
+			&& (num_online_cpus() == 1);
 	sleep_us = (uint32_t)get_cluster_sleep_time(cluster, NULL,
 						from_idle, &cpupred_us);
 
@@ -1083,8 +1116,10 @@ static int cluster_select(struct lpm_cluster *cluster, bool from_idle,
 		if (suspend_in_progress && from_idle && level->notify_rpm)
 			continue;
 
-		if (level->notify_rpm && msm_rpm_waiting_for_ack())
+		if (level->notify_rpm && msm_rpm_waiting_for_ack()) {
+			wait_for_rpm_ack[i] = 1;
 			continue;
+		}
 
 		best_level = i;
 
@@ -1101,7 +1136,37 @@ static int cluster_select(struct lpm_cluster *cluster, bool from_idle,
 
 	trace_cluster_pred_select(cluster->cluster_name, best_level, sleep_us,
 						latency_us, predicted, pred_us);
+	if (debug && (best_level < 0)) {
+		struct lpm_cluster_level *level;
+		struct power_params *pwr_params;
 
+		pr_info("[%s] suspend_wake_time : %lld, sleep_us : %d,\
+			from_idle : %d, latency_us : %d, sleep_us : %d,\
+			in_sync : %lx, suspend_in_progress : %d, weight : %d\n"
+			, __func__, suspend_wake_time, sleep_us, from_idle,
+			latency_us, sleep_us, cluster->num_children_in_sync.bits[0],
+			suspend_in_progress, cpumask_weight(cpu_online_mask));
+		pr_info("[%s] predicted : %d, pred_us : %d\n",
+			__func__, predicted, pred_us);
+		for (i = 0; i < cluster->nlevels; i++) {
+			level = &cluster->levels[i];
+			pwr_params = &level->pwr;
+			pr_info("[%s] i: %d, allow : %d\n",
+				__func__, i, lpm_cluster_mode_allow(cluster, i, from_idle));
+			pr_info("[%s] i: %d, last_core_only : %d, votes : %lx\n",
+				__func__, i, level->last_core_only,
+				level->num_cpu_votes.bits[0]);
+			pr_info("[%s] i: %d, latency: %d, overhead: %d, residency: %d\n",
+				__func__, i, pwr_params->latency_us,
+				pwr_params->time_overhead_us, pwr_params->max_residency);
+			pr_info("[%s] i: %d, notify_rpm: %d, wait_for_rpm_ack: %d\n",
+				__func__, i, level->notify_rpm, wait_for_rpm_ack[i]);
+		}
+		if (suspend_wake_time != 0) {
+			pr_err("[%s] mpm won't be programmed\n", __func__);
+			BUG();
+		}
+	}
 	return best_level;
 }
 
@@ -1120,12 +1185,19 @@ static int cluster_configure(struct lpm_cluster *cluster, int idx,
 	struct lpm_cluster_level *level = &cluster->levels[idx];
 	struct cpumask online_cpus;
 	int ret, i;
+	unsigned int debug = (cluster == lpm_root_node) &&
+					(from_idle == false) && (num_online_cpus() == 1);
 
 	cpumask_and(&online_cpus, &cluster->num_children_in_sync,
-					cpu_online_mask);
-
+		cpu_online_mask);
 	if (!cpumask_equal(&cluster->num_children_in_sync, &cluster->child_cpus)
 			|| is_IPI_pending(&online_cpus)) {
+		if (debug) {
+			pr_err("[%s] in_sync : %lx, child_cpus : %lx, IPI pending : %d\n",
+				__func__, cluster->num_children_in_sync.bits[0],
+				cluster->child_cpus.bits[0],
+				is_IPI_pending(&cluster->num_children_in_sync));
+			}
 		return -EPERM;
 	}
 
@@ -1145,8 +1217,12 @@ static int cluster_configure(struct lpm_cluster *cluster, int idx,
 
 	for (i = 0; i < cluster->ndevices; i++) {
 		ret = set_device_mode(cluster, i, level);
-		if (ret)
+		if (ret) {
+			if (debug)
+				pr_err("[%s] i : %d, set_device_mode_fail\n",
+					__func__, i);
 			goto failed_set_mode;
+		}
 	}
 
 	if (level->notify_rpm) {
@@ -1204,6 +1280,7 @@ failed_set_mode:
 
 	for (i = 0; i < cluster->ndevices; i++) {
 		int rc = 0;
+
 		level = &cluster->levels[cluster->default_level];
 		rc = set_device_mode(cluster, i, level);
 		BUG_ON(rc);
@@ -1218,6 +1295,8 @@ static void cluster_prepare(struct lpm_cluster *cluster,
 	int i;
 	int predicted = 0;
 
+	unsigned int debug = 0;
+
 	if (!cluster)
 		return;
 
@@ -1225,6 +1304,9 @@ static void cluster_prepare(struct lpm_cluster *cluster,
 		return;
 
 	spin_lock(&cluster->sync_lock);
+	debug = (cluster == lpm_root_node) && (from_idle == false)
+		&& (child_idx == 3) && (cpu->bits[0] == 0xF)
+		&& (num_online_cpus() == 1);
 	cpumask_or(&cluster->num_children_in_sync, cpu,
 			&cluster->num_children_in_sync);
 
@@ -1244,8 +1326,13 @@ static void cluster_prepare(struct lpm_cluster *cluster,
 	 */
 
 	if (!cpumask_equal(&cluster->num_children_in_sync,
-				&cluster->child_cpus))
+				&cluster->child_cpus)) {
+			if (debug)
+				pr_info("[%s] in_sync : %lx, child_cpus : %lx\n",
+					__func__, cluster->num_children_in_sync.bits[0],
+					cluster->child_cpus.bits[0]);
 		goto failed;
+	}
 
 	i = cluster_select(cluster, from_idle, &predicted);
 
@@ -1268,8 +1355,12 @@ static void cluster_prepare(struct lpm_cluster *cluster,
 	if (i < 0)
 		goto failed;
 
-	if (cluster_configure(cluster, i, from_idle, predicted))
+	if (cluster_configure(cluster, i, from_idle, predicted)) {
+		if (debug)
+			pr_info("[%s] cluster_configure() for %s failure\n",
+				__func__, cluster->cluster_name);
 		goto failed;
+	}
 
 	cluster->stats->sleep_time = start_time;
 	cluster_prepare(cluster->parent, &cluster->num_children_in_sync, i,
@@ -1278,6 +1369,9 @@ static void cluster_prepare(struct lpm_cluster *cluster,
 	spin_unlock(&cluster->sync_lock);
 	return;
 failed:
+	if (debug)
+		pr_info("[%s] failed to set system to pc, last_level : %d\n",
+				__func__, cluster->last_level);
 	spin_unlock(&cluster->sync_lock);
 	cluster->stats->sleep_time = 0;
 	return;
@@ -1810,6 +1904,35 @@ static int lpm_suspend_prepare(void)
 {
 	suspend_in_progress = true;
 	msm_mpm_suspend_prepare();
+
+#ifdef CONFIG_SEC_GPIO_DVS
+	/************************ Caution !!! ****************************
+	 * This functiongit a must be located in appropriate SLEEP position
+	 * in accordance with the specification of each BB vendor.
+	 ************************ Caution !!! ****************************/
+	gpio_dvs_check_sleepgpio();
+#ifdef SECGPIO_SLEEP_DEBUGGING
+	/************************ Caution !!! ****************************/
+	/* This func. must be located in an appropriate position for GPIO SLEEP debugging
+     * in accordance with the specification of each BB vendor, and
+     * the func. must be called after calling the function "gpio_dvs_check_sleepgpio"
+     */
+	/************************ Caution !!! ****************************/
+	gpio_dvs_set_sleepgpio();
+#endif
+#endif
+
+#ifdef CONFIG_SEC_PM
+	regulator_showall_enabled();
+#endif
+
+#ifdef CONFIG_SEC_PM_DEBUG
+	if (msm_pm_sleep_sec_debug) {
+		msm_gpio_print_enabled();
+		qpnp_debug_suspend_show();
+	}
+#endif
+
 	lpm_stats_suspend_enter();
 
 	return 0;
@@ -1852,6 +1975,10 @@ static int lpm_suspend_enter(suspend_state_t state)
 	 * LPMs(XO and Vmin).
 	 */
 	clock_debug_print_enabled();
+
+#ifdef CONFIG_SEC_PM
+    wakeup_irq_flag = 1;
+#endif
 
 	BUG_ON(!use_psci);
 	psci_enter_sleep(cluster, idx, true);
@@ -1945,6 +2072,8 @@ static int lpm_probe(struct platform_device *pdev)
 	md_entry.size = size;
 	if (msm_minidump_add_region(&md_entry))
 		pr_info("Failed to add lpm_debug in Minidump\n");
+
+	summary_set_lpm_info_cci(virt_to_phys((void *)&lpm_root_node->last_level));
 
 	return 0;
 failed:

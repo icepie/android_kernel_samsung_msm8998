@@ -41,6 +41,13 @@ config ANDROID_BINDER_IPC_SELFTEST
 	  exhaustively with combinations of various buffer sizes and
 	  alignments.
 
+config SEC_TRACE_BINDERCNT
+	bool "Trace process binder count"
+	default n
+	---help---
+	  This feature can be used to monitor binder transactions count to
+	  a designated process.
+
 endif # if ANDROID
 
 endmenu

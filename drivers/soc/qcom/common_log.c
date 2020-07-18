@@ -37,8 +37,10 @@ void register_misc_dump(void)
 
 	if (MSM_DUMP_MAJOR(msm_dump_table_version()) > 1) {
 		misc_data = kzalloc(sizeof(struct msm_dump_data), GFP_KERNEL);
-		if (!misc_data)
-			return;
+		if (!misc_data) {
+			pr_err("rpm dump data structure allocation failed\n");
+ 			return;
+		}	
 		misc_buf = kzalloc(MISC_DUMP_DATA_LEN, GFP_KERNEL);
 		if (!misc_buf)
 			goto err0;
@@ -139,8 +141,10 @@ void register_rpm_dump(void)
 
 	if (MSM_DUMP_MAJOR(msm_dump_table_version()) > 1) {
 		dump_data = kzalloc(sizeof(struct msm_dump_data), GFP_KERNEL);
-		if (!dump_data)
+		if (!dump_data) {
+			pr_err("rpm dump data structure allocation failed\n");
 			return;
+		}
 		dump_addr = kzalloc(RPM_DUMP_DATA_LEN, GFP_KERNEL);
 		if (!dump_addr)
 			goto err0;

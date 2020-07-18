@@ -1162,8 +1162,7 @@ config TOUCHSCREEN_MAXIM_STI
 
 config SECURE_TOUCH
 	bool "Secure Touch"
-	depends on (TOUCHSCREEN_SYNAPTICS_I2C_RMI4 || \
-	  TOUCHSCREEN_SYNAPTICS_DSX_I2C_v21)
+	depends on I2C
 	help
 	  Say Y here to enable Secure Touch in supported drivers.
 
@@ -1223,6 +1222,20 @@ config TOUCHSCREEN_ST
 
 	  If unsure, say N.
 
-source "drivers/input/touchscreen/st/Kconfig"
+config TOUCHSCREEN_DUMP_MODE
+	bool "touchscreen dump mode"
+	depends on I2C
+	help
+	  Say Y here if you need to get raw data.
 
+	  If unsure, say N.
+
+source "drivers/input/touchscreen/st/Kconfig"
+source "drivers/input/touchscreen/stm/Kconfig"
+source "drivers/input/touchscreen/stm_fts1ba90a/Kconfig"
+source "drivers/input/touchscreen/sec_ts/Kconfig"
+source "drivers/input/touchscreen/sec_ts_y661/Kconfig"
+source "drivers/input/touchscreen/sec_ts_dual/Kconfig"
+source "drivers/input/touchscreen/sec_ts_y661_dual/Kconfig"
+source "drivers/input/touchscreen/synaptics_dsx2/Kconfig"
 endif

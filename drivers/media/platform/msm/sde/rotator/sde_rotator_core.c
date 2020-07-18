@@ -293,10 +293,10 @@ static void sde_rotator_footswitch_ctrl(struct sde_rot_mgr *mgr, bool on)
 
 	if (WARN_ON(mgr->regulator_enable == on)) {
 		SDEROT_ERR("Regulators already in selected mode on=%d\n", on);
+		SDEROT_EVTLOG(on, -EINVAL);
 		return;
 	}
 
-	SDEROT_EVTLOG(on);
 	SDEROT_DBG("%s: rotator regulators", on ? "Enable" : "Disable");
 
 	if (mgr->ops_hw_pre_pmevent)
@@ -307,12 +307,14 @@ static void sde_rotator_footswitch_ctrl(struct sde_rot_mgr *mgr, bool on)
 	if (ret) {
 		SDEROT_WARN("Rotator regulator failed to %s\n",
 			on ? "enable" : "disable");
+		SDEROT_EVTLOG(on, ret);
 		return;
 	}
 
 	if (mgr->ops_hw_post_pmevent)
-		mgr->ops_hw_post_pmevent(mgr, on);
+		mgr->ops_hw_post_pmevent(mgr, on);	
 
+	SDEROT_EVTLOG(on, true);		
 	mgr->regulator_enable = on;
 }
 
@@ -659,10 +661,6 @@ static int sde_rotator_map_and_check_data(struct sde_rot_entry *entry)
 
 	rotation = (entry->item.flags &  SDE_ROTATION_90) ? true : false;
 
-	ret = sde_smmu_ctrl(1);
-	if (IS_ERR_VALUE(ret))
-		return ret;
-
 	secure = (entry->item.flags & SDE_ROTATION_SECURE_CAMERA) ?
 			true : false;
 	ret = sde_rotator_secure_session_ctrl(secure);
@@ -726,7 +724,6 @@ static int sde_rotator_map_and_check_data(struct sde_rot_entry *entry)
 	}
 
 end:
-	sde_smmu_ctrl(0);
 
 	return ret;
 }
@@ -1262,6 +1259,15 @@ static int sde_rotator_calc_perf(struct sde_rot_mgr *mgr,
 	 *        W x H / throughput / (1/fps - overhead) * fudge_factor
 	 */
 	max_fps = sde_rotator_find_max_fps(mgr);
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	/* UHD Performance : increase perf just for UHD recording of which the fomat is not UBWC */
+	if(!sde_mdp_is_ubwc_format(in_fmt)) {
+		if(config->input.width * config->input.height >= ((3840-100)*(2160-100)))
+			max_fps = 90;
+	}
+#endif
+
 	perf->clk_rate = config->input.width * config->input.height;
 	perf->clk_rate = (perf->clk_rate * mgr->pixel_per_clk.denom) /
 			mgr->pixel_per_clk.numer;
@@ -1415,6 +1421,8 @@ static void sde_rotator_commit_handler(struct kthread_work *work)
 
 	entry = container_of(work, struct sde_rot_entry, commit_work);
 	request = entry->request;
+	
+	ATRACE_BEGIN(__func__);
 
 	if (!request || !entry->private || !entry->private->mgr) {
 		SDEROT_ERR("fatal error, null request/context/device\n");
@@ -1502,6 +1510,8 @@ static void sde_rotator_commit_handler(struct kthread_work *work)
 
 	queue_kthread_work(&entry->doneq->rot_kw, &entry->done_work);
 	sde_rot_mgr_unlock(mgr);
+	
+	ATRACE_END(__func__);
 	return;
 error:
 	sde_smmu_ctrl(0);
@@ -1538,6 +1548,8 @@ static void sde_rotator_done_handler(struct kthread_work *work)
 	entry = container_of(work, struct sde_rot_entry, done_work);
 	request = entry->request;
 
+	ATRACE_BEGIN(__func__);
+	
 	if (!request || !entry->private || !entry->private->mgr) {
 		SDEROT_ERR("fatal error, null request/context/device\n");
 		return;
@@ -1594,6 +1606,8 @@ static void sde_rotator_done_handler(struct kthread_work *work)
 	ATRACE_INT("sde_smmu_ctrl", 3);
 	sde_smmu_ctrl(0);
 	ATRACE_INT("sde_smmu_ctrl", 4);
+
+	ATRACE_END(__func__);
 }
 
 static bool sde_rotator_verify_format(struct sde_rot_mgr *mgr,
@@ -1725,6 +1739,7 @@ static struct sde_mdp_format_params *__verify_output_config(
 		if (!verify_input_only)
 			SDEROT_ERR("Unrecognized output format:0x%x\n", output);
 		return NULL;
+
 	}
 
 	sde_mdp_get_v_h_subsample_rate(out_fmt->chroma_sample,
@@ -1797,7 +1812,6 @@ int sde_rotator_verify_config_all(struct sde_rot_mgr *mgr,
 					config->output.format);
 		return -EINVAL;
 	}
-
 	return 0;
 }
 
@@ -2910,15 +2924,18 @@ int sde_rotator_runtime_suspend(struct device *dev)
 
 	if (!mgr) {
 		SDEROT_ERR("null parameters\n");
+		SDEROT_EVTLOG(-ENODEV);
 		return -ENODEV;
 	}
 
 	if (mgr->rot_enable_clk_cnt) {
 		SDEROT_ERR("invalid runtime suspend request %d\n",
 				mgr->rot_enable_clk_cnt);
+		SDEROT_EVTLOG(mgr->rot_enable_clk_cnt, -EBUSY);
 		return -EBUSY;
 	}
 
+	SDEROT_EVTLOG(false);
 	sde_rotator_footswitch_ctrl(mgr, false);
 	ATRACE_END("runtime_active");
 	SDEROT_DBG("exit runtime_active\n");
@@ -2937,9 +2954,11 @@ int sde_rotator_runtime_resume(struct device *dev)
 
 	if (!mgr) {
 		SDEROT_ERR("null parameters\n");
+		SDEROT_EVTLOG(-ENODEV);
 		return -ENODEV;
 	}
 
+	SDEROT_EVTLOG(true);
 	SDEROT_DBG("begin runtime_active\n");
 	ATRACE_BEGIN("runtime_active");
 	sde_rotator_footswitch_ctrl(mgr, true);

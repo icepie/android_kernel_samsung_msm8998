@@ -203,6 +203,7 @@ static int hmac_create(struct crypto_template *tmpl, struct rtattr **tb)
 
 	ds = salg->digestsize;
 	ss = salg->statesize;
+
 	if (ds > alg->cra_blocksize ||
 	    ss < alg->cra_blocksize)
 		goto out_put_alg;

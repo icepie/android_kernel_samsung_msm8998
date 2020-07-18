@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, 2017, The Linux Foundataion. All rights reserved.
+/* Copyright (c) 2011-2019, The Linux Foundataion. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,11 +19,26 @@
 #include <soc/qcom/camera2.h>
 #include <linux/msm-bus.h>
 #include "msm_camera_io_util.h"
+#include <linux/i2c.h>
 
 #define BUFF_SIZE_128 128
+extern unsigned int system_rev;
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
+
+#if defined(CONFIG_SENSOR_RETENTION)
+extern bool sensor_retention_mode;
+#endif
+extern bool retention_mode_pwr;
+
+#if defined (CONFIG_SEC_DREAMQLTE_PROJECT) || defined (CONFIG_SEC_DREAM2QLTE_PROJECT) || defined (CONFIG_SEC_CRUISERLTE_PROJECT)
+#define I2C_ADAPTER_LOCK //add i2c lock for avoided i2c conflict with nfc
+#endif
+
+#ifdef I2C_ADAPTER_LOCK
+extern struct i2c_adapter *g_msm_ois_i2c_adapter;
+#endif
 
 void msm_camera_io_w(u32 data, void __iomem *addr)
 {
@@ -364,12 +379,13 @@ int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 		}
 	} else {
 		for (i = num_clk - 1; i >= 0; i--) {
-			if (clk_ptr[i] != NULL) {
+			if (!IS_ERR_OR_NULL(clk_ptr[i])) {
 				CDBG("%s disable %s\n", __func__,
 					clk_info[i].clk_name);
 				clk_disable(clk_ptr[i]);
 				clk_unprepare(clk_ptr[i]);
 				clk_put(clk_ptr[i]);
+				clk_ptr[i] = NULL;
 			}
 		}
 	}
@@ -383,10 +399,11 @@ cam_clk_set_err:
 	clk_put(clk_ptr[i]);
 cam_clk_get_err:
 	for (i--; i >= 0; i--) {
-		if (clk_ptr[i] != NULL) {
+		if (!IS_ERR_OR_NULL(clk_ptr[i])) {
 			clk_disable(clk_ptr[i]);
 			clk_unprepare(clk_ptr[i]);
 			clk_put(clk_ptr[i]);
+			clk_ptr[i] = NULL;
 		}
 	}
 	return rc;
@@ -404,12 +421,6 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 		pr_err("%s:%d vreg sequence invalid\n", __func__, __LINE__);
 		return -EINVAL;
 	}
-
-	if (cam_vreg == NULL) {
-		pr_err("%s:%d cam_vreg sequence invalid\n", __func__, __LINE__);
-		return -EINVAL;
-	}
-
 	if (!num_vreg_seq)
 		num_vreg_seq = num_vreg;
 
@@ -424,7 +435,7 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 			curr_vreg = &cam_vreg[j];
 			reg_ptr[j] = regulator_get(dev,
 				curr_vreg->reg_name);
-			if (IS_ERR_OR_NULL(reg_ptr[j])) {
+			if (IS_ERR(reg_ptr[j])) {
 				pr_err("%s: %s get failed\n",
 					 __func__,
 					 curr_vreg->reg_name);
@@ -446,7 +457,6 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 					rc = regulator_set_load(
 						reg_ptr[j],
 						curr_vreg->op_mode);
-					rc = 0;
 					if (rc < 0) {
 						pr_err(
 						"%s:%s set optimum mode fail\n",
@@ -531,7 +541,7 @@ int msm_camera_enable_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 					continue;
 			} else
 				j = i;
-			if (IS_ERR_OR_NULL(reg_ptr[j])) {
+			if (IS_ERR(reg_ptr[j])) {
 				pr_err("%s: %s null regulator\n",
 					__func__, cam_vreg[j].reg_name);
 				goto disable_vreg;
@@ -556,16 +566,12 @@ int msm_camera_enable_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 					continue;
 			} else
 				j = i;
-			if (reg_ptr[j]) {
-				regulator_disable(reg_ptr[j]);
-				if (cam_vreg[j].delay > 20)
-					msleep(cam_vreg[j].delay);
-				else if (cam_vreg[j].delay)
-					usleep_range(
-						cam_vreg[j].delay * 1000,
-						(cam_vreg[j].delay * 1000)
-						+ 1000);
-			}
+			regulator_disable(reg_ptr[j]);
+			if (cam_vreg[j].delay > 20)
+				msleep(cam_vreg[j].delay);
+			else if (cam_vreg[j].delay)
+				usleep_range(cam_vreg[j].delay * 1000,
+					(cam_vreg[j].delay * 1000) + 1000);
 		}
 	}
 	return rc;
@@ -650,6 +656,14 @@ int msm_camera_config_single_vreg(struct device *dev,
 {
 	int rc = 0;
 	const char *vreg_name = NULL;
+#ifdef I2C_ADAPTER_LOCK
+	struct i2c_adapter *adapter = NULL;
+
+	if (g_msm_ois_i2c_adapter)
+		adapter = g_msm_ois_i2c_adapter;
+	else
+		pr_info("%s: g_msm_ois_i2c_adapter is NULL\n", __func__);
+#endif
 
 	if (!dev || !cam_vreg || !reg_ptr) {
 		pr_err("%s: get failed NULL parameter\n", __func__);
@@ -670,6 +684,16 @@ int msm_camera_config_single_vreg(struct device *dev,
 		vreg_name = cam_vreg->reg_name;
 	}
 
+#if defined(CONFIG_SENSOR_RETENTION)
+	/* NOTE: Check cam power for sensor retention*/
+	if (sensor_retention_mode) {
+		if (!strcmp(vreg_name, "s2mpb02-ldo7")) {
+			pr_info("skip cam_vio(s2mpb02-ldo7). now sensor retention mode\n");
+			return 0;
+		}
+	}
+#endif
+
 	if (config) {
 		CDBG("%s enable %s\n", __func__, vreg_name);
 		*reg_ptr = regulator_get(dev, vreg_name);
@@ -682,26 +706,63 @@ int msm_camera_config_single_vreg(struct device *dev,
 			CDBG("%s: voltage min=%d, max=%d\n",
 				__func__, cam_vreg->min_voltage,
 				cam_vreg->max_voltage);
-			rc = regulator_set_voltage(
-				*reg_ptr, cam_vreg->min_voltage,
-				cam_vreg->max_voltage);
-			if (rc < 0) {
-				pr_err("%s: %s set voltage failed\n",
-					__func__, vreg_name);
-				goto vreg_set_voltage_fail;
-			}
-			if (cam_vreg->op_mode >= 0) {
-				rc = regulator_set_load(*reg_ptr,
-					cam_vreg->op_mode);
+#if 1
+			rc = regulator_get_voltage(
+				*reg_ptr);
+			CDBG("%s:%s get voltage %d\n",
+				__func__, vreg_name, rc);
+#endif
+#if 1
+			if ((retention_mode_pwr == 0)
+				|| !strcmp(vreg_name, "s2mpb02-ldo11")) {
+				CDBG("%s:%s set voltage\n", __func__, vreg_name);
+
+				rc = regulator_set_voltage(
+					*reg_ptr, cam_vreg->min_voltage,
+					cam_vreg->max_voltage);
 				if (rc < 0) {
-					pr_err(
-					"%s: %s set optimum mode failed\n",
-					__func__, vreg_name);
-					goto vreg_set_opt_mode_fail;
+					pr_err("%s: %s set voltage failed\n",
+						__func__, vreg_name);
+					goto vreg_set_voltage_fail;
+				}
+				if (cam_vreg->op_mode >= 0) {
+					rc = regulator_set_load(*reg_ptr,
+						cam_vreg->op_mode);
+					if (rc < 0) {
+						pr_err(
+						"%s: %s set optimum mode failed\n",
+						__func__, vreg_name);
+						goto vreg_set_opt_mode_fail;
+					}
 				}
 			}
+#endif
+#if defined (CONFIG_SEC_GREATQLTE_PROJECT)
+			if ( (!strcmp(vreg_name, "s2mpb02-ldo4")) && 
+				(system_rev >= 7 ) ) {
+				pr_err("[syscamera::%s::%d][HW_REV(%d)>=07][ldo4][regulator_set_voltage]\n", __FUNCTION__, __LINE__, system_rev);
+				rc = regulator_set_voltage(
+					*reg_ptr, cam_vreg->max_voltage, cam_vreg->max_voltage);				
+				if (rc < 0) {
+					pr_err("%s: %s set voltage failed\n", __func__, vreg_name);
+				}
+			}
+#endif
 		}
+#ifdef I2C_ADAPTER_LOCK
+		if (adapter && !strcmp(vreg_name, "s2mpb02-ldo17")) {
+			CDBG("%s: i2c_lock_adapter\n", __func__);
+			i2c_lock_adapter(adapter);
+		}
+#endif
 		rc = regulator_enable(*reg_ptr);
+#ifdef I2C_ADAPTER_LOCK
+		if (adapter && !strcmp(vreg_name, "s2mpb02-ldo17")) {
+			usleep_range(1500, 2000);
+			i2c_unlock_adapter(adapter);
+			CDBG("%s: i2c_unlock_adapter\n", __func__);
+		}
+#endif
 		if (rc < 0) {
 			pr_err("%s: %s regulator_enable failed\n", __func__,
 				vreg_name);
@@ -711,7 +772,20 @@ int msm_camera_config_single_vreg(struct device *dev,
 		CDBG("%s disable %s\n", __func__, vreg_name);
 		if (*reg_ptr) {
 			CDBG("%s disable %s\n", __func__, vreg_name);
+#ifdef I2C_ADAPTER_LOCK
+			if (adapter && !strcmp(vreg_name, "s2mpb02-ldo17")) {
+				CDBG("%s: i2c_lock_adapter\n", __func__);
+				i2c_lock_adapter(adapter);
+			}
+#endif
 			regulator_disable(*reg_ptr);
+#ifdef I2C_ADAPTER_LOCK
+			if (adapter && !strcmp(vreg_name, "s2mpb02-ldo17")) {
+				usleep_range(1500, 2000);
+				i2c_unlock_adapter(adapter);
+				CDBG("%s: i2c_unlock_adapter\n", __func__);
+			}
+#endif
 			if (regulator_count_voltages(*reg_ptr) > 0) {
 				if (cam_vreg->op_mode >= 0)
 					regulator_set_load(*reg_ptr, 0);
@@ -773,6 +847,86 @@ int msm_camera_request_gpio_table(struct gpio *gpio_tbl, uint8_t size,
 		}
 	} else {
 		gpio_free_array(gpio_tbl, size);
+	}
+	return rc;
+}
+
+int msm_camera_request_s_gpio_table(struct msm_camera_power_ctrl_t *ctrl,
+	int gpio_en, bool shared)
+{
+	int rc = 0, i = 0, err = 0, j = 0;
+	struct gpio *gpio_tbl;
+	uint8_t size;
+	bool skip_gpio = false;
+
+	if (!ctrl || !ctrl->gpio_conf) {
+		pr_err("%s:%d invalid ctrl or gpio_conf!!\n", __func__, __LINE__);
+		return -EINVAL;
+	}
+
+	gpio_tbl = ctrl->gpio_conf->cam_gpio_req_tbl;
+	size = ctrl->gpio_conf->cam_gpio_req_tbl_size;
+
+	if (!gpio_tbl || !size) {
+		pr_err("%s:%d invalid gpio_tbl %pK / size %d\n", __func__,
+			__LINE__, gpio_tbl, size);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < size; i++) {
+		CDBG("%s:%d i %d, gpio %d dir %ld\n", __func__, __LINE__, i,
+			gpio_tbl[i].gpio, gpio_tbl[i].flags);
+	}
+
+	if (gpio_en) {
+		for (i = 0; i < size; i++) {
+			if (shared) {
+				skip_gpio = false;
+				for (j = 0; j < ctrl->num_shared_gpios; j++) {
+					if (gpio_tbl[i].gpio == ctrl->shared_gpios[j]) {
+						skip_gpio = true;
+						break;
+					}
+				}
+				if (skip_gpio) {
+					CDBG("%s [POWER_DBG] enable : %d skiped!\n",
+						__func__, gpio_tbl[i].gpio);
+					continue;
+				}
+			}
+
+			err = gpio_request_one(gpio_tbl[i].gpio,
+				gpio_tbl[i].flags, gpio_tbl[i].label);
+			if (err) {
+				/*
+				* After GPIO request fails, contine to
+				* apply new gpios, outout a error message
+				* for driver bringup debug
+				*/
+				pr_err("%s:%d gpio %d:%s request fails\n",
+					__func__, __LINE__,
+					gpio_tbl[i].gpio, gpio_tbl[i].label);
+			}
+		}
+	} else {
+		if (shared) {
+			for (i = 0; i < size; i++) {
+				skip_gpio = false;
+				for (j = 0; j < ctrl->num_shared_gpios; j++) {
+					if (gpio_tbl[i].gpio == ctrl->shared_gpios[j]) {
+						skip_gpio = true;
+						break;
+					}
+				}
+				if (skip_gpio) {
+					CDBG("%s [POWER_DBG] disable : %d skiped!\n",
+						__func__, gpio_tbl[i].gpio);
+					continue;
+				}
+				gpio_free(gpio_tbl[i].gpio);
+			}
+		} else
+		    gpio_free_array(gpio_tbl, size);
 	}
 	return rc;
 }

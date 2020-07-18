@@ -869,7 +869,7 @@ static struct clk_freq_tbl ftbl_mclk_clk_src[] = {
 	F_MM(   9600000,	mmsscc_xo,    2,    0,     0),
 	F_MM(  16666667, mmsscc_gpll0_div,    2,    1,     9),
 	F_MM(  19200000,	mmsscc_xo,    1,    0,     0),
-	F_MM(  24000000, mmsscc_gpll0_div,    1,    2,    25),
+	F_MM(  24000000, mmsscc_gpll0,        1,    1,    25),
 	F_MM(  33333333, mmsscc_gpll0_div,    1,    1,     9),
 	F_MM(  48000000,     mmsscc_gpll0,    1,    2,    25),
 	F_MM(  66666667,     mmsscc_gpll0,    1,    1,     9),

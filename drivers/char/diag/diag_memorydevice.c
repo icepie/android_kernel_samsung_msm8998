@@ -226,8 +226,12 @@ int diag_md_write(int id, unsigned char *buf, int len, int ctx)
 	}
 	mutex_unlock(&driver->diagchar_mutex);
 
-	if (!found)
+	if (!found) {
+		pr_err_ratelimited("diag: Unable to find pid\n");
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Unable to find pid\n");
+		diag_ws_on_copy_fail(DIAG_WS_MUX);
 		return -EINVAL;
+	}
 
 	return 0;
 }

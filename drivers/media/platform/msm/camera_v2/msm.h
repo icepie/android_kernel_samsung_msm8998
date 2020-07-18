@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,7 +20,6 @@
 #include <linux/pm_qos.h>
 #include <linux/msm_ion.h>
 #include <linux/iommu.h>
-#include <linux/msm_kgsl.h>
 #include <media/v4l2-dev.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-device.h>
@@ -46,7 +45,6 @@ extern bool is_daemon_status;
 struct msm_video_device {
 	struct video_device *vdev;
 	atomic_t opened;
-	struct mutex video_drvdata_mutex;
 };
 
 struct msm_queue_head {
@@ -136,6 +134,7 @@ struct msm_stream *msm_get_stream(struct msm_session *session,
 	unsigned int stream_id);
 struct vb2_queue *msm_get_stream_vb2q(unsigned int session_id,
 	unsigned int stream_id);
+int msm_send_event(char *sd_name, uint32_t cmd);
 struct msm_stream *msm_get_stream_from_vb2q(struct vb2_queue *q);
 struct msm_session *msm_get_session_from_vb2q(struct vb2_queue *q);
 struct msm_session *msm_session_find(unsigned int session_id);

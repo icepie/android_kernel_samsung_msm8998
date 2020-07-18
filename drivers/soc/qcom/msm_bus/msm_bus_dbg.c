@@ -820,11 +820,11 @@ void msm_bus_dbg_client_data(struct msm_bus_scale_pdata *pdata, int index,
 	struct dentry *file = NULL;
 
 	if (index == MSM_BUS_DBG_REGISTER) {
-		msm_bus_dbg_record_client(pdata, index, clid, file);
 		if (!pdata->name) {
 			MSM_BUS_DBG("Cannot create debugfs entry. Null name\n");
 			return;
-		}
+		}	
+		msm_bus_dbg_record_client(pdata, index, clid, file);
 	} else if (index == MSM_BUS_DBG_UNREGISTER) {
 		msm_bus_dbg_free_client(clid);
 		MSM_BUS_DBG("Client %d unregistered\n", clid);

@@ -64,6 +64,10 @@ unsigned long __stack_chk_guard __read_mostly;
 EXPORT_SYMBOL(__stack_chk_guard);
 #endif
 
+#ifdef CONFIG_RKP_CFP_ROPP
+#include <linux/rkp_cfp.h>
+#endif
+
 /*
  * Function pointers to optional machine specific functions
  */
@@ -192,7 +196,7 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 	 * don't attempt to dump non-kernel addresses or
 	 * values that are probably just small negative numbers
 	 */
-	if (addr < KIMAGE_VADDR || addr > -256UL)
+	if (addr < VA_START || addr > -256UL)
 		return;
 
 	printk("\n%s: %#lx:\n", name, addr);
@@ -312,6 +316,29 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 
 asmlinkage void ret_from_fork(void) asm("ret_from_fork");
 
+#ifdef CONFIG_RKP_CFP_ROPP
+static inline void ropp_change_key(struct task_struct *p)
+{
+#ifdef CONFIG_RKP_CFP_ROPP_SYSREGKEY
+    task_thread_info(p)->rrk = get_random_long();
+
+#ifdef SYSREG_DEBUG
+    task_thread_info(p)->rrk = ropp_fixed_key ^ ropp_master_key;
+#endif
+
+#elif defined CONFIG_RKP_CFP_ROPP_RANDKEY
+    task_thread_info(p)->rrk = get_random_long();
+#elif defined CONFIG_RKP_CFP_ROPP_FIXKEY
+    task_thread_info(p)->rrk = ropp_fixed_key;
+#elif defined CONFIG_RKP_CFP_ROPP_ZEROKEY
+    task_thread_info(p)->rrk = 0x0;
+#else
+    #error "Please choose one ROPP key scheme"
+#endif
+}
+#endif
+
+
 int copy_thread(unsigned long clone_flags, unsigned long stack_start,
 		unsigned long stk_sz, struct task_struct *p)
 {
@@ -363,6 +390,9 @@ int copy_thread(unsigned long clone_flags, unsigned long stack_start,
 		p->thread.cpu_context.x19 = stack_start;
 		p->thread.cpu_context.x20 = stk_sz;
 	}
+#ifdef CONFIG_RKP_CFP_ROPP
+	ropp_change_key(p);
+#endif
 	p->thread.cpu_context.pc = (unsigned long)ret_from_fork;
 	p->thread.cpu_context.sp = (unsigned long)childregs;
 

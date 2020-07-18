@@ -35,6 +35,9 @@
 
 #include <asm/fb.h>
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#include "../msm/samsung/ss_dsi_panel_common.h"
+#endif
 
     /*
      *  Frame buffer device initialization and setup routines
@@ -761,7 +764,7 @@ fb_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 
 	if (info->fbops->fb_read)
 		return info->fbops->fb_read(info, buf, count, ppos);
-	
+
 	total_size = info->screen_size;
 
 	if (total_size == 0)
@@ -826,7 +829,7 @@ fb_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 
 	if (info->fbops->fb_write)
 		return info->fbops->fb_write(info, buf, count, ppos);
-	
+
 	total_size = info->screen_size;
 
 	if (total_size == 0)
@@ -1054,7 +1057,7 @@ EXPORT_SYMBOL(fb_set_var);
 
 int
 fb_blank(struct fb_info *info, int blank)
-{	
+{
 	struct fb_event event;
 	int ret = -EINVAL, early_ret;
 
@@ -1097,6 +1100,9 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 	void __user *argp = (void __user *)arg;
 	long ret = 0;
 
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	struct samsung_display_driver_data *vdd = samsung_get_vdd();
+#endif
 	memset(&var, 0, sizeof(var));
 	memset(&fix, 0, sizeof(fix));
 	memset(&con2fb, 0, sizeof(con2fb));
@@ -1109,6 +1115,13 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 		if (!lock_fb_info(info))
 			return -ENODEV;
 		var = info->var;
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		if (vdd->manufacture_id_dsi[display_ndx_check(vdd->ctrl_dsi[DSI_CTRL_0])] == PBA_ID) {
+			var.yres_virtual = var.yres;
+			pr_info("var.yres_virtual SET to var.yres in PBA Booting !!\n");
+		}
+#endif
 		unlock_fb_info(info);
 
 		ret = copy_to_user(argp, &var, sizeof(var)) ? -EFAULT : 0;
@@ -1485,7 +1498,7 @@ out:
 	return res;
 }
 
-static int 
+static int
 fb_release(struct inode *inode, struct file *file)
 __acquires(&info->lock)
 __releases(&info->lock)
@@ -1663,7 +1676,7 @@ static int do_register_framebuffer(struct fb_info *fb_info)
 			fb_info->pixmap.access_align = 32;
 			fb_info->pixmap.flags = FB_PIXMAP_DEFAULT;
 		}
-	}	
+	}
 	fb_info->pixmap.offset = 0;
 
 	if (!fb_info->pixmap.blit_x)

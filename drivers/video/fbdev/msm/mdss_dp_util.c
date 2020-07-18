@@ -38,6 +38,7 @@ enum mdss_dp_pin_assignment {
 	PIN_ASSIGNMENT_MAX,
 };
 
+#ifndef CONFIG_SEC_DISPLAYPORT
 static const char *mdss_dp_pin_name(u8 pin)
 {
 	switch (pin) {
@@ -50,7 +51,7 @@ static const char *mdss_dp_pin_name(u8 pin)
 	default: return "UNKNOWN";
 	}
 }
-
+#endif
 struct mdss_hw mdss_dp_hw = {
 	.hw_ndx = MDSS_HW_EDP,
 	.ptr = NULL,
@@ -78,6 +79,7 @@ void mdss_dp_phy_reset(struct dss_io_data *ctrl_io)
 
 void mdss_dp_switch_usb3_phy_to_dp_mode(struct dss_io_data *tcsr_reg_io)
 {
+	pr_debug("USB3 PHY to DP ++\n");
 	writel_relaxed(0x01, tcsr_reg_io->base + TCSR_USB3_DP_PHYMODE);
 }
 
@@ -786,6 +788,26 @@ void mdss_dp_timing_cfg(struct dss_io_data *ctrl_io,
 	writel_relaxed(data, ctrl_io->base + DP_ACTIVE_HOR_VER);
 }
 
+#ifdef SECDP_BLOCK_DFP_VGA
+void mdss_dp_sw_config_msa(struct dss_io_data *ctrl_io,
+				char lrate, struct dss_io_data *dp_cc_io)
+{
+	u32 pixel_m, pixel_n;
+	u32 mvid, nvid;
+
+	pixel_m = readl_relaxed(dp_cc_io->base + MMSS_DP_PIXEL_M);
+	pixel_n = readl_relaxed(dp_cc_io->base + MMSS_DP_PIXEL_N);
+	pr_debug("pixel_m=0x%x, pixel_n=0x%x\n",
+					pixel_m, pixel_n);
+
+	mvid = (pixel_m & 0xFFFF) * 5;
+	nvid = (0xFFFF & (~pixel_n)) + (pixel_m & 0xFFFF);
+
+	pr_debug("mvid=0x%x, nvid=0x%x\n", mvid, nvid);
+	writel_relaxed(mvid, ctrl_io->base + DP_SOFTWARE_MVID);
+	writel_relaxed(nvid, ctrl_io->base + DP_SOFTWARE_NVID);
+}
+#else
 static bool use_fixed_nvid(struct mdss_dp_drv_pdata *dp)
 {
 	/*
@@ -835,6 +857,7 @@ void mdss_dp_sw_config_msa(struct mdss_dp_drv_pdata *dp)
 		pr_debug("pixel_m=0x%x, pixel_n=0x%x\n", pixel_m, pixel_n);
 		mvid = (pixel_m & 0xFFFF) * 5;
 		nvid = (0xFFFF & (~pixel_n)) + (pixel_m & 0xFFFF);
+
 		if (dp->link_rate == DP_LINK_RATE_540)
 			nvid *= 2;
 	}
@@ -843,6 +866,7 @@ void mdss_dp_sw_config_msa(struct mdss_dp_drv_pdata *dp)
 	writel_relaxed(mvid, ctrl_io->base + DP_SOFTWARE_MVID);
 	writel_relaxed(nvid, ctrl_io->base + DP_SOFTWARE_NVID);
 }
+#endif
 
 void mdss_dp_config_misc(struct mdss_dp_drv_pdata *dp, u32 bd, u32 cc)
 {
@@ -853,6 +877,21 @@ void mdss_dp_config_misc(struct mdss_dp_drv_pdata *dp, u32 bd, u32 cc)
 
 	pr_debug("Misc settings = 0x%x\n", misc_val);
 	writel_relaxed(misc_val, dp->ctrl_io.base + DP_MISC1_MISC0);
+}
+
+void mdss_dp_setup_test_80bit_custom_pattern(struct dss_io_data *ctrl_io)
+{
+   writel_relaxed(0x3E0F83E0, ctrl_io->base + DP_TEST_80BIT_CUSTOM_PATTERN_REG0);
+   writel_relaxed(0x0F83E0F8, ctrl_io->base + DP_TEST_80BIT_CUSTOM_PATTERN_REG1);
+   writel_relaxed(0x0000F83E, ctrl_io->base + DP_TEST_80BIT_CUSTOM_PATTERN_REG2);
+
+}
+void mdss_dp_setup_hbr2_compliance_scramber(struct dss_io_data *ctrl_io, u32 enable)
+{
+   u32 val;
+   val = (enable <<16)| 0xFC;
+   writel_relaxed(val, ctrl_io->base + DP_HBR2_COMPLIANCE_SCRAMBLER_RESET);
+
 }
 
 void mdss_dp_setup_tr_unit(struct dss_io_data *ctrl_io, u8 link_rate,
@@ -892,9 +931,9 @@ void mdss_dp_setup_tr_unit(struct dss_io_data *ctrl_io, u8 link_rate,
 	writel_relaxed(dp_tu, ctrl_io->base + DP_TU);
 	writel_relaxed(valid_boundary2, ctrl_io->base + DP_VALID_BOUNDARY_2);
 
-	pr_debug("valid_boundary=0x%x, valid_boundary2=0x%x\n",
+	pr_err("valid_boundary=0x%x, valid_boundary2=0x%x\n",
 				valid_boundary, valid_boundary2);
-	pr_debug("dp_tu=0x%x\n", dp_tu);
+	pr_err("dp_tu=0x%x\n", dp_tu);
 }
 
 void mdss_dp_aux_set_limits(struct dss_io_data *ctrl_io)
@@ -953,10 +992,23 @@ void mdss_dp_ctrl_lane_mapping(struct dss_io_data *ctrl_io, char *l_map)
 
 void mdss_dp_phy_aux_setup(struct mdss_dp_drv_pdata *dp)
 {
-	int i;
 	void __iomem *adjusted_phy_io_base = dp->phy_io.base +
 		dp->phy_reg_offset;
+#ifdef SECDP_AUX_RETRY
+	int cfg1 = dp->aux_tuning_value[dp->aux_tuning_index];
 
+	writel_relaxed(0x3d, adjusted_phy_io_base + DP_PHY_PD_CTL);
+	writel_relaxed(cfg1, adjusted_phy_io_base + DP_PHY_AUX_CFG1);
+	writel_relaxed(0x00, adjusted_phy_io_base + DP_PHY_AUX_CFG3);
+	writel_relaxed(0x0a, adjusted_phy_io_base + DP_PHY_AUX_CFG4);
+	writel_relaxed(0x26, adjusted_phy_io_base + DP_PHY_AUX_CFG5);
+	writel_relaxed(0x0a, adjusted_phy_io_base + DP_PHY_AUX_CFG6);
+	writel_relaxed(0x03, adjusted_phy_io_base + DP_PHY_AUX_CFG7);
+	writel_relaxed(0xbb, adjusted_phy_io_base + DP_PHY_AUX_CFG8);
+	writel_relaxed(0x03, adjusted_phy_io_base + DP_PHY_AUX_CFG9);
+	writel_relaxed(0x1e, adjusted_phy_io_base + DP_PHY_AUX_INTERRUPT_MASK);
+#else
+	int i;
 	writel_relaxed(0x3d, adjusted_phy_io_base + DP_PHY_PD_CTL);
 
 	for (i = 0; i < PHY_AUX_CFG_MAX; i++) {
@@ -969,6 +1021,24 @@ void mdss_dp_phy_aux_setup(struct mdss_dp_drv_pdata *dp)
 				dp->phy_io.base + cfg->offset);
 	};
 	writel_relaxed(0x1e, adjusted_phy_io_base + DP_PHY_AUX_INTERRUPT_MASK);
+	/* DP AUX CFG register programming */
+	writel_relaxed(aux_cfg[0], adjusted_phy_io_base + DP_PHY_AUX_CFG0);
+	writel_relaxed(aux_cfg[1], adjusted_phy_io_base + DP_PHY_AUX_CFG1);
+	writel_relaxed(aux_cfg[2], adjusted_phy_io_base + DP_PHY_AUX_CFG2);
+	writel_relaxed(aux_cfg[3], adjusted_phy_io_base + DP_PHY_AUX_CFG3);
+	writel_relaxed(aux_cfg[4], adjusted_phy_io_base + DP_PHY_AUX_CFG4);
+	writel_relaxed(aux_cfg[5], adjusted_phy_io_base + DP_PHY_AUX_CFG5);
+	writel_relaxed(aux_cfg[6], adjusted_phy_io_base + DP_PHY_AUX_CFG6);
+	writel_relaxed(aux_cfg[7], adjusted_phy_io_base + DP_PHY_AUX_CFG7);
+	writel_relaxed(aux_cfg[8], adjusted_phy_io_base + DP_PHY_AUX_CFG8);
+	writel_relaxed(aux_cfg[9], adjusted_phy_io_base + DP_PHY_AUX_CFG9);
+
+	writel_relaxed(0x1f, adjusted_phy_io_base + DP_PHY_AUX_INTERRUPT_MASK);
+#endif
+
+#ifdef CONFIG_SEC_DISPLAYPORT
+	pr_debug("DP_PHY_AUX_CFG1: 0x%02x\n", readl_relaxed(adjusted_phy_io_base + DP_PHY_AUX_CFG1));
+#endif
 }
 
 int mdss_dp_irq_setup(struct mdss_dp_drv_pdata *dp_drv)
@@ -1014,6 +1084,7 @@ void mdss_dp_irq_disable(struct mdss_dp_drv_pdata *dp_drv)
 	dp_drv->mdss_util->disable_irq(&mdss_dp_hw);
 }
 
+#ifndef CONFIG_SEC_DISPLAYPORT
 static void mdss_dp_initialize_s_port(enum dp_port_cap *s_port, int port)
 {
 	switch (port) {
@@ -1119,6 +1190,7 @@ u32 mdss_dp_usbpd_gen_config_pkt(struct mdss_dp_drv_pdata *dp)
 	pr_debug("DP config = 0x%x\n", config);
 	return config;
 }
+#endif
 
 void mdss_dp_phy_share_lane_config(struct dss_io_data *phy_io,
 		u8 orientation, u8 ln_cnt, u32 phy_reg_offset)
@@ -1513,6 +1585,7 @@ void mdss_dp_audio_enable(struct dss_io_data *ctrl_io, bool enable)
 	writel_relaxed(audio_ctrl, ctrl_io->base + MMSS_DP_AUDIO_CFG);
 }
 
+#if 1
 /**
  * mdss_dp_phy_send_test_pattern() - sends the requested PHY test pattern
  * @ep: Display Port Driver data
@@ -1587,3 +1660,63 @@ void mdss_dp_phy_send_test_pattern(struct mdss_dp_drv_pdata *dp)
 	value = readl_relaxed(io->base + DP_MAINLINK_READY);
 	pr_info("DP_MAINLINK_READY = 0x%x\n", value);
 }
+#else
+/**
+ * For DPCD Version 1.2:
+ * Bits 2:0 = PHY_TEST_PATTERN_SEL
+ * ##################################################
+ * 000 = No test pattern selected
+ * 001 = D10.2 without scrambling ................(O)
+ * 010 = Symbol_Error_Measurement_Count ..........(X)
+ * 011 = PRBS7 ...................................(O)
+ * 100 = 80 bit custom pattern transmitted .......(O)
+ * 101 = HBR2 Compliance EYE pattern .............(O)
+ */
+void mdss_dp_phy_send_test_pattern(struct mdss_dp_drv_pdata *dp)
+{
+	int phy_test_pattern = 0;
+
+	/* turn off signal first */
+	mdss_dp_state_ctrl(&dp->ctrl_io, ST_PUSH_IDLE);
+	msleep(100);
+
+	pr_debug("[SECDP] phy_test_pattern_sel = %s\n",
+			mdss_dp_get_phy_test_pattern(dp->test_data.phy_test_pattern_sel));
+
+	switch (dp->test_data.phy_test_pattern_sel) {
+	case PHY_TEST_PATTERN_D10_2_NO_SCRAMBLING:
+		/* D10.2 without scrambling */
+		phy_test_pattern = ST_TRAIN_PATTERN_1;
+		break;
+	case PHY_TEST_PATTERN_SYMBOL_ERR_MEASUREMENT_CNT:
+		/* Symbol_Error_Measurement_Count */
+		phy_test_pattern = ST_SYMBOL_ERR_RATE_MEASUREMENT;
+		mdss_dp_setup_hbr2_compliance_scramber(&dp->ctrl_io, 0);
+		break;
+	case PHY_TEST_PATTERN_PRBS7:
+		/* PRBS7 */
+		phy_test_pattern = ST_PRBS7;
+		break;
+	case PHY_TEST_PATTERN_80_BIT_CUSTOM_PATTERN:
+		/* 80 bit custom pattern transmitted */
+		phy_test_pattern = ST_CUSTOM_80_BIT_PATTERN;
+		mdss_dp_setup_test_80bit_custom_pattern(&dp->ctrl_io);
+		break;
+	case PHY_TEST_PATTERN_HBR2_CTS_EYE_PATTERN:
+		/* HBR2 Compliance EYE pattern */
+		phy_test_pattern = ST_TRAIN_PATTERN_4;
+		/*mdss_dp_setup_hbr2_compliance_scramber(&dp->ctrl_io, 1);*/
+		break;
+	default:
+		pr_err("unknown phy_test_pattern_sel(%d)\n",
+			dp->test_data.phy_test_pattern_sel);
+		phy_test_pattern = -1;
+		break;
+	}
+
+	if (phy_test_pattern > 0)
+		mdss_dp_state_ctrl(&dp->ctrl_io, phy_test_pattern);
+
+	return;
+}
+#endif

@@ -1013,8 +1013,8 @@ static int hdcp_1x_authentication_part1(struct hdcp_1x *hdcp)
 
 	rc = hdcp_1x_revoked_rcv_chk(hdcp);
 	if (rc) {
+		pr_err("receiver failed SRM check\n");
 		rc = -HDCP_SRM_CHECK_FAIL;
-		goto error;
 	}
 
 	rc = hdcp_1x_send_an_aksv_to_sink(hdcp);
@@ -1343,8 +1343,8 @@ static int hdcp_1x_authentication_part2(struct hdcp_1x *hdcp)
 
 	rc = hdcp_1x_revoked_rpt_chk(hdcp);
 	if (rc) {
+		pr_err("repeater failed SRM check\n");
 		rc = -HDCP_SRM_CHECK_FAIL;
-		goto error;
 	}
 
 	do {
@@ -1501,7 +1501,7 @@ int hdcp_1x_authenticate(void *input)
 		return -EINVAL;
 	}
 
-	flush_delayed_work(&hdcp->hdcp_auth_work);
+	cancel_delayed_work_sync(&hdcp->hdcp_auth_work);
 
 	if (!hdcp_1x_state(HDCP_STATE_INACTIVE) &&
 			!hdcp_1x_state(HDCP_STATE_AUTH_FAIL)) {
@@ -1763,6 +1763,7 @@ static struct hdcp_1x *hdcp_1x_get_ctrl(struct device *dev)
 error:
 	return NULL;
 }
+
 static ssize_t hdcp_1x_sysfs_rda_status(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {

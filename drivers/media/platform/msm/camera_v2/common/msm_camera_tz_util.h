@@ -16,7 +16,7 @@
 #include <soc/qcom/camera2.h>
 
 #ifndef CONFIG_MSM_CAMERA_TZ_TA_NAME
-#define CONFIG_MSM_CAMERA_TZ_TA_NAME  "seccamdemo64"
+	#define CONFIG_MSM_CAMERA_TZ_TA_NAME  "sec_iris"
 #endif /* CONFIG_MSM_CAMERA_TZ_TA_NAME */
 
 #define MSM_CAMERA_TZ_MODE_NON_SECURE   0x0000000000
@@ -29,7 +29,7 @@
 #define MSM_CAMERA_TZ_HW_BLOCK_CPP      0x0000000010
 
 enum msm_camera_tz_cmd_id_t {
-	MSM_CAMERA_TZ_CMD_NONE = 56000,
+	MSM_CAMERA_TZ_CMD_NONE = 0x10000,				/* 65536 */
 	MSM_CAMERA_TZ_CMD_GET_IF_VERSION,
 	MSM_CAMERA_TZ_CMD_POWER_UP,
 	MSM_CAMERA_TZ_CMD_POWER_DOWN,
@@ -53,11 +53,11 @@ enum msm_camera_tz_cmd_id_t {
 
 enum msm_camera_tz_status_t {
 	MSM_CAMERA_TZ_STATUS_SUCCESS = 0,
-	MSM_CAMERA_TZ_STATUS_GENERAL_FAILURE = -1,
-	MSM_CAMERA_TZ_STATUS_INVALID_INPUT_PARAMS = -2,
-	MSM_CAMERA_TZ_STATUS_INVALID_SENSOR_ID = -3,
-	MSM_CAMERA_TZ_STATUS_BYPASS = -4,
-	MSM_CAMERA_TZ_STATUS_TIMEOUT = -5,
+	MSM_CAMERA_TZ_STATUS_GENERAL_FAILURE = -65536,
+	MSM_CAMERA_TZ_STATUS_INVALID_INPUT_PARAMS = -65537,
+	MSM_CAMERA_TZ_STATUS_INVALID_SENSOR_ID = -65538,
+	MSM_CAMERA_TZ_STATUS_BYPASS = -65539,
+	MSM_CAMERA_TZ_STATUS_TIMEOUT = -65540,
 
 	MSM_CAMERA_TZ_STATUS_RESET_DONE = 1,
 	MSM_CAMERA_TZ_STATUS_ERR_SIZE = 0x7FFFFFFF
@@ -81,8 +81,8 @@ uint32_t msm_camera_tz_set_mode(
 struct qseecom_handle *msm_camera_tz_get_ta_handle(void);
 int32_t get_cmd_rsp_buffers(
 	struct qseecom_handle *ta_qseecom_handle,
-	void **cmd, int *cmd_len,
-	void **rsp, int *rsp_len);
+	void **cmd,	int *cmd_len,
+	void **rsp,	int *rsp_len);
 int32_t msm_camera_tz_load_ta(void);
 int32_t msm_camera_tz_unload_ta(void);
 void msm_camera_tz_lock(void);

@@ -12,7 +12,11 @@
  */
 #ifndef __WCD934X_MBHC_H__
 #define __WCD934X_MBHC_H__
+#ifdef CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET
+#include "../wcd-mbhc-v2-usbc.h"
+#else
 #include "../wcd-mbhc-v2.h"
+#endif
 
 enum wcd934x_on_demand_supply_name {
 	WCD934X_ON_DEMAND_MICBIAS = 0,

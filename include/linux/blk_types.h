@@ -142,19 +142,28 @@ struct bio {
 #define BIO_CHAIN	7	/* chained bio, ->bi_remaining in effect */
 #define BIO_REFFED	8	/* bio has elevated ->bi_cnt */
 
+#ifdef CONFIG_JOURNAL_DATA_TAG
+/* XXX Be carefull not to touch BIO_RESET_BITS */
+#define BIO_JOURNAL    11      /* bio contains journal data */
+#define BIO_JMETA      12      /* bio contains metadata */
+#define BIO_JOURNAL_TAG_MASK   ((1UL << BIO_JOURNAL) | (1UL << BIO_JMETA))
+#endif
+
+#define BIO_BYPASS	13
+
 /*
  * Flags starting here get preserved by bio_reset() - this includes
  * BIO_POOL_IDX()
  */
-#define BIO_RESET_BITS	13
-#define BIO_OWNS_VEC	13	/* bio_free() should free bvec */
+#define BIO_RESET_BITS	14	/* should be larger then BIO_JMETA */
+#define BIO_OWNS_VEC	14	/* bio_free() should free bvec */
 /*
  * Added for Req based dm which need to perform post processing. This flag
  * ensures blk_update_request does not free the bios or request, this is done
  * at the dm level
  */
-#define BIO_DONTFREE 14
-#define BIO_INLINECRYPT 15
+#define BIO_DONTFREE 15
+#define BIO_INLINECRYPT 16
 
 /*
  * top 4 bits of bio flags indicate the pool this bio came from
@@ -220,6 +229,7 @@ enum rq_flag_bits {
 	__REQ_MQ_INFLIGHT,	/* track inflight for MQ */
 	__REQ_NO_TIMEOUT,	/* requests may never expire */
 	__REQ_URGENT,		/* urgent request */
+	__REQ_BYPASS,		/* don't encrypt/decrypt I/O*/
 	__REQ_NR_BITS,		/* stops here */
 };
 
@@ -235,13 +245,14 @@ enum rq_flag_bits {
 #define REQ_URGENT		(1ULL << __REQ_URGENT)
 #define REQ_NOIDLE		(1ULL << __REQ_NOIDLE)
 #define REQ_INTEGRITY		(1ULL << __REQ_INTEGRITY)
+#define REQ_BYPASS		(1ULL << __REQ_BYPASS)
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)
 #define REQ_COMMON_MASK \
 	(REQ_WRITE | REQ_FAILFAST_MASK | REQ_SYNC | REQ_META | REQ_PRIO | \
 	 REQ_DISCARD | REQ_WRITE_SAME | REQ_NOIDLE | REQ_FLUSH | REQ_FUA | \
-	 REQ_SECURE | REQ_INTEGRITY | REQ_BARRIER)
+	 REQ_SECURE | REQ_INTEGRITY | REQ_BARRIER | REQ_BYPASS)
 #define REQ_CLONE_MASK		REQ_COMMON_MASK
 
 #define BIO_NO_ADVANCE_ITER_MASK	(REQ_DISCARD|REQ_WRITE_SAME)

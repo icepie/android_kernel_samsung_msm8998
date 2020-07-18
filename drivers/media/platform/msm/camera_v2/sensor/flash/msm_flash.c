@@ -19,9 +19,28 @@
 #include "msm_flash.h"
 #include "msm_camera_dt_util.h"
 #include "msm_cci.h"
+#if defined(CONFIG_LEDS_S2MPB02)
+#include <linux/leds-s2mpb02.h>
+#endif
+
+#if defined(CONFIG_LEDS_KTD2692)
+#include <linux/leds-ktd2692.h>
+#endif
+extern unsigned int system_rev;
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
+
+#if defined(CONFIG_LEDS_KTD2692)
+extern void ktd2692_flash_on(unsigned data);
+#endif
+
+#if defined(CONFIG_LEDS_S2MPB02)
+#define FLASH_PINCTRL_STATE_SLEEP "flash_suspend"
+#define FLASH_PINCTRL_STATE_DEFAULT "flash_default"
+
+extern struct msm_pinctrl_info g_led_pinctrl_info;
+#endif
 
 DEFINE_MSM_MUTEX(msm_flash_mutex);
 
@@ -287,7 +306,7 @@ static int32_t msm_flash_i2c_init(
 
 	rc = msm_camera_power_up(&flash_ctrl->power_info,
 		flash_ctrl->flash_device_type,
-		&flash_ctrl->flash_i2c_client);
+		&flash_ctrl->flash_i2c_client, false, SUB_DEVICE_TYPE_FLASH);
 	if (rc < 0) {
 		pr_err("%s msm_camera_power_up failed %d\n",
 			__func__, __LINE__);
@@ -372,7 +391,7 @@ static int32_t msm_flash_i2c_release(
 
 	rc = msm_camera_power_down(&flash_ctrl->power_info,
 		flash_ctrl->flash_device_type,
-		&flash_ctrl->flash_i2c_client);
+		&flash_ctrl->flash_i2c_client, false, SUB_DEVICE_TYPE_FLASH);
 	if (rc < 0) {
 		pr_err("%s msm_camera_power_down failed %d\n",
 			__func__, __LINE__);
@@ -437,6 +456,57 @@ static int32_t msm_flash_i2c_write_setting_array(
 	}
 	return rc;
 }
+
+#if defined(CONFIG_LEDS_S2MPB02)
+static int32_t msm_flash_pinctrl_init(struct msm_flash_ctrl_t *flash_ctrl)
+{
+	int32_t rc = 0;
+
+	CDBG("%s, %d : Enter\n", __FUNCTION__, __LINE__);
+	if (flash_ctrl == NULL) {
+		pr_err("%s:%d Invalid flash ctrl", __func__, __LINE__);
+		return -EINVAL;
+	}
+
+	if (flash_ctrl->pdev == NULL) {
+		pr_err("%s:%d Invalid platform device", __func__, __LINE__);
+		return -EINVAL;
+	}
+
+	g_led_pinctrl_info.pinctrl = devm_pinctrl_get(&(flash_ctrl->pdev->dev));
+	if (IS_ERR_OR_NULL(g_led_pinctrl_info.pinctrl)) {
+		pr_err("%s:%d Getting pinctrl handle failed\n",
+			__func__, __LINE__);
+		return -EINVAL;
+	}
+	g_led_pinctrl_info.gpio_state_active =
+		pinctrl_lookup_state(g_led_pinctrl_info.pinctrl,
+				FLASH_PINCTRL_STATE_DEFAULT);
+	if (IS_ERR_OR_NULL(g_led_pinctrl_info.gpio_state_active)) {
+		pr_err("%s:%d Failed to get the active state pinctrl handle\n",
+			__func__, __LINE__);
+		return -EINVAL;
+	}
+	g_led_pinctrl_info.gpio_state_suspend
+		= pinctrl_lookup_state(g_led_pinctrl_info.pinctrl,
+				FLASH_PINCTRL_STATE_SLEEP);
+	if (IS_ERR_OR_NULL(g_led_pinctrl_info.gpio_state_suspend)) {
+		pr_err("%s:%d Failed to get the suspend state pinctrl handle\n",
+				__func__, __LINE__);
+		return -EINVAL;
+	}
+
+	// make pin state to suspend
+	rc = pinctrl_select_state(g_led_pinctrl_info.pinctrl, g_led_pinctrl_info.gpio_state_suspend);
+	if (rc) {
+		pr_err("%s:%d Cannot set pin to suspend state", __func__, __LINE__);
+		return rc;
+	}
+
+	CDBG("%s, %d : Exit\n", __FUNCTION__, __LINE__);
+	return 0;
+}
+#endif
 
 static int32_t msm_flash_init(
 	struct msm_flash_ctrl_t *flash_ctrl,
@@ -579,7 +649,11 @@ static int32_t msm_flash_prepare(
 	if (flash_ctrl->switch_trigger == NULL) {
 		pr_err("%s:%d Invalid argument\n",
 				__func__, __LINE__);
+#if 1//TEMP_8998
+		return 0;
+#else
 		return -EINVAL;
+#endif
 	}
 
 	if (flash_ctrl->flash_state == MSM_CAMERA_FLASH_INIT &&
@@ -731,12 +805,29 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 
 	switch (flash_data->cfg_type) {
 	case CFG_FLASH_INIT:
+#if defined(CONFIG_LEDS_S2MPB02)
+		pr_info("CAM Flash INIT\n");
+#elif defined(CONFIG_LEDS_KTD2692)
+		ktd2692_flash_on(FLASH_OFF);
+		CDBG("Ktd2692 led turn off: CFG_FLASH_INIT\n");
+#endif
 		rc = msm_flash_init_prepare(flash_ctrl, flash_data);
 		break;
 	case CFG_FLASH_RELEASE:
 		if (flash_ctrl->flash_state != MSM_CAMERA_FLASH_RELEASE) {
+#if defined(CONFIG_LEDS_S2MPB02)
+			pr_info("CAM Flash Release\n");
+			s2mpb02_led_en(S2MPB02_FLASH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* flash, off */
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* torch, off */
+			flash_ctrl->flash_state = MSM_CAMERA_FLASH_RELEASE;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(FLASH_OFF);
+                        flash_ctrl->flash_state = MSM_CAMERA_FLASH_RELEASE;
+			CDBG("Ktd2692 led turn off: CFG_FLASH_RELEASE\n");
+#else
 			rc = flash_ctrl->func_tbl->camera_flash_release(
 				flash_ctrl);
+#endif
 		} else {
 			CDBG(pr_fmt("Invalid state : %d\n"),
 				flash_ctrl->flash_state);
@@ -745,10 +836,21 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 	case CFG_FLASH_OFF:
 		if ((flash_ctrl->flash_state != MSM_CAMERA_FLASH_RELEASE) &&
 			(flash_ctrl->flash_state != MSM_CAMERA_FLASH_OFF)) {
+#if defined(CONFIG_LEDS_S2MPB02)
+			pr_info("CAM Flash OFF\n");
+			s2mpb02_led_en(S2MPB02_FLASH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* flash, off */
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* torch, off */
+			flash_ctrl->flash_state = MSM_CAMERA_FLASH_OFF;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(FLASH_OFF);
+                        flash_ctrl->flash_state = MSM_CAMERA_FLASH_OFF;
+			CDBG("Ktd2692 led turn off: CFG_FLASH_OFF\n");
+#else
 			rc = flash_ctrl->func_tbl->camera_flash_off(
 				flash_ctrl, flash_data);
 			if (!rc)
 				flash_ctrl->flash_state = MSM_CAMERA_FLASH_OFF;
+#endif
 		} else {
 			CDBG(pr_fmt("Invalid state : %d\n"),
 				flash_ctrl->flash_state);
@@ -757,10 +859,46 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 	case CFG_FLASH_LOW:
 		if ((flash_ctrl->flash_state == MSM_CAMERA_FLASH_OFF) ||
 			(flash_ctrl->flash_state == MSM_CAMERA_FLASH_INIT)) {
+#if defined(CONFIG_LEDS_S2MPB02)
+			pr_info("CAM Pre Flash ON\n");
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_240MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
+			flash_ctrl->flash_state = MSM_CAMERA_FLASH_LOW;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(TORCH_ON);
+                        flash_ctrl->flash_state = MSM_CAMERA_FLASH_LOW;
+			CDBG("Ktd2692 led turn on:CFG_FLASH_LOW\n");
+#else
 			rc = flash_ctrl->func_tbl->camera_flash_low(
 				flash_ctrl, flash_data);
 			if (!rc)
 				flash_ctrl->flash_state = MSM_CAMERA_FLASH_LOW;
+#endif
+		} else {
+			CDBG(pr_fmt("Invalid state : %d\n"),
+				flash_ctrl->flash_state);
+		}
+		break;
+	case CFG_FLASH_TORCH:
+		if ((flash_ctrl->flash_state == MSM_CAMERA_FLASH_OFF) ||
+			(flash_ctrl->flash_state == MSM_CAMERA_FLASH_INIT)) {
+#if defined(CONFIG_LEDS_S2MPB02)
+			pr_info("CAM Torch Flash ON\n");
+#if defined(CONFIG_FLASH_CURRENT_JAPAN)
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_60MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
+#else
+			s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_180MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
+#endif
+			flash_ctrl->flash_state = MSM_CAMERA_FLASH_LOW;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(TORCH_ON);
+                        flash_ctrl->flash_state = MSM_CAMERA_FLASH_LOW;
+			CDBG("Ktd2692 led turn on:CFG_FLASH_TORCH\n");
+#else
+			rc = flash_ctrl->func_tbl->camera_flash_low(
+				flash_ctrl, flash_data);
+			if (!rc)
+				flash_ctrl->flash_state = MSM_CAMERA_FLASH_LOW;
+#endif
 		} else {
 			CDBG(pr_fmt("Invalid state : %d\n"),
 				flash_ctrl->flash_state);
@@ -769,15 +907,39 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 	case CFG_FLASH_HIGH:
 		if ((flash_ctrl->flash_state == MSM_CAMERA_FLASH_OFF) ||
 			(flash_ctrl->flash_state == MSM_CAMERA_FLASH_INIT)) {
+#if defined(CONFIG_LEDS_S2MPB02)
+			pr_info("CAM Flash ON\n");
+			s2mpb02_led_en(S2MPB02_FLASH_LED_1, S2MPB02_FLASH_OUT_I_1200MA, S2MPB02_LED_TURN_WAY_I2C);/* flash, on */
+			flash_ctrl->flash_state = MSM_CAMERA_FLASH_HIGH;
+#elif defined(CONFIG_LEDS_KTD2692)
+			ktd2692_flash_on(FLASH_ON);
+                        flash_ctrl->flash_state = MSM_CAMERA_FLASH_HIGH;
+			CDBG("Ktd2692 led turn on:CFG_FLASH_TORCH\n");
+#else
 			rc = flash_ctrl->func_tbl->camera_flash_high(
 				flash_ctrl, flash_data);
 			if (!rc)
 				flash_ctrl->flash_state = MSM_CAMERA_FLASH_HIGH;
+#endif
 		} else {
 			CDBG(pr_fmt("Invalid state : %d\n"),
 				flash_ctrl->flash_state);
 		}
 		break;
+#if defined(CONFIG_SAMSUNG_SECURE_CAMERA) && defined(CONFIG_LEDS_S2MPB02)
+	case CFG_FLASH_IR_DELAY:
+		s2mpb02_ir_led_pulse_delay(flash_data->ir_led_config);
+		break;
+	case CFG_FLASH_IR_WIDTH:
+		s2mpb02_ir_led_pulse_width(flash_data->ir_led_config);
+		break;
+	case CFG_FLASH_IR_CURRENT:
+		s2mpb02_ir_led_current(flash_data->ir_led_config);
+		break;
+	case CFG_FLASH_IR_MAXTIME:
+		s2mpb02_ir_led_max_time(flash_data->ir_led_config);
+		break;
+#endif
 	default:
 		rc = -EFAULT;
 		break;
@@ -940,9 +1102,15 @@ static int32_t msm_flash_get_pmic_source_info(
 				continue;
 			}
 
+#if defined(CONFIG_LEDS_S2MPB02)
+			rc = of_property_read_string(flash_src_node,
+				"default-trigger",
+				&fctrl->flash_trigger_name[i]);
+#else
 			rc = of_property_read_string(flash_src_node,
 				"qcom,default-led-trigger",
 				&fctrl->flash_trigger_name[i]);
+#endif
 			if (rc < 0) {
 				rc = of_property_read_string(flash_src_node,
 					"linux,default-trigger",
@@ -958,9 +1126,15 @@ static int32_t msm_flash_get_pmic_source_info(
 				fctrl->flash_trigger_name[i]);
 
 			/* Read operational-current */
+#if defined(CONFIG_LEDS_S2MPB02)
+			rc = of_property_read_u32(flash_src_node,
+				"brightness",
+				&fctrl->flash_op_current[i]);
+#else
 			rc = of_property_read_u32(flash_src_node,
 				"qcom,current",
 				&fctrl->flash_op_current[i]);
+#endif
 			if (rc < 0) {
 				rc = of_property_read_u32(flash_src_node,
 					"qcom,current-ma",
@@ -973,9 +1147,12 @@ static int32_t msm_flash_get_pmic_source_info(
 			}
 
 			/* Read max-current */
+#if defined(CONFIG_LEDS_S2MPB02)
+#else
 			rc = of_property_read_u32(flash_src_node,
 				"qcom,max-current",
 				&fctrl->flash_max_current[i]);
+#endif
 			if (rc < 0) {
 				pr_err("current: read failed\n");
 				of_node_put(flash_src_node);
@@ -983,9 +1160,15 @@ static int32_t msm_flash_get_pmic_source_info(
 			}
 
 			/* Read max-duration */
+#if defined(CONFIG_LEDS_S2MPB02)
+			rc = of_property_read_u32(flash_src_node,
+				"timeout",
+				&fctrl->flash_max_duration[i]);
+#else
 			rc = of_property_read_u32(flash_src_node,
 				"qcom,duration",
 				&fctrl->flash_max_duration[i]);
+#endif
 			if (rc < 0) {
 				rc = of_property_read_u32(flash_src_node,
 					"qcom,duration-ms",
@@ -1030,9 +1213,15 @@ static int32_t msm_flash_get_pmic_source_info(
 				continue;
 			}
 
+#if defined(CONFIG_LEDS_S2MPB02)
+			rc = of_property_read_string(torch_src_node,
+				"default-trigger",
+				&fctrl->torch_trigger_name[i]);
+#else
 			rc = of_property_read_string(torch_src_node,
 				"qcom,default-led-trigger",
 				&fctrl->torch_trigger_name[i]);
+#endif
 			if (rc < 0) {
 				rc = of_property_read_string(torch_src_node,
 					"linux,default-trigger",
@@ -1048,9 +1237,15 @@ static int32_t msm_flash_get_pmic_source_info(
 				fctrl->torch_trigger_name[i]);
 
 			/* Read operational-current */
+#if defined(CONFIG_LEDS_S2MPB02)
+			rc = of_property_read_u32(flash_src_node,
+				"brightness",
+				&fctrl->torch_op_current[i]);
+#else
 			rc = of_property_read_u32(torch_src_node,
 				"qcom,current",
 				&fctrl->torch_op_current[i]);
+#endif
 			if (rc < 0) {
 				rc = of_property_read_u32(torch_src_node,
 					"qcom,current-ma",
@@ -1063,6 +1258,8 @@ static int32_t msm_flash_get_pmic_source_info(
 			}
 
 			/* Read max-current */
+#if defined(CONFIG_LEDS_S2MPB02)
+#else
 			rc = of_property_read_u32(torch_src_node,
 				"qcom,max-current",
 				&fctrl->torch_max_current[i]);
@@ -1071,6 +1268,7 @@ static int32_t msm_flash_get_pmic_source_info(
 				of_node_put(torch_src_node);
 				continue;
 			}
+#endif
 
 			of_node_put(torch_src_node);
 
@@ -1186,6 +1384,15 @@ static long msm_flash_subdev_do_ioctl(
 		case CFG_FLASH_OFF:
 		case CFG_FLASH_LOW:
 		case CFG_FLASH_HIGH:
+		case CFG_FLASH_TORCH:
+#if defined(CONFIG_SAMSUNG_SECURE_CAMERA)
+		case CFG_FLASH_IR_DELAY:
+		case CFG_FLASH_IR_WIDTH:
+		case CFG_FLASH_IR_CURRENT:
+		case CFG_FLASH_IR_MAXTIME:
+			flash_data.ir_led_config = u32->ir_led_config;
+#endif
+
 			flash_data.cfg.settings = compat_ptr(u32->cfg.settings);
 			break;
 		case CFG_FLASH_INIT:
@@ -1213,9 +1420,9 @@ static long msm_flash_subdev_do_ioctl(
 			break;
 		}
 		break;
-	case VIDIOC_MSM_FLASH_CFG:
-		pr_err("invalid cmd 0x%x received\n", cmd);
-		return -EINVAL;
+	case VIDIOC_MSM_FLASH_CFG: 
+		pr_err("invalid cmd 0x%x received\n", cmd); 
+		return -EINVAL;	
 	default:
 		return msm_flash_subdev_ioctl(sd, cmd, arg);
 	}
@@ -1264,6 +1471,15 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 		kfree(flash_ctrl);
 		return -EINVAL;
 	}
+
+#if defined(CONFIG_LEDS_S2MPB02)
+		rc = msm_flash_pinctrl_init(flash_ctrl);
+		if (rc < 0) {
+			pr_err("%s:%d msm_flash_pinctrl_init failed\n",
+				__func__, __LINE__);
+			return -EINVAL;
+		}
+#endif
 
 	flash_ctrl->flash_state = MSM_CAMERA_FLASH_RELEASE;
 	flash_ctrl->power_info.dev = &flash_ctrl->pdev->dev;

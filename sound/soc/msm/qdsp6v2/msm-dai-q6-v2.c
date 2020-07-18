@@ -1572,7 +1572,7 @@ static int msm_dai_q6_usb_audio_hw_params(struct snd_pcm_hw_params *params,
 	dai_data->port_config.usb_audio.num_channels = dai_data->channels;
 	dai_data->port_config.usb_audio.sample_rate = dai_data->rate;
 
-	dev_dbg(dai->dev, "%s: dev_id[0x%x] bit_wd[%hu] format[%hu]\n"
+	dev_info(dai->dev, "%s: dev_id[0x%x] bit_wd[%hu] format[%hu]\n"
 		"num_channel %hu  sample_rate %d\n", __func__,
 		dai_data->port_config.usb_audio.dev_token,
 		dai_data->port_config.usb_audio.bit_width,
@@ -1975,7 +1975,7 @@ static int msm_dai_q6_usb_audio_cfg_put(struct snd_kcontrol *kcontrol,
 
 	if (dai_data) {
 		dai_data->port_config.usb_audio.dev_token = val;
-		pr_debug("%s: dev_token = 0x%x\n",  __func__,
+		pr_info("%s: dev_token = 0x%x\n",  __func__,
 				 dai_data->port_config.usb_audio.dev_token);
 	} else {
 		pr_err("%s: dai_data is NULL\n", __func__);
@@ -6084,6 +6084,9 @@ static int msm_dai_q6_tdm_set_tdm_slot(struct snd_soc_dai *dai,
 	case 2:
 		cap_mask = 0x03;
 		break;
+	case 4:
+		cap_mask = 0xF;
+		break;
 	case 8:
 		cap_mask = 0xFF;
 		break;
@@ -6484,6 +6487,23 @@ static int msm_dai_q6_tdm_hw_params(struct snd_pcm_substream *substream,
 	tdm->nslots_per_frame = tdm_group->nslots_per_frame;
 	tdm->slot_width = tdm_group->slot_width;
 	tdm->slot_mask = tdm_group->slot_mask;
+
+	// re-check slot mask
+	if (tdm->nslots_per_frame != tdm->num_channels)
+	{
+		switch (tdm->num_channels) {
+		case 2:
+			tdm->slot_mask = 0x3;
+			break;
+		case 4:
+			tdm->slot_mask = 0xF;
+			break;
+		default :
+			dev_err(dai->dev, "%s: invalid param channels %d\n",
+				__func__, tdm->num_channels);
+			return -EINVAL;
+		}
+	}
 
 	pr_debug("%s: TDM:\n"
 		"num_channels=%d sample_rate=%d bit_width=%d\n"

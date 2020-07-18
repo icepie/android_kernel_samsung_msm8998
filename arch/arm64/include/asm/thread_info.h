@@ -22,6 +22,9 @@
 #ifdef __KERNEL__
 
 #include <linux/compiler.h>
+#ifdef CONFIG_RKP_CFP_ROPP
+#include <linux/rkp_cfp.h>
+#endif
 
 #ifdef CONFIG_ARM64_4K_PAGES
 #define THREAD_SIZE_ORDER	2
@@ -47,23 +50,34 @@ typedef unsigned long mm_segment_t;
 struct thread_info {
 	unsigned long		flags;		/* low level flags */
 	mm_segment_t		addr_limit;	/* address limit */
-#ifndef CONFIG_THREAD_INFO_IN_TASK
+//#ifndef CONFIG_THREAD_INFO_IN_TASK
 	struct task_struct	*task;		/* main task structure */
-#endif
+//#endif
 #ifdef CONFIG_ARM64_SW_TTBR0_PAN
 	u64			ttbr0;		/* saved TTBR0_EL1 */
 #endif
 	int			preempt_count;	/* 0 => preemptable, <0 => bug */
-#ifndef CONFIG_THREAD_INFO_IN_TASK
+//#ifndef CONFIG_THREAD_INFO_IN_TASK
 	int			cpu;		/* cpu */
+//#endif
+#ifdef CONFIG_RKP_CFP_ROPP
+	unsigned long rrk;
 #endif
 };
+
+#ifdef CONFIG_RKP_CFP_ROPP
+# define INIT_THREAD_INFO_RKP_CFP(tsk)					\
+	.rrk = 0,
+#else
+# define INIT_THREAD_INFO_RKP_CFP(tsk)
+#endif
 
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 #define INIT_THREAD_INFO(tsk)						\
 {									\
 	.preempt_count	= INIT_PREEMPT_COUNT,				\
 	.addr_limit	= KERNEL_DS,					\
+	INIT_THREAD_INFO_RKP_CFP(tsk) 					\
 }
 #else
 #define INIT_THREAD_INFO(tsk)						\
@@ -72,6 +86,7 @@ struct thread_info {
 	.flags		= 0,						\
 	.preempt_count	= INIT_PREEMPT_COUNT,				\
 	.addr_limit	= KERNEL_DS,					\
+	INIT_THREAD_INFO_RKP_CFP(tsk) 					\
 }
 
 /*

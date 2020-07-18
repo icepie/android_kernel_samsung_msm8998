@@ -47,7 +47,7 @@ static const char f_midi_longname[] = "MIDI Gadget";
  * stored in 4-bit fields. And as the interface currently only holds one
  * single endpoint, this is the maximum number of ports we can allow.
  */
-#define MAX_PORTS 16
+#define MAX_PORTS 1
 
 /*
  * This is a gadget, and the IN/OUT naming is from the host's perspective.
@@ -185,6 +185,16 @@ static struct usb_ms_endpoint_descriptor_16 ms_in_desc = {
 	/* .baAssocJackID =	DYNAMIC */
 };
 
+static struct usb_ss_ep_comp_descriptor midi_ss_in_comp_desc = {
+	.bLength =		sizeof(midi_ss_in_comp_desc),
+	.bDescriptorType =		USB_DT_SS_ENDPOINT_COMP,
+};
+
+static struct usb_ss_ep_comp_descriptor midi_ss_out_comp_desc = {
+	.bLength =		sizeof(midi_ss_out_comp_desc),
+	.bDescriptorType =	USB_DT_SS_ENDPOINT_COMP,
+};
+
 /* string IDs are assigned dynamically */
 
 #define STRING_FUNC_IDX			0
@@ -305,7 +315,8 @@ static int f_midi_start_ep(struct f_midi *midi,
 	int err;
 	struct usb_composite_dev *cdev = f->config->cdev;
 
-	usb_ep_disable(ep);
+	if (ep->driver_data)
+		usb_ep_disable(ep);
 
 	err = config_ep_by_speed(midi->gadget, f, ep);
 	if (err) {
@@ -343,7 +354,8 @@ static int f_midi_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	if (err)
 		return err;
 
-	usb_ep_disable(midi->out_ep);
+	if (midi->out_ep->driver_data)
+		usb_ep_disable(midi->out_ep);
 
 	err = config_ep_by_speed(midi->gadget, f, midi->out_ep);
 	if (err) {
@@ -361,6 +373,8 @@ static int f_midi_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 
 	midi->out_ep->driver_data = midi;
 
+	if (midi->gadget->speed == USB_SPEED_SUPER)
+		midi->buflen = 1024;
 	/* allocate a bunch of read buffers and queue them all at once. */
 	for (i = 0; i < midi->qlen && err == 0; i++) {
 		struct usb_request *req =
@@ -375,7 +389,8 @@ static int f_midi_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		if (err) {
 			ERROR(midi, "%s queue req: %d\n",
 				    midi->out_ep->name, err);
-			free_ep_req(midi->out_ep, req);
+			if (req->buf != NULL)
+				free_ep_req(midi->out_ep, req);
 		}
 	}
 
@@ -782,8 +797,13 @@ static int f_midi_bind(struct usb_configuration *c, struct usb_function *f)
 	}
 
 	/* allocate temporary function list */
-	midi_function = kcalloc((MAX_PORTS * 4) + 9, sizeof(*midi_function),
-				GFP_KERNEL);
+	if (gadget_is_superspeed(c->cdev->gadget))
+		midi_function = kcalloc((MAX_PORTS * 4) + 11, sizeof(*midi_function),
+					GFP_KERNEL);
+	else
+		midi_function = kcalloc((MAX_PORTS * 4) + 9, sizeof(*midi_function),
+					GFP_KERNEL);
+
 	if (!midi_function) {
 		status = -ENOMEM;
 		kfree(midi_ss_function);
@@ -933,6 +953,8 @@ static int f_midi_bind(struct usb_configuration *c, struct usb_function *f)
 	kfree(midi_ss_function);
 
 	return 0;
+
+	usb_free_descriptors(f->ss_descriptors);
 
 fail_f_midi:
 	kfree(midi_function);
@@ -1097,7 +1119,7 @@ static ssize_t alsa_show(struct device *dev,
 	struct usb_function_instance *fi_midi = dev_get_drvdata(dev);
 	struct f_midi *midi;
 
-	if (!fi_midi->f)
+	if (!fi_midi || !fi_midi->f)
 		dev_warn(dev, "f_midi: function not set\n");
 
 	if (fi_midi && fi_midi->f) {
@@ -1160,7 +1182,7 @@ static struct usb_function_instance *f_midi_alloc_inst(void)
 	opts->func_inst.free_func_inst = f_midi_free_inst;
 	opts->index = SNDRV_DEFAULT_IDX1;
 	opts->id = SNDRV_DEFAULT_STR1;
-	opts->buflen = 1024;
+	opts->buflen = 512;
 	opts->qlen = 32;
 	opts->in_ports = 1;
 	opts->out_ports = 1;

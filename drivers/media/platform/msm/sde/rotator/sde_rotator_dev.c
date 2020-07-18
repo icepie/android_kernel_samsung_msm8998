@@ -40,7 +40,11 @@
 #define SDE_ROTATOR_EARLY_SUBMIT	1
 
 /* Timeout (msec) waiting for stream to turn off. */
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#define SDE_ROTATOR_STREAM_OFF_TIMEOUT	3000
+#else
 #define SDE_ROTATOR_STREAM_OFF_TIMEOUT	500
+#endif
 
 /* acquire fence time out, following other driver fence time out practice */
 #define SDE_ROTATOR_FENCE_TIMEOUT	MSEC_PER_SEC
@@ -331,6 +335,11 @@ static void sde_rotator_buf_queue(struct vb2_buffer *vb)
 	v4l2_m2m_buf_queue(ctx->fh.m2m_ctx, vbuf);
 }
 
+ /*
++ * sde_rotator_buf_finish - vb2_ops buf_finish to finalize buffer before going
++ *				back to user space
++ * @vb: Pointer to vb2 buffer struct.
++ */
 /*
  * sde_rotator_buf_finish - vb2_ops buf_finish to finalize buffer before going
  *				back to user space
@@ -1510,6 +1519,7 @@ static int sde_rotator_streamon(struct file *file,
 	struct sde_rotator_device *rot_dev = ctx->rot_dev;
 	struct sde_rotation_config config;
 	struct vb2_queue *vq;
+
 	int ret;
 
 	SDEDEV_DBG(ctx->rot_dev->dev, "stream on s:%d t:%d\n",
@@ -1540,6 +1550,7 @@ static int sde_rotator_streamon(struct file *file,
 			return ret;
 		}
 	}
+
 
 	ret = v4l2_m2m_streamon(file, ctx->fh.m2m_ctx, buf_type);
 	if (ret < 0)
@@ -1875,6 +1886,7 @@ static long sde_rotator_private_ioctl(struct file *file, void *fh,
 			 * Invalidate descriptor cache.
 			 */
 			vbinfo->fd = -1;
+			vbinfo->fence = NULL;
 		}
 
 		fence->fd = vbinfo->fd;
@@ -2285,6 +2297,8 @@ static void sde_rotator_submit_handler(struct kthread_work *work)
 		return;
 	}
 
+	ATRACE_BEGIN(__func__);
+	
 	rot_dev = ctx->rot_dev;
 	SDEDEV_DBG(rot_dev->dev, "submit handler s:%d\n", ctx->session_id);
 
@@ -2315,6 +2329,8 @@ static void sde_rotator_submit_handler(struct kthread_work *work)
 	}
 
 	mutex_unlock(&rot_dev->lock);
+	
+	ATRACE_END(__func__);
 }
 
 /*

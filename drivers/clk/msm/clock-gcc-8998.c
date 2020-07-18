@@ -332,6 +332,7 @@ static struct clk_freq_tbl ftbl_blsp_qup_spi_apps_clk_src[] = {
 	F(   9600000,    cxo_clk_src,    2,    0,     0),
 	F(  15000000, gpll0_early_div,   5,    1,     4),
 	F(  19200000,    cxo_clk_src,    1,    0,     0),
+	F(  24000000, gpll0_out_main,    5,    1,     5),
 	F(  25000000, gpll0_out_main,   12,    1,     2),
 	F(  50000000, gpll0_out_main,   12,    0,     0),
 	F_END
@@ -876,6 +877,7 @@ static struct clk_freq_tbl ftbl_sdcc2_apps_clk_src[] = {
 	F(  25000000, gpll0_out_main,   12,    1,     2),
 	F(  50000000, gpll0_out_main,   12,    0,     0),
 	F( 100000000, gpll0_out_main,    6,    0,     0),
+	F( 171430000, gpll0_out_main,  3.5,    0,     0),
 	F( 200000000, gpll0_out_main,    3,    0,     0),
 	F_END
 };
@@ -2765,8 +2767,8 @@ static int msm_gcc_8998_probe(struct platform_device *pdev)
 	/* This clock is used for all MMSSCC register access */
 	clk_prepare_enable(&gcc_mmss_noc_cfg_ahb_clk.c);
 
-	/* Keep bimc gfx clock port on all the time */
-	clk_prepare_enable(&gcc_bimc_gfx_clk.c);
+	/* Keep bimc gfx clock port on all the time */ 
+	clk_prepare_enable(&gcc_bimc_gfx_clk.c); 
 
 	/* This clock is used for all GPUCC register access */
 	clk_prepare_enable(&gcc_gpu_cfg_ahb_clk.c);

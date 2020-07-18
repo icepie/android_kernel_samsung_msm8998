@@ -128,6 +128,12 @@ static ssize_t diag_dbgfs_read_status(struct file *file, char __user *ubuf,
 				 driver->real_time_mode[i]);
 	}
 
+	ret += scnprintf(buf+ret, buf_size-ret, "\nDIAG Client Info\n");
+	for (i = 0; i < driver->num_clients; i++) {
+		ret += scnprintf(buf+ret, buf_size-ret,
+			"%d) %s PID=%d\n", i, driver->client_map[i].name, driver->client_map[i].pid);
+	}
+
 	ret = simple_read_from_buffer(ubuf, count, ppos, buf, ret);
 
 	kfree(buf);
@@ -157,7 +163,7 @@ static ssize_t diag_dbgfs_read_dcistats(struct file *file,
 
 	buf_size = ksize(buf);
 	bytes_remaining = buf_size;
-
+	
 	mutex_lock(&diag_dci_dbgfs_mutex);
 	if (diag_dbgfs_dci_data_index == 0) {
 		bytes_written =

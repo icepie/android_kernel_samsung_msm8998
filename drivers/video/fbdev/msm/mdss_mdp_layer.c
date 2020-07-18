@@ -1396,6 +1396,7 @@ static struct sync_fence *__create_fence(struct msm_fb_data_type *mfd,
 		return ERR_PTR(-EPERM);
 	}
 
+#if 0
 	if (fence_type == MDSS_MDP_RETIRE_FENCE)
 		snprintf(fence_name, sizeof(fence_name), "fb%d_retire",
 			mfd->index);
@@ -1405,24 +1406,33 @@ static struct sync_fence *__create_fence(struct msm_fb_data_type *mfd,
 	else if (fence_type == MDSS_MDP_CWB_RETIRE_FENCE)
 		snprintf(fence_name, sizeof(fence_name), "cwb%d_retire",
 			mfd->index);
-
+#endif
 
 	if ((fence_type == MDSS_MDP_RETIRE_FENCE) &&
 		(mfd->panel.type == MIPI_CMD_PANEL)) {
 		if (mdp5_data->vsync_timeline) {
 			value = mdp5_data->vsync_timeline->value + 1 +
 				mdp5_data->retire_cnt++;
+			snprintf(fence_name, sizeof(fence_name), "fb%d_retire_%d",
+				mfd->index, value);
 			sync_fence = mdss_fb_sync_get_fence(
 				mdp5_data->vsync_timeline, fence_name, value);
+			MDSS_XLOG(value, mdp5_data->vsync_timeline->value, mdp5_data->retire_cnt, 0x11);
 		} else {
 			return ERR_PTR(-EPERM);
 		}
 	} else if (fence_type == MDSS_MDP_CWB_RETIRE_FENCE) {
+		snprintf(fence_name, sizeof(fence_name), "cwb%d_retire_%d",
+			mfd->index, sync_pt_data->timeline_value + 1);
 		sync_fence = mdss_fb_sync_get_fence(sync_pt_data->timeline,
 				fence_name, sync_pt_data->timeline_value + 1);
+		MDSS_XLOG(sync_pt_data->timeline_value+1, 0x22);
 	} else {
+		snprintf(fence_name, sizeof(fence_name), "fb%d_release_%d",
+			mfd->index, value);
 		sync_fence = mdss_fb_sync_get_fence(sync_pt_data->timeline,
 				fence_name, value);
+		MDSS_XLOG(value, sync_pt_data->timeline->value, sync_pt_data->commit_cnt, 0x33);
 	}
 
 	if (IS_ERR_OR_NULL(sync_fence)) {
@@ -1435,6 +1445,9 @@ static struct sync_fence *__create_fence(struct msm_fb_data_type *mfd,
 	if (*fence_fd < 0) {
 		pr_err("%s: get_unused_fd_flags failed error:0x%x\n",
 			fence_name, *fence_fd);
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		sync_dump();
+#endif
 		sync_fence_put(sync_fence);
 		sync_fence = NULL;
 		goto end;

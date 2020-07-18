@@ -23,6 +23,10 @@
 #include <asm/memory.h>
 #include <asm/pgtable-hwdef.h>
 
+#ifdef CONFIG_TIMA_RKP
+#include <linux/rkp_entry.h>
+#include <asm/bug.h>
+#endif /* CONFIG_TIMA_RKP */
 /*
  * Software defined PTE bits definition.
  */
@@ -247,6 +251,28 @@ static inline pmd_t pmd_mkcont(pmd_t pmd)
 	return __pmd(pmd_val(pmd) | PMD_SECT_CONT);
 }
 
+#ifdef CONFIG_TIMA_RKP
+extern  int printk(const char *s, ...);
+extern void panic(const char *fmt, ...);
+static inline void rkp_flush_cache(u64 addr)
+{
+	asm volatile(
+			"mov x1, %0\n"
+			"dc civac, x1\n"
+			:
+			: "r" (addr)
+			: "x1", "memory" );
+}
+static inline void rkp_inv_cache(u64 addr)
+{
+	asm volatile(
+			"mov x1, %0\n"
+			"dc ivac, x1\n"
+			:
+			: "r" (addr)
+			: "x1", "memory" );
+}
+#endif /* CONFIG_TIMA_RKP */
 static inline void set_pte(pte_t *ptep, pte_t pte)
 {
 #ifdef CONFIG_ARM64_STRICT_BREAK_BEFORE_MAKE
@@ -277,8 +303,27 @@ pte_bad:
 pte_ok:
 #endif
 
+#ifdef CONFIG_TIMA_RKP
+	if (pte && rkp_is_pg_dbl_mapped((u64)(pte))){	
+		panic("TIMA RKP : Double mapping Detected pte = 0x%llx ptep = %p", (u64)pte, ptep);
+                return;
+        }
+	if (rkp_is_pte_protected((u64)ptep)) {
+		rkp_flush_cache((u64)ptep);
+		rkp_call(RKP_PTE_SET, (unsigned long)ptep, pte_val(pte), 0, 0, 0);
+		rkp_flush_cache((u64)ptep);
+	} else {
+		asm volatile(	
+			"mov x1, %0\n"
+			"mov x2, %1\n"
+			"str x2, [x1]\n"
+			:
+			: "r" (ptep), "r" (pte)
+			: "x1", "x2", "memory" );
+	}
+#else
 	*ptep = pte;
-
+#endif /* CONFIG_TIMA_RKP */
 	/*
 	 * Only if the new pte is valid and kernel, otherwise TLB maintenance
 	 * or update_mmu_cache() have the necessary barriers.
@@ -448,6 +493,9 @@ extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
 
 #define pmd_bad(pmd)		(!(pmd_val(pmd) & 2))
 
+#ifdef CONFIG_TIMA_RKP
+#define pmd_block(pmd)		((pmd_val(pmd) & 0x3)  == 1)
+#endif
 #define pmd_table(pmd)		((pmd_val(pmd) & PMD_TYPE_MASK) == \
 				 PMD_TYPE_TABLE)
 #define pmd_sect(pmd)		((pmd_val(pmd) & PMD_TYPE_MASK) == \
@@ -465,7 +513,23 @@ extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
 
 static inline void set_pmd(pmd_t *pmdp, pmd_t pmd)
 {
+#ifdef CONFIG_TIMA_RKP
+	if (rkp_def_init_done || rkp_is_pg_protected((u64)pmdp)) {
+		rkp_flush_cache((u64)pmdp);
+		rkp_call(RKP_PMD_SET, (unsigned long)pmdp, pmd_val(pmd), 0, 0, 0);
+		rkp_flush_cache((u64)pmdp);
+	} else {
+		asm volatile(
+			"mov x1, %0\n"
+			"mov x2, %1\n"
+			"str x2, [x1]\n"
+			:
+			: "r" (pmdp), "r" (pmd)
+			: "x1", "x2", "memory" );
+	}
+#else
 	*pmdp = pmd;
+#endif /* CONFIG_TIMA_RKP */
 	dsb(ishst);
 	isb();
 }
@@ -491,7 +555,25 @@ static inline unsigned long pmd_page_vaddr(pmd_t pmd)
 #define pte_offset_phys(dir,addr)	(pmd_page_paddr(*(dir)) + pte_index(addr) * sizeof(pte_t))
 #define pte_offset_kernel(dir,addr)	((pte_t *)__va(pte_offset_phys((dir), (addr))))
 
+#ifndef CONFIG_TIMA_RKP
 #define pte_offset_map(dir,addr)	pte_offset_kernel((dir), (addr))
+#else
+void msm_trigger_wdog_bite(void);
+#define pte_offset_map(dir,addr) \
+({	\
+	pte_t *__pte;	\
+	if (unlikely(pmd_none(*(dir))))   \
+	{	\
+		printk("TIMA RKP : pmd is not valid, try to invalidate cache for pmd:%llx %llx\n", (u64)(*(dir)), (u64)dir);	\
+		rkp_inv_cache((u64)dir);	\
+		printk("TIMA RKP : Invalidate done, pmd:%llx \n", (u64)(*(dir)));	\
+		if (pmd_none(*(dir)))	\
+			msm_trigger_wdog_bite();	\
+	}	\
+	__pte = pte_offset_kernel((dir), (addr));	\
+})
+#endif
+
 #define pte_offset_map_nested(dir,addr)	pte_offset_kernel((dir), (addr))
 #define pte_unmap(pte)			do { } while (0)
 #define pte_unmap_nested(pte)		do { } while (0)
@@ -521,7 +603,23 @@ static inline unsigned long pmd_page_vaddr(pmd_t pmd)
 
 static inline void set_pud(pud_t *pudp, pud_t pud)
 {
+#ifdef CONFIG_TIMA_RKP
+	if (rkp_def_init_done || rkp_is_pg_protected((u64)pudp)) {
+		rkp_flush_cache((u64)pudp);
+		rkp_call(RKP_PGD_SET, (unsigned long)pudp, pud_val(pud), 0, 0, 0);
+		rkp_flush_cache((u64)pudp);
+	} else {
+		asm volatile(	
+			"mov x1, %0\n"
+			"mov x2, %1\n"
+			"str x2, [x1]\n"
+			:
+			: "r" (pudp), "r" (pud)
+			: "x1", "x2", "memory" );
+	}
+#else
 	*pudp = pud;
+#endif
 	dsb(ishst);
 	isb();
 }

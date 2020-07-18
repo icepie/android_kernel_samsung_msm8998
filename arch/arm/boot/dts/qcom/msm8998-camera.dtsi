@@ -51,7 +51,7 @@
 			"csi_src_clk", "csi_clk", "cphy_csid_clk",
 			"csiphy_timer_src_clk", "csiphy_timer_clk",
 			"camss_ispif_ahb_clk", "csiphy_clk_src", "csiphy_clk";
-		qcom,clock-rates = <0 0 0 0 0 0 274290000 0 0 200000000 0
+		qcom,clock-rates = <0 0 0 0 0 0 274290000 0 0 269333333 0
 			0 274290000 0>;
 		status = "ok";
 	};
@@ -86,7 +86,7 @@
 			"csi_src_clk", "csi_clk", "cphy_csid_clk",
 			"csiphy_timer_src_clk", "csiphy_timer_clk",
 			"camss_ispif_ahb_clk", "csiphy_clk_src", "csiphy_clk";
-		qcom,clock-rates = <0 0 0 0 0 0 274290000 0 0 200000000 0
+		qcom,clock-rates = <0 0 0 0 0 0 274290000 0 0 269333333 0
 			0 274290000 0>;
 		status = "ok";
 	};
@@ -121,7 +121,7 @@
 			"csi_src_clk", "csi_clk", "cphy_csid_clk",
 			"csiphy_timer_src_clk", "csiphy_timer_clk",
 			"camss_ispif_ahb_clk", "csiphy_clk_src", "csiphy_clk";
-		qcom,clock-rates = <0 0 0 0 0 0 274290000 0 0 200000000 0
+		qcom,clock-rates = <0 0 0 0 0 0 274290000 0 0 269333333 0
 			0 274290000 0>;
 		status = "ok";
 	};
@@ -370,6 +370,7 @@
 			<0x2c 0x10000000 0x30000000>;
 		qcom,fd-misc-reg-settings = <0x20 0x2 0x3>,
 			<0x24 0x2 0x3>;
+		qcom,fd-core-reg-settings = <0x8 0x20 0xffffffff>;
 		status = "ok";
 	};
 
@@ -517,7 +518,7 @@
 			"camss_vfe_vfe1_clk",
 			"camss_csi_vfe1_clk";
 		qcom,clock-rates = <0 0 0 0 0
-			0 0 0 0
+			274290000 274290000 274290000 274290000
 			0 0 0 0
 			0 0 0 0
 			0 0 0 0
@@ -573,7 +574,7 @@
 			"camss_vfe_ahb_clk", "camss_vfe_vbif_ahb_clk",
 			"camss_vfe_vbif_axi_clk",
 			"camss_csi_vfe_clk";
-		qcom,clock-rates = <0 0 0 0 0 0 480000000 0 0 0 0 0 0
+		qcom,clock-rates = <0 0 0 0 0 0 384000000 0 0 0 0 0 0
 					0 0 0 0 0 0 576000000 0 0 0 0 0 0
 					0 0 0 0 0 0 600000000 0 0 0 0 0 0>;
 		status = "ok";
@@ -653,7 +654,7 @@
 			"camss_vfe_ahb_clk", "camss_vfe_vbif_ahb_clk",
 			"camss_vfe_vbif_axi_clk",
 			"camss_csi_vfe_clk";
-		qcom,clock-rates = <0 0 0 0 0 0 480000000 0 0 0 0 0 0
+		qcom,clock-rates = <0 0 0 0 0 0 384000000 0 0 0 0 0 0
 					0 0 0 0 0 0 576000000 0 0 0 0 0 0
 					0 0 0 0 0 0 600000000 0 0 0 0 0 0>;
 		status = "ok";

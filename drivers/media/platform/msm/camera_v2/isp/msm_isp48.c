@@ -189,18 +189,15 @@ static void msm_vfe48_put_clks(struct vfe_device *vfe_dev)
 
 	vfe_dev->num_clk = 0;
 	vfe_dev->num_rates = 0;
-	vfe_dev->hvx_clk = NULL;
-	vfe_dev->hvx_clk_info = NULL;
-	vfe_dev->num_hvx_clk = 0;
-	vfe_dev->num_norm_clk = 0;
+	if (vfe_dev->hvx_clk)
+		msm_camera_put_clk_info(vfe_dev->pdev, &vfe_dev->hvx_clk_info,
+				&vfe_dev->hvx_clk, 1);
 }
 
 static int msm_vfe48_get_clks(struct vfe_device *vfe_dev)
 {
 	int rc;
-	int i, j;
-	struct clk *stream_clk;
-	struct msm_cam_clk_info clk_info;
+	int i;
 
 	rc = msm_camera_get_clk_info_and_rates(vfe_dev->pdev,
 			&vfe_dev->vfe_clk_info, &vfe_dev->vfe_clk,
@@ -210,34 +207,28 @@ static int msm_vfe48_get_clks(struct vfe_device *vfe_dev)
 
 	if (rc)
 		return rc;
-	vfe_dev->num_norm_clk = vfe_dev->num_clk;
 	for (i = 0; i < vfe_dev->num_clk; i++) {
 		if (strcmp(vfe_dev->vfe_clk_info[i].clk_name,
 				"camss_vfe_stream_clk") == 0) {
-			stream_clk = vfe_dev->vfe_clk[i];
-			clk_info = vfe_dev->vfe_clk_info[i];
-			vfe_dev->num_hvx_clk = 1;
-			vfe_dev->num_norm_clk = vfe_dev->num_clk - 1;
+			vfe_dev->hvx_clk_info =
+				devm_kcalloc(&vfe_dev->pdev->dev, 1,
+				sizeof(struct msm_cam_clk_info), GFP_KERNEL);
+			vfe_dev->hvx_clk =
+				devm_kcalloc(&vfe_dev->pdev->dev, 1,
+				sizeof(struct clk*), GFP_KERNEL);
+			if (vfe_dev->hvx_clk_info && vfe_dev->hvx_clk) {
+				*vfe_dev->hvx_clk = vfe_dev->vfe_clk[i];
+				*vfe_dev->hvx_clk_info = vfe_dev->vfe_clk_info[i];
+			}
 			break;
 		}
 	}
 	if (i >= vfe_dev->num_clk)
 		pr_err("%s: cannot find camss_vfe_stream_clk\n", __func__);
 	else {
-		/* Switch stream_clk to the last element*/
-		for (; i < vfe_dev->num_clk - 1; i++) {
-			vfe_dev->vfe_clk[i] = vfe_dev->vfe_clk[i+1];
-			vfe_dev->vfe_clk_info[i] = vfe_dev->vfe_clk_info[i+1];
-			for (j = 0; j < MSM_VFE_MAX_CLK_RATES; j++)
-				vfe_dev->vfe_clk_rates[j][i] =
-					vfe_dev->vfe_clk_rates[j][i+1];
-		}
-		vfe_dev->vfe_clk_info[vfe_dev->num_clk-1] = clk_info;
-		vfe_dev->vfe_clk[vfe_dev->num_clk-1] = stream_clk;
-		vfe_dev->hvx_clk_info =
-			&vfe_dev->vfe_clk_info[vfe_dev->num_clk-1];
-		vfe_dev->hvx_clk = &vfe_dev->vfe_clk[vfe_dev->num_clk-1];
-		vfe_dev->hvx_clk_state = false;
+		vfe_dev->vfe_clk[i] = vfe_dev->vfe_clk[vfe_dev->num_clk-1];
+		vfe_dev->vfe_clk_info[i] = vfe_dev->vfe_clk_info[vfe_dev->num_clk-1];
+		vfe_dev->num_clk--;
 	}
 
 	for (i = 0; i < vfe_dev->num_clk; i++) {
@@ -346,8 +337,6 @@ uint32_t msm_vfe48_get_ub_size(struct vfe_device *vfe_dev)
 	return MSM_ISP48_TOTAL_IMAGE_UB_VFE;
 }
 
-
-
 struct msm_vfe_hardware_info vfe48_hw_info = {
 	.num_iommu_ctx = 1,
 	.num_iommu_secure_ctx = 0,
@@ -369,7 +358,6 @@ struct msm_vfe_hardware_info vfe48_hw_info = {
 			.process_stats_irq = msm_isp_process_stats_irq,
 			.process_epoch_irq = msm_vfe47_process_epoch_irq,
 			.config_irq = msm_vfe47_config_irq,
-			.preprocess_camif_irq = msm_isp47_preprocess_camif_irq,
 		},
 		.axi_ops = {
 			.reload_wm = msm_vfe47_axi_reload_wm,

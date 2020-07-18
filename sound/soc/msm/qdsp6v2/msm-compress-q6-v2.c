@@ -1192,8 +1192,10 @@ static int msm_compr_send_media_format_block(struct snd_compr_stream *cstream,
 		dsd_cfg.num_channels = prtd->num_channels;
 		dsd_cfg.dsd_data_rate = prtd->sample_rate;
 		dsd_cfg.num_version = 0;
-		dsd_cfg.is_bitwise_big_endian = 1;
-		dsd_cfg.dsd_channel_block_size = 1;
+		/* DSF: big_endian=0, block_size=4096*/
+		/* DFF: big_endian=1, block_size=1 */
+		dsd_cfg.is_bitwise_big_endian = 0;
+		dsd_cfg.dsd_channel_block_size = 4096;
 		ret = q6asm_media_format_block_dsd(prtd->audio_client,
 						   &dsd_cfg, stream_id);
 		if (ret < 0)
@@ -1650,7 +1652,7 @@ static int msm_compr_playback_open(struct snd_compr_stream *cstream)
 	populate_codec_list(prtd);
 	prtd->audio_client = q6asm_audio_client_alloc(
 				(app_cb)compr_event_handler, prtd);
-	if (!prtd->audio_client) {
+	if (prtd->audio_client == NULL) {
 		pr_err("%s: Could not allocate memory for client\n", __func__);
 		ret = -ENOMEM;
 		goto ac_err;
@@ -1658,6 +1660,7 @@ static int msm_compr_playback_open(struct snd_compr_stream *cstream)
 	pr_debug("%s: session ID %d\n", __func__, prtd->audio_client->session);
 	prtd->audio_client->perf_mode = false;
 	prtd->session_id = prtd->audio_client->session;
+	pdata->is_in_use[rtd->dai_link->be_id] = true;
 	msm_adsp_init_mixer_ctl_pp_event_queue(rtd);
 	if (pdata->ion_fd[rtd->dai_link->be_id] > 0) {
 		ret = msm_compr_map_ion_fd(prtd,
@@ -1671,14 +1674,20 @@ static int msm_compr_playback_open(struct snd_compr_stream *cstream)
 map_err:
 	q6asm_audio_client_free(prtd->audio_client);
 ac_err:
+	kfree(pdata->audio_effects[rtd->dai_link->be_id]);
+	pdata->audio_effects[rtd->dai_link->be_id] = NULL;
 	kfree(pdata->dec_params[rtd->dai_link->be_id]);
 	pdata->dec_params[rtd->dai_link->be_id] = NULL;
+	pdata->cstream[rtd->dai_link->be_id] = NULL;
+	kfree(prtd);
+	runtime->private_data = NULL;
 param_err:
 	kfree(pdata->audio_effects[rtd->dai_link->be_id]);
 	pdata->audio_effects[rtd->dai_link->be_id] = NULL;
+	pdata->cstream[rtd->dai_link->be_id] = NULL;
+	kfree(prtd);
 effect_err:
 	pdata->cstream[rtd->dai_link->be_id] = NULL;
-	runtime->private_data = NULL;
 	kfree(prtd);
 	return ret;
 }

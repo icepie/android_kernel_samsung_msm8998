@@ -367,10 +367,10 @@ static void gsi_process_chan(struct gsi_xfer_compl_evt *evt,
 	notify->evt_id = evt->code;
 	notify->bytes_xfered = evt->len;
 	if (callback) {
-		if (atomic_read(&ch_ctx->poll_mode)) {
-			GSIERR("Calling client callback in polling mode\n");
-			WARN_ON(1);
-		}
+		if (atomic_read(&ch_ctx->poll_mode)) { 
+			GSIERR("Calling client callback in polling mode\n"); 
+			WARN_ON(1); 
+		} 
 		ch_ctx->props.xfer_cb(notify);
 	}
 }

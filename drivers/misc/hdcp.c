@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,12 +38,16 @@
 
 #include "qseecom_kernel.h"
 
+#ifdef CONFIG_SEC_DISPLAYPORT
+#include <linux/dp_logger.h>
+#endif
+
 #define SRMAPP_NAME            "hdcpsrm"
 #define TZAPP_NAME            "hdcp2p2"
 #define HDCP1_APP_NAME        "hdcp1"
 #define QSEECOM_SBUFF_SIZE    0x1000
 
-#define MAX_TX_MESSAGE_SIZE	129
+#define MAX_TX_MESSAGE_SIZE	132
 #define MAX_RX_MESSAGE_SIZE	534
 #define MAX_TOPOLOGY_ELEMS	32
 #define HDCP1_AKSV_SIZE         8
@@ -1088,10 +1092,8 @@ static int hdcp_lib_library_load(struct hdcp_lib_handle *handle)
 	if (!hdcpsrm_handle) {
 		rc = qseecom_start_app(&hdcpsrm_handle,
 					SRMAPP_NAME, QSEECOM_SBUFF_SIZE);
-		if (rc) {
+		if (rc)
 			pr_err("qseecom_start_app failed for SRM TA %d\n", rc);
-			goto exit;
-		}
 	}
 
 	handle->hdcp_state |= HDCP_STATE_APP_LOADED;
@@ -1164,17 +1166,21 @@ static int hdcp_lib_library_unload(struct hdcp_lib_handle *handle)
 	}
 
 	/* deallocate the resources for qseecom hdcp2p2 handle */
-	rc = qseecom_shutdown_app(&handle->qseecom_handle);
-	if (rc) {
-		pr_err("hdcp2p2 qseecom_shutdown_app failed err: %d\n", rc);
-		goto exit;
+	if (handle->qseecom_handle) {
+		rc = qseecom_shutdown_app(&handle->qseecom_handle);
+		if (rc) {
+			pr_err("hdcp2p2 shutdown_app failed err: %d\n", rc);
+			goto exit;
+		}
 	}
 
 	/* deallocate the resources for qseecom hdcpsrm handle */
-	rc = qseecom_shutdown_app(&hdcpsrm_handle);
-	if (rc) {
-		pr_err("hdcpsrm qseecom_shutdown_app failed err: %d\n", rc);
-		goto exit;
+	if (hdcpsrm_handle) {
+		rc = qseecom_shutdown_app(&hdcpsrm_handle);
+		if (rc) {
+			pr_err("srm shutdown_app failed err: %d\n", rc);
+			goto exit;
+		}
 	}
 
 	handle->hdcp_state &= ~HDCP_STATE_APP_LOADED;
@@ -2386,6 +2392,8 @@ int hdcp1_set_keys(uint32_t *aksv_msb, uint32_t *aksv_lsb)
 	if (!hdcp1_qsee_handle)
 		return -EINVAL;
 
+	mutex_lock(&hdcp1_ta_cmd_lock);
+
 	/* set keys and request aksv */
 	key_set_req = (struct hdcp1_key_set_req *)hdcp1_qsee_handle->sbuf;
 	key_set_req->commandid = HDCP1_SET_KEY_MESSAGE_ID;
@@ -2400,12 +2408,14 @@ int hdcp1_set_keys(uint32_t *aksv_msb, uint32_t *aksv_lsb)
 
 	if (rc < 0) {
 		pr_err("qseecom cmd failed err=%d\n", rc);
+		mutex_unlock(&hdcp1_ta_cmd_lock);
 		return -ENOKEY;
 	}
 
 	rc = key_set_rsp->ret;
 	if (rc) {
 		pr_err("set key cmd failed, rsp=%d\n", key_set_rsp->ret);
+		mutex_unlock(&hdcp1_ta_cmd_lock);
 		return -ENOKEY;
 	}
 
@@ -2419,6 +2429,7 @@ int hdcp1_set_keys(uint32_t *aksv_msb, uint32_t *aksv_lsb)
 	*aksv_lsb |= key_set_rsp->ksv[6] << 8;
 	*aksv_lsb |= key_set_rsp->ksv[7];
 
+	mutex_unlock(&hdcp1_ta_cmd_lock);
 	return 0;
 }
 
@@ -2582,6 +2593,7 @@ int hdcp1_set_enc(bool enable)
 
 	if (rc < 0) {
 		pr_err("qseecom cmd failed err=%d\n", rc);
+		rc = -EINVAL;
 		goto end;
 	}
 

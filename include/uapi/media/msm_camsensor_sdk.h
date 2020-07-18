@@ -5,7 +5,7 @@
 
 #define KVERSION 0x1
 
-#define MAX_POWER_CONFIG      12
+#define MAX_POWER_CONFIG      25
 #define GPIO_OUT_LOW          (0 << 1)
 #define GPIO_OUT_HIGH         (1 << 1)
 #define CSI_EMBED_DATA        0x12
@@ -25,6 +25,7 @@
 #define I2C_REG_DATA_MAX       (8*1024)
 
 #define MSM_V4L2_PIX_FMT_META v4l2_fourcc('M', 'E', 'T', 'A') /* META */
+#define MSM_V4L2_PIX_FMT_EMETA v4l2_fourcc('E', 'M', 'E', 'T') /* META */
 #define MSM_V4L2_PIX_FMT_SBGGR14 v4l2_fourcc('B', 'G', '1', '4')
 	/* 14  BGBG.. GRGR.. */
 #define MSM_V4L2_PIX_FMT_SGBRG14 v4l2_fourcc('G', 'B', '1', '4')
@@ -57,6 +58,7 @@ enum msm_sensor_camera_id_t {
 	CAMERA_1,
 	CAMERA_2,
 	CAMERA_3,
+	CAMERA_4,
 	MAX_CAMERAS,
 };
 
@@ -88,20 +90,21 @@ enum msm_camera_i2c_reg_addr_type {
 	MSM_CAMERA_I2C_BYTE_ADDR = 1,
 	MSM_CAMERA_I2C_WORD_ADDR,
 	MSM_CAMERA_I2C_3B_ADDR,
-	MSM_CAMERA_I2C_DWORD_ADDR,
 	MSM_CAMERA_I2C_ADDR_TYPE_MAX,
 };
-#define MSM_CAMERA_I2C_DWORD_ADDR MSM_CAMERA_I2C_DWORD_ADDR
 
 enum msm_camera_i2c_data_type {
 	MSM_CAMERA_I2C_BYTE_DATA = 1,
 	MSM_CAMERA_I2C_WORD_DATA,
 	MSM_CAMERA_I2C_DWORD_DATA,
+	MSM_CAMERA_I2C_VARIABLE_LENGTH_DATA,
 	MSM_CAMERA_I2C_SET_BYTE_MASK,
 	MSM_CAMERA_I2C_UNSET_BYTE_MASK,
 	MSM_CAMERA_I2C_SET_WORD_MASK,
 	MSM_CAMERA_I2C_UNSET_WORD_MASK,
 	MSM_CAMERA_I2C_SET_BYTE_WRITE_MASK_DATA,
+	MSM_CAMERA_I2C_BYTE_DATA_BURST,
+	MSM_CAMERA_I2C_BYTE_DATA_BURST_NO_INC,
 	MSM_CAMERA_I2C_DATA_TYPE_MAX,
 };
 
@@ -118,10 +121,16 @@ enum msm_sensor_power_seq_gpio_t {
 	SENSOR_GPIO_FL_RESET,
 	SENSOR_GPIO_CUSTOM1,
 	SENSOR_GPIO_CUSTOM2,
-	SENSOR_GPIO_CUSTOM3,
+	SENSOR_GPIO_COMP,
+	SENSOR_GPIO_COMPRSTN,
+	SENSOR_GPIO_SUB_IO,
+	SENSOR_GPIO_SUB_AF,
+	SENSOR_GPIO_SUB_EN,
+	SENSOR_GPIO_SUB_A,
+	SENSOR_GPIO_SUB_RESET,
+	SENSOR_GPIO_OIS_RESET,
 	SENSOR_GPIO_MAX,
 };
-#define SENSOR_GPIO_CUSTOM3 SENSOR_GPIO_CUSTOM3
 
 enum msm_ir_cut_filter_gpio_t {
 	IR_CUT_FILTER_GPIO_P = 0,
@@ -137,14 +146,26 @@ enum msm_camera_vreg_name_t {
 	CAM_VIO,
 	CAM_VANA,
 	CAM_VAF,
-	CAM_V_CUSTOM1,
-	CAM_V_CUSTOM2,
+	CAM_VM_OIS,
+	CAM_VDD_OIS,
+	CAM_VDD_OIS2,
+	CAM_VIO_I2C,
+	CAM_VDD_A,
+	CAM_COMP_MIPI,
+	CAM_COMP_IO,
+	CAM_COMP_VDIG,
+	CAM_COMP_VNORET,
+	CAM_COMP_VANA,
+	CAM_COMP_VRET,
+	CAM_COMP_VRET_RETMODE,
 	CAM_VREG_MAX,
 };
 
 enum msm_sensor_clk_type_t {
 	SENSOR_CAM_MCLK,
 	SENSOR_CAM_CLK,
+	SENSOR_CAM_MCLK_1,
+	SENSOR_CAM_CLK_1,
 	SENSOR_CAM_CLK_MAX,
 };
 
@@ -152,6 +173,12 @@ enum camerab_mode_t {
 	CAMERA_MODE_2D_B = (1<<0),
 	CAMERA_MODE_3D_B = (1<<1),
 	CAMERA_MODE_INVALID = (1<<2),
+};
+
+enum sensor_stats_type {
+	YRGB,
+	YYYY,
+	SENSOR_META_EXT,
 };
 
 enum msm_actuator_data_type {
@@ -183,6 +210,7 @@ enum actuator_type {
 	ACTUATOR_PIEZO,
 	ACTUATOR_HVCM,
 	ACTUATOR_BIVCM,
+	ACTUATOR_HALL_EFFECT,
 };
 
 enum msm_flash_driver_type {
@@ -198,6 +226,13 @@ enum msm_flash_cfg_type_t {
 	CFG_FLASH_OFF,
 	CFG_FLASH_LOW,
 	CFG_FLASH_HIGH,
+	CFG_FLASH_TORCH,
+#if 1//defined(CONFIG_SAMSUNG_SECURE_CAMERA)
+	CFG_FLASH_IR_DELAY,
+	CFG_FLASH_IR_WIDTH,
+	CFG_FLASH_IR_CURRENT,
+	CFG_FLASH_IR_MAXTIME,
+#endif
 };
 
 enum msm_ir_led_cfg_type_t {
@@ -211,13 +246,6 @@ enum msm_ir_led_cfg_type_t {
 #define CFG_IR_LED_OFF CFG_IR_LED_OFF
 #define CFG_IR_LED_ON CFG_IR_LED_ON
 
-enum msm_laser_led_cfg_type_t {
-	CFG_LASER_LED_INIT,
-	CFG_LASER_LED_CONTROL,
-};
-#define CFG_LASER_LED_INIT CFG_LASER_LED_INIT
-#define CFG_LASER_LED_CONTROL CFG_LASER_LED_CONTROL
-
 enum msm_ir_cut_cfg_type_t {
 	CFG_IR_CUT_INIT = 0,
 	CFG_IR_CUT_RELEASE,
@@ -228,6 +256,69 @@ enum msm_ir_cut_cfg_type_t {
 #define CFG_IR_CUT_RELEASE CFG_IR_CUT_RELEASE
 #define CFG_IR_CUT_OFF CFG_IR_CUT_OFF
 #define CFG_IR_CUT_ON CFG_IR_CUT_ON
+
+#if defined (CONFIG_CAMERA_SYSFS_V2)
+enum msm_camera_cam_info_isp {
+	CAM_INFO_ISP_TYPE_INTERNAL = 0,
+	CAM_INFO_ISP_TYPE_EXTERNAL,
+	CAM_INFO_ISP_TYPE_SOC,
+};
+
+enum msm_camera_cam_info_cal_mem {
+	CAM_INFO_CAL_MEM_TYPE_NONE = 0,
+	CAM_INFO_CAL_MEM_TYPE_FROM,
+	CAM_INFO_CAL_MEM_TYPE_EEPROM,
+	CAM_INFO_CAL_MEM_TYPE_OTP,
+};
+
+enum msm_camera_cam_info_read_ver {
+	CAM_INFO_READ_VER_SYSFS = 0,
+	CAM_INFO_READ_VER_CAMON,
+};
+
+enum msm_camera_cam_info_core_voltage {
+	CAM_INFO_CORE_VOLT_NONE = 0,
+	CAM_INFO_CORE_VOLT_USE,
+};
+
+enum msm_camera_cam_info_upgrade {
+	CAM_INFO_FW_UPGRADE_NONE = 0,
+	CAM_INFO_FW_UPGRADE_SYSFS,
+	CAM_INFO_FW_UPGRADE_CAMON,
+};
+
+enum msm_camera_cam_info_fw_write {
+	CAM_INFO_FW_WRITE_NONE = 0,
+	CAM_INFO_FW_WRITE_OS,
+	CAM_INFO_FW_WRITE_SD,
+	CAM_INFO_FW_WRITE_ALL,
+};
+
+enum msm_camera_cam_info_fw_dump {
+	CAM_INFO_FW_DUMP_NONE = 0,
+	CAM_INFO_FW_DUMP_USE,
+};
+
+enum msm_camera_cam_info_companion {
+	CAM_INFO_COMPANION_NONE = 0,
+	CAM_INFO_COMPANION_USE,
+};
+
+enum msm_camera_cam_info_ois {
+	CAM_INFO_OIS_NONE = 0,
+	CAM_INFO_OIS_USE,
+};
+
+enum msm_camera_cam_info_dual {
+	CAM_INFO_DUAL_NONE = 0,
+	CAM_INFO_DUAL_USE,
+};
+
+enum msm_camera_cam_info_valid {
+	CAM_INFO_INVALID = 0,
+	CAM_INFO_VALID,
+};
+#endif
 
 enum msm_sensor_output_format_t {
 	MSM_SENSOR_BAYER,
@@ -307,6 +398,7 @@ struct msm_camera_sensor_slave_info {
 	char actuator_name[32];
 	char ois_name[32];
 	char flash_name[32];
+	char aperture_name[32];
 	enum msm_sensor_camera_id_t camera_id;
 	unsigned short slave_addr;
 	enum i2c_freq_mode_t i2c_freq_mode;
@@ -314,6 +406,8 @@ struct msm_camera_sensor_slave_info {
 	struct msm_sensor_id_info_t sensor_id_info;
 	struct msm_sensor_power_setting_array power_setting_array;
 	unsigned char  is_init_params_valid;
+	unsigned int num_shared_gpios;
+	unsigned int shared_gpios[5];
 	struct msm_sensor_init_params sensor_init_params;
 	enum msm_sensor_output_format_t output_format;
 	uint8_t bypass_video_node_creation;
@@ -323,6 +417,13 @@ struct msm_camera_i2c_reg_array {
 	unsigned short reg_addr;
 	unsigned short reg_data;
 	unsigned int delay;
+	unsigned short data_type;
+};
+
+struct msm_camera_i2c_burst_reg_array {
+	unsigned short *reg_data;
+	unsigned short reg_addr;
+	unsigned short reg_data_size;
 };
 
 struct msm_camera_i2c_reg_setting {

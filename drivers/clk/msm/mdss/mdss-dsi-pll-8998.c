@@ -25,6 +25,9 @@
 #include "mdss-pll.h"
 #include "mdss-dsi-pll.h"
 #include "mdss-pll.h"
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#include "../../../video/fbdev/msm/samsung/ss_dsi_panel_common.h" /* UTIL HEADER */
+#endif
 
 #define VCO_DELAY_USEC 1
 
@@ -506,9 +509,17 @@ static int dsi_pll_8998_lock_status(struct mdss_pll_resources *pll)
 				       ((status & BIT(0)) > 0),
 				       delay_us,
 				       timeout_us);
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	if (rc) {
+		pr_err("DSI PLL(%d) lock failed, status=0x%08x\n",
+			pll->index, status);
+		SS_XLOG(0xbad, status);
+	}
+#else
 	if (rc)
 		pr_err("DSI PLL(%d) lock failed, status=0x%08x\n",
 			pll->index, status);
+#endif
 
 	return rc;
 }

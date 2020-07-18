@@ -3035,10 +3035,12 @@ next_best_cluster(struct sched_cluster *cluster, struct cpu_select_env *env,
 static void __update_cluster_stats(int cpu, struct cluster_cpu_stats *stats,
 				   struct cpu_select_env *env, int cpu_cost)
 {
-	int wakeup_latency;
+	int wakeup_latency=0;
 	int prev_cpu = env->prev_cpu;
+	int ignore_cstate_awareness = sched_get_ignore_cstate_awareness(cpu);
 
-	wakeup_latency = cpu_rq(cpu)->wakeup_latency;
+	if (!ignore_cstate_awareness)
+		wakeup_latency = cpu_rq(cpu)->wakeup_latency;
 
 	if (env->need_idle) {
 		stats->min_cost = cpu_cost;
@@ -3084,7 +3086,7 @@ static void __update_cluster_stats(int cpu, struct cluster_cpu_stats *stats,
 	}
 
 	/* C-state is the same. Use prev CPU to break the tie */
-	if (cpu == prev_cpu) {
+	if (cpu == prev_cpu && !ignore_cstate_awareness) {
 		stats->best_cpu = cpu;
 		env->sbc_best_flag = SBC_FLAG_COST_CSTATE_PREV_CPU_TIE_BREAKER;
 		return;
@@ -3426,7 +3428,6 @@ out:
 }
 
 #ifdef CONFIG_CFS_BANDWIDTH
-
 static inline struct task_group *next_task_group(struct task_group *tg)
 {
 	tg = list_entry_rcu(tg->list.next, typeof(struct task_group), list);
@@ -8873,14 +8874,19 @@ next:
 		list_move_tail(&p->se.group_node, tasks);
 	}
 
-	if (env->flags & (LBF_IGNORE_BIG_TASKS |
-			LBF_IGNORE_PREFERRED_CLUSTER_TASKS) && !detached) {
-		tasks = &env->src_rq->cfs_tasks;
-		env->flags &= ~(LBF_IGNORE_BIG_TASKS |
-				LBF_IGNORE_PREFERRED_CLUSTER_TASKS);
-		env->loop = orig_loop;
-		goto redo;
-	}
+	/* in case of enable sched_ilb_ctl node,
+	 * we don't want to task unintentionally migrate big/little
+	 * idle balancing will be happen only in the same cluster
+	 */
+	if(!sysctl_sched_ilb_ctl)
+		if (env->flags & (LBF_IGNORE_BIG_TASKS |
+				LBF_IGNORE_PREFERRED_CLUSTER_TASKS) && !detached) {
+			tasks = &env->src_rq->cfs_tasks;
+			env->flags &= ~(LBF_IGNORE_BIG_TASKS |
+					LBF_IGNORE_PREFERRED_CLUSTER_TASKS);
+			env->loop = orig_loop;
+			goto redo;
+		}
 
 	/*
 	 * Right now, this is one of only two places we collect this stat

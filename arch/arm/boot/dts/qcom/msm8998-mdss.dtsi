@@ -382,8 +382,6 @@
 
 			qcom,timing-db-mode;
 			wqhd-vddio-supply = <&pm8998_l14>;
-			lab-supply = <&lab_regulator>;
-			ibb-supply = <&ibb_regulator>;
 			qcom,mdss-mdp = <&mdss_mdp>;
 			qcom,mdss-fb-map = <&mdss_fb0>;
 
@@ -422,8 +420,6 @@
 
 			qcom,timing-db-mode;
 			wqhd-vddio-supply = <&pm8998_l14>;
-			lab-supply = <&lab_regulator>;
-			ibb-supply = <&ibb_regulator>;
 			qcom,mdss-mdp = <&mdss_mdp>;
 			qcom,mdss-fb-map = <&mdss_fb0>;
 
@@ -670,3 +666,4 @@
 		qcom,pluggable;
 	};
 };
+#include "msm8998-mdss-panels.dtsi"

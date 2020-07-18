@@ -51,7 +51,7 @@ osq_wait_next(struct optimistic_spin_queue *lock,
 
 	for (;;) {
 		if (atomic_read(&lock->tail) == curr &&
-		    atomic_cmpxchg_acquire(&lock->tail, curr, old) == curr) {
+			atomic_cmpxchg_acquire(&lock->tail, curr, old) == curr) {
 			/*
 			 * We were the last queued, we moved @lock back. @prev
 			 * will now observe @lock and will complete its
@@ -129,19 +129,17 @@ bool osq_lock(struct optimistic_spin_queue *lock)
 	 * guaranteed their existence -- this allows us to apply
 	 * cmpxchg in an attempt to undo our queueing.
 	 */
-
 	while (!READ_ONCE(node->locked)) {
-		/*
-		 * If we need to reschedule bail... so we can block.
-		 * If a task spins on owner on a CPU after acquiring
-		 * osq_lock while a RT task spins on another CPU  to
-		 * acquire osq_lock, it will starve the owner from
-		 * completing if owner is to be scheduled on the same CPU.
-		 * It will be a live lock.
-		 */
+	/*
+	* If we need to reschedule bail... so we can block.
+	* If a task spins on owner on a CPU0 after acquiring
+	* osq_lock while a RT task spins on another CPU to
+	* acquire osq_lock, it will starve the owner from
+	* completing if owner is to be scheduled on the same CPU.
+	* It will be a live lock.
+	*/
 		if (need_resched() || rt_task(task))
 			goto unqueue;
-
 		cpu_relax_lowlatency();
 	}
 	return true;

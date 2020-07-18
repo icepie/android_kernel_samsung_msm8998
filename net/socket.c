@@ -617,6 +617,7 @@ static void __sock_release(struct socket *sock, struct inode *inode)
 		iput(SOCK_INODE(sock));
 		return;
 	}
+
 	sock->file = NULL;
 }
 

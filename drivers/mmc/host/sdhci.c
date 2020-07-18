@@ -36,6 +36,9 @@
 
 #include "sdhci.h"
 #include "cmdq_hci.h"
+#ifdef CONFIG_SEC_FACTORY
+#include "sdhci-msm.h"
+#endif
 
 #define DRIVER_NAME "sdhci"
 
@@ -107,6 +110,10 @@ static void sdhci_dump_state(struct sdhci_host *host)
 		mmc_hostname(mmc), mmc->parent->power.runtime_status,
 		atomic_read(&mmc->parent->power.usage_count),
 		mmc->parent->power.disable_depth);
+	pr_info("%s: send %d at %lld, isr %d at %lld, finish_tasklet at %lld.\n", mmc_hostname(mmc),
+			host->send_cmd_idx, host->send_cmd_timestamp,
+			host->irq_cmd_idx, host->irq_timestamp,
+			host->finish_tasklet_timestamp);
 }
 
 static void sdhci_dumpregs(struct sdhci_host *host)
@@ -1239,6 +1246,8 @@ void sdhci_send_command(struct sdhci_host *host, struct mmc_command *cmd)
 		host->data_start_time = ktime_get();
 	trace_mmc_cmd_rw_start(cmd->opcode, cmd->arg, cmd->flags);
 	sdhci_writew(host, SDHCI_MAKE_CMD(cmd->opcode, flags), SDHCI_COMMAND);
+	host->send_cmd_timestamp = ktime_to_us(ktime_get());
+	host->send_cmd_idx = cmd->opcode;
 	MMC_TRACE(host->mmc,
 		"%s: updated 0x8=0x%08x 0xC=0x%08x 0xE=0x%08x\n", __func__,
 		sdhci_readl(host, SDHCI_ARGUMENT),
@@ -1924,6 +1933,10 @@ static void sdhci_do_set_ios(struct sdhci_host *host, struct mmc_ios *ios)
 				mmc_card_sdio(host->mmc->card))
 			sdhci_cfg_irq(host, true, false);
 		spin_unlock_irqrestore(&host->lock, flags);
+#if defined(CONFIG_SEC_HYBRID_TRAY)
+		sdhci_set_power(host, ios->power_mode, ios->vdd);
+		host->ops->set_clock(host, ios->clock);
+#endif
 		return;
 	}
 	spin_unlock_irqrestore(&host->lock, flags);
@@ -2785,6 +2798,8 @@ static void sdhci_tasklet_finish(unsigned long param)
 
 	host = (struct sdhci_host*)param;
 
+	host->finish_tasklet_timestamp = ktime_to_us(ktime_get());
+
 	spin_lock_irqsave(&host->lock, flags);
 
         /*
@@ -2905,6 +2920,9 @@ static void sdhci_cmd_irq(struct sdhci_host *host, u32 intmask, u32 *mask)
 	trace_mmc_cmd_rw_end(host->cmd->opcode, intmask,
 				sdhci_readl(host, SDHCI_RESPONSE));
 
+	host->irq_timestamp = ktime_to_us(ktime_get());
+	host->irq_cmd_idx = host->cmd->opcode;
+
 	if (intmask & SDHCI_INT_TIMEOUT)
 		host->cmd->error = -ETIMEDOUT;
 	else if (intmask & (SDHCI_INT_CRC | SDHCI_INT_END_BIT |
@@ -3024,6 +3042,9 @@ static void sdhci_data_irq(struct sdhci_host *host, u32 intmask)
 	command = SDHCI_GET_CMD(sdhci_readw(host, SDHCI_COMMAND));
 	trace_mmc_data_rw_end(command, intmask);
 
+	host->irq_timestamp = ktime_to_us(ktime_get());
+	host->irq_cmd_idx = command;
+
 	/* CMD19 generates _only_ Buffer Read Ready interrupt */
 	if (intmask & SDHCI_INT_DATA_AVAIL) {
 		if (!(host->quirks2 & SDHCI_QUIRK2_NON_STANDARD_TUNING) &&
@@ -3121,6 +3142,15 @@ static void sdhci_data_irq(struct sdhci_host *host, u32 intmask)
 			if (!host->mmc->sdr104_wa ||
 			    (host->mmc->ios.timing != MMC_TIMING_UHS_SDR104))
 				sdhci_dumpregs(host);
+#ifdef CONFIG_SEC_FACTORY	// call panic on SDR104 mode
+			if ((host->data->error == -EILSEQ && mmc_gpio_get_cd(host->mmc)) &&
+					(host->mmc->card->sd_bus_speed == UHS_SDR104_BUS_SPEED)) {
+				struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+				struct sdhci_msm_host *msm_host = pltfm_host->priv;
+				if (msm_host->tuning_done)
+					panic("CRC error on SDcard SDR104 mode.\n");
+			}
+#endif
 		}
 		sdhci_finish_data(host);
 	} else {

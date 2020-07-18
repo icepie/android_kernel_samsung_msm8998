@@ -40,6 +40,9 @@ struct msm_sd_close_ioctl {
 
 #define MSM_SD_UNNOTIFY_FREEZE \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 31, struct msm_sd_close_ioctl)
+
+#define MSM_SD_ISPIF_NOTIFY_OVERFLOW \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 32, struct msm_sd_close_ioctl)
 /*
  * This is used to install Sequence in msm_sd_register.
  * During msm_close, proper close sequence will be triggered.
@@ -81,9 +84,6 @@ struct msm_sd_req_vb2_q {
 		unsigned int stream_id, uint32_t sequence, struct timeval *ts,
 		uint32_t reserved);
 	int (*flush_buf)(int session_id, unsigned int stream_id);
-	int (*buf_error)(struct vb2_v4l2_buffer *vb2_v4l2_buf, int session_id,
-		unsigned int stream_id, uint32_t sequence, struct timeval *ts,
-		uint32_t reserved);
 };
 
 #define MSM_SD_NOTIFY_GET_SD 0x00000001

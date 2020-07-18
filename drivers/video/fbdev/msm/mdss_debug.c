@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -450,12 +450,12 @@ static bool mdss_debug_base_is_valid_range(u32 off, u32 cnt)
 
 	list_for_each_entry(base, &mdd->base_list, head) {
 		list_for_each_entry(node, &base->dump_list, head) {
-			pr_debug("%s: start=0x%x end=0x%x\n", node->range_name,
-					node->offset.start, node->offset.end);
+		pr_debug("%s: start=0x%x end=0x%x\n", node->range_name,
+			node->offset.start, node->offset.end);
 
-			if (node->offset.start <= off
-					&& off <= node->offset.end
-					&& off + cnt <= node->offset.end) {
+		if (node->offset.start <= off
+			&& off <= node->offset.end
+			&& off + cnt <= node->offset.end) {
 				pr_debug("valid range requested\n");
 				return true;
 			}
@@ -485,8 +485,7 @@ static ssize_t mdss_debug_base_offset_write(struct file *file,
 
 	buf[count] = 0;	/* end of string */
 
-	if (sscanf(buf, "%5x %x", &off, &cnt) != 2)
-		return -EFAULT;
+	sscanf(buf, "%5x %x", &off, &cnt);
 
 	if (off % sizeof(u32))
 		return -EINVAL;

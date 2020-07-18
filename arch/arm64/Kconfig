@@ -538,6 +538,11 @@ config CAVIUM_ERRATUM_27456
 
 endmenu
 
+config QCOM_TLB_EL2_HANDLER
+	bool "Raise TLB conflict exception to EL2"
+	help
+	  This option enables TLB conflict to be handled
+	  by EL2.
 
 choice
 	prompt "Page size"
@@ -713,6 +718,65 @@ config QCOM_TLB_EL2_HANDLER
 	help
 	  This option enables TLB conflict to be handled
 	  by EL2.
+
+#
+# BEGIN RKP_CFP CONFIG OPTIONS
+#
+
+menu "Control Flow Protection"
+
+config RKP_CFP
+	bool "JOPP and ROPP"
+	default n
+
+config RKP_CFP_TEST
+	bool "test file, only include in ENG build"
+	depends on RKP_CFP
+	default n
+
+config RKP_CFP_JOPP
+	bool "JOP Prevention"
+	select RKP_CFP
+	depends on TIMA_RKP
+	default n
+
+config RKP_CFP_JOPP_MAGIC
+	hex 
+	depends on RKP_CFP && RKP_CFP_JOPP
+	default "0x00be7bad"
+
+config RKP_CFP_ROPP
+	bool "ROP Prevention"
+	select RKP_CFP
+	depends on TIMA_RKP
+	default n
+
+choice
+	prompt "ROPP key"
+	default RKP_CFP_ROPP_RANDKEY
+	depends on RKP_CFP && RKP_CFP_ROPP
+
+config RKP_CFP_ROPP_HYPKEY
+	bool "Use hypervisor"
+
+config RKP_CFP_ROPP_SYSREGKEY
+	bool "Use system register"
+
+config RKP_CFP_ROPP_RANDKEY
+	bool "random key"
+
+config RKP_CFP_ROPP_FIXKEY
+	bool "fixed key"
+
+config RKP_CFP_ROPP_ZEROKEY
+	bool "zero key"
+
+endchoice
+endmenu
+
+#
+# END RKP_CFP CONFIG OPTIONS
+#
 
 source kernel/Kconfig.preempt
 source kernel/Kconfig.hz
@@ -1203,6 +1267,546 @@ config SYSVIPC_COMPAT
 
 endmenu
 
+config SEC_FACTORY
+	bool "when it comes to sec factory mode"
+	default n
+	select SEC_NAD
+	select SEC_PANIC_PCIE_ERR
+	select BCM_DETECT_CONSECUTIVE_HANG
+	help
+		It will support a sec factory mode
+
+config SEC_DREAMQLTE_PROJECT
+	depends on ARCH_MSM8998
+		default n
+		bool "Samsung DREAMQLTE Project"
+		help
+		  Support for Samsung DREAMQLTE Project
+
+config MACH_DREAMQLTE_SINGLE
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE USA SQ"
+		help
+		  Support for Samsung DREAMQLTE USA SQ device.
+
+config MACH_DREAMQLTE_VZW
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE USA VZW"
+		help
+		  Support for Samsung DREAMQLTE USA VZW device.
+
+config MACH_DREAMQLTE_CHNZC
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE CHN OPEN"
+		help
+		  Support for Samsung DREAMQLTE CHN OPEN device.
+
+config MACH_DREAMQLTE_CHNHK
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE CHN HONGKONG"
+		help
+		  Support for Samsung DREAMQLTE CHN HONGKONG device.
+
+config MACH_DREAMQLTE_CHNZM
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE CHN CMCC"
+		help
+		  Support for Samsung DREAMQLTE CHN CMCC device.
+
+config MACH_DREAMQLTE_CAN_OPEN
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE CAN OPEN"
+		help
+		  Support for Samsung DREAMQLTE CAN OPEN device.
+
+config MACH_DREAMQLTE_KDI
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE JPN KDI"
+		help
+		  Support for Samsung DREAMQLTE JPN KDI device.
+
+config MACH_DREAMQLTE_DCM
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE JPN DCM"
+		help
+		  Support for Samsung DREAMQLTE JPN DCM device.
+
+config MACH_DREAMQLTE_USA_LDU
+	depends on SEC_DREAMQLTE_PROJECT
+		default n
+		bool "Samsung DREAMQLTE USA LDU"
+		help
+		  Support for Samsung DREAMQLTE USA LDU device.
+
+config MACH_DREAMQLTE_USA_OPEN
+        depends on SEC_DREAMQLTE_PROJECT
+                default n
+                bool "Samsung DREAMQLTE USA OPEN"
+                help
+                  Support for Samsung DREAMQLTE USA OPEN device.
+
+config MACH_DREAMQLTE_CHN_LDU
+        depends on SEC_DREAMQLTE_PROJECT
+                default n
+                bool "Samsung DREAMQLTE CHN LDU"
+                help
+                  Support for Samsung DREAMQLTE CHN LDU device.
+
+config SEC_DREAM2QLTE_PROJECT
+	depends on ARCH_MSM8998
+		default n
+		bool "Samsung DREAM2QLTE Project"
+		help
+		  Support for Samsung DREAM2QLTE Project
+
+config MACH_DREAM2QLTE_SINGLE
+	depends on SEC_DREAM2QLTE_PROJECT
+		default n
+		bool "Samsung DREAM2QLTE USA SQ"
+		help
+		  Support for Samsung DREAM2QLTE USA SQ device.
+
+config MACH_DREAM2QLTE_VZW
+	depends on SEC_DREAM2QLTE_PROJECT
+		default n
+		bool "Samsung DREAM2QLTE USA VZW"
+		help
+		  Support for Samsung DREAM2QLTE USA VZW device.
+
+config MACH_DREAM2QLTE_CHNZC
+	depends on SEC_DREAM2QLTE_PROJECT
+		default n
+		bool "Samsung DREAM2QLTE CHN OPEN"
+		help
+		  Support for Samsung DREAM2QLTE CHN OPEN device.
+
+config MACH_DREAM2QLTE_CHNHK
+	depends on SEC_DREAM2QLTE_PROJECT
+		default n
+		bool "Samsung DREAM2QLTE CHN HONGKONG"
+		help
+		  Support for Samsung DREAM2QLTE CHN HONGKONG device.
+
+config MACH_DREAM2QLTE_CAN_OPEN
+	depends on SEC_DREAM2QLTE_PROJECT
+		default n
+		bool "Samsung DREAM2QLTE CAN OPEN"
+		help
+		  Support for Samsung DREAM2QLTE CAN OPEN device.
+
+config MACH_DREAM2QLTE_DCM
+	depends on SEC_DREAM2QLTE_PROJECT
+		default n
+		bool "Samsung DREAM2QLTE JPN DCM"
+		help
+		  Support for Samsung DREAM2QLTE JPN DCM device.
+
+config MACH_DREAM2QLTE_KDI
+	depends on SEC_DREAM2QLTE_PROJECT
+		default n
+		bool "Samsung DREAM2QLTE JPN KDI"
+		help
+		  Support for Samsung DREAM2QLTE JPN KDI device.
+
+config MACH_DREAM2QLTE_LDU
+	depends on SEC_DREAM2QLTE_PROJECT
+		default n
+		bool "Samsung DREAM2QLTE USA LDU"
+		help
+		  Support for Samsung DREAM2QLTE USA LDU device.
+
+config MACH_DREAM2QLTE_USA_OPEN
+        depends on SEC_DREAM2QLTE_PROJECT
+                default n
+                bool "Samsung DREAM2QLTE USA OPEN"
+                help
+                  Support for Samsung DREAM2QLTE USA OPEN device.
+
+config MACH_DREAM2QLTE_CHN_LDU
+        depends on SEC_DREAM2QLTE_PROJECT
+                default n
+                bool "Samsung DREAM2QLTE CHN LDU"
+                help
+                  Support for Samsung DREAM2QLTE CHN LDU device.
+
+config SEC_GREATQLTE_PROJECT
+        depends on ARCH_MSM8998
+                default n
+                bool "Samsung GREATQLTE Project"
+                help
+                  Support for Samsung GREATQLTE Project
+
+config MACH_GREATQLTE_SINGLE
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE USA SQ"
+                help
+                  Support for Samsung GREATQLTE USA SQ device.
+
+config MACH_GREATQLTE_CHNZC
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE CHN OPEN"
+                help
+                  Support for Samsung GREATQLTE CHN OPEN device.
+
+config MACH_GREATQLTE_CHNHK
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE CHN HK"
+                help
+                  Support for Samsung GREATQLTE CHN HK device.
+
+config MACH_GREATQLTE_CHN_LDU
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE CHN LDU"
+                help
+                  Support for Samsung GREATQLTE CHN LDU device.
+
+config MACH_GREATQLTE_CHNZM
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE CHN CMCC"
+                help
+                  Support for Samsung GREATQLTE CHN CMCC device.
+
+config MACH_GREATQLTE_CAN_SINGLE
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE CAN SQ"
+                help
+                  Support for Samsung GREATQLTE CAN SQ device.
+
+config MACH_GREATQLTE_KDI
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE JPN KDI"
+                help
+                  Support for Samsung GREATQLTE JPN KDI device.
+
+config MACH_GREATQLTE_DCM
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE JPN DCM"
+                help
+                  Support for Samsung GREATQLTE JPN DCM device.
+
+config MACH_GREATQLTE_LDU
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE USA LDU"
+                help
+                  Support for Samsung GREATQLTE USA LDU device.
+
+config MACH_GREATQLTE_OPEN
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung GREATQLTE USA OPEN"
+                help
+                  Support for Samsung GREATQLTE USA OPEN device.
+
+config MACH_DREAM2QGREATLTE_SINGLE
+        depends on SEC_GREATQLTE_PROJECT
+                default n
+                bool "Samsung DREAM2QGREATLTE USA SQ"
+                help
+		  Support for Samsung DREAM2QGREATLTE USA SQ device.
+
+config SEC_CRUISERLTE_PROJECT
+	depends on ARCH_MSM8998
+		default n
+		bool "Samsung CRUISERLTE Project"
+		help
+		  Support for Samsung CRUISERLTE Project
+
+config MACH_CRUISERLTE_SINGLE
+	depends on SEC_CRUISERLTE_PROJECT
+		default n
+		bool "Samsung CRUISERLTE USA SQ"
+		help
+		  Support for Samsung CRUISERLTE USA SQ device. 
+
+config MACH_CRUISERLTE_USA_ATT
+        depends on SEC_CRUISERLTE_PROJECT
+                default n
+                bool "Samsung CRUISERLTE USA ATT"
+                help
+                  Support for Samsung CRUISERLTE USA ATT device.
+
+config SEC_KELLYLTE_PROJECT
+	depends on ARCH_MSM8998
+		default n
+		bool "Samsung KELLYLTE Project"
+		help
+		  Support for Samsung KELLYLTE Project
+
+config MACH_KELLYLTE_CHN_OPEN
+	depends on SEC_KELLYLTE_PROJECT
+		default n
+		bool "Samsung KELLYLTE CHN OPEN"
+		help
+		  Support for Samsung KELLYLTE CHN OPEN device.
+
+config SEC_GTS4LLTE_PROJECT
+	depends on ARCH_MSM8998
+		default n
+		bool "Samsung GTS4LLTE Project"
+		help
+		  Support for Samsung GTS4LLTE Project
+
+config MACH_GTS4LLTE_USA
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE USA"
+                help
+                  Support for Samsung GTS4LLTE USA device.
+
+config MACH_GTS4LLTE_CHN
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE CHN"
+                help
+                  Support for Samsung GTS4LLTE CHN device.
+
+config MACH_GTS4LLTE_CHNHK
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE CHNHK"
+                help
+                  Support for Samsung GTS4LLTE CHNHK device.
+
+config MACH_GTS4LLTE_DX
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE SEA OPEN"
+                help
+                  Support for Samsung GTS4LLTE SEA OPEN device.
+
+config MACH_GTS4LLTE_KX
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE KOR OPEN"
+                help
+                  Support for Samsung GTS4LLTE KOR OPEN device.
+
+config MACH_GTS4LLTE_JX
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE MEA OPEN"
+                help
+                  Support for Samsung GTS4LLTE MEA OPEN device.
+
+config MACH_GTS4LLTE_SER
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE CIS SER"
+                help
+                  Support for Samsung GTS4LLTE CIS SER device.
+
+config MACH_GTS4LLTE_SPR
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE USA SPR"
+                help
+                  Support for Samsung GTS4LLTE USA SPR device.
+
+config MACH_GTS4LLTE_TMO
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE USA TMO"
+                help
+                  Support for Samsung GTS4LLTE USA TMO device.
+
+config MACH_GTS4LLTE_TUR
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE MEA TUR"
+                help
+                  Support for Samsung GTS4LLTE MEA TUR device.
+
+config MACH_GTS4LLTE_UB
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE LTN OPEN"
+                help
+                  Support for Samsung GTS4LLTE LTN OPEN device.
+
+config MACH_GTS4LLTE_UC
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE USA ATT"
+                help
+                  Support for Samsung GTS4LLTE USA ATT device.
+
+config MACH_GTS4LLTE_USC
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE USA USC"
+                help
+                  Support for Samsung GTS4LLTE USA USC device.
+
+config MACH_GTS4LLTE_VZW
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE USA VZW"
+                help
+                  Support for Samsung GTS4LLTE USA VZW device.
+
+config MACH_GTS4LLTE_XX
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE EUR OPEN"
+                help
+                  Support for Samsung GTS4LLTE EUR OPEN device.
+				  
+config MACH_GTS4LLTE_DD
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE SWA OPEN"
+                help
+                  Support for Samsung GTS4LLTE SWA OPEN device.
+
+config MACH_GTS4LLTE_XX_LDU
+        depends on SEC_GTS4LLTE_PROJECT
+                default n
+                bool "Samsung GTS4LLTE EUR LDU"
+                help
+                  Support for Samsung GTS4LLTE EUR LDU device.
+
+config SEC_GTS4LWIFI_PROJECT
+	depends on ARCH_MSM8998
+		default n
+		bool "Samsung GTS4LWIFI Project"
+		help
+		  Support for Samsung GTS4LWIFI Project
+
+config MACH_GTS4LWIFI_SER
+        depends on SEC_GTS4LWIFI_PROJECT
+                default n
+                bool "Samsung GTS4LWIFI CIS SER"
+                help
+                  Support for Samsung GTS4LWIFI CIS SER device.
+
+config MACH_GTS4LWIFI_ZC
+        depends on SEC_GTS4LWIFI_PROJECT
+                default n
+                bool "Samsung GTS4LWIFI CHN OPEN"
+                help
+                  Support for Samsung GTS4LWIFI CHN OPEN device.
+
+config MACH_GTS4LWIFI_XX
+        depends on SEC_GTS4LWIFI_PROJECT
+                default n
+                bool "Samsung GTS4LWIFI EUR OPEN"
+                help
+                  Support for Samsung GTS4LWIFI EUR OPEN device.
+
+config MACH_GTS4LWIFI_XX_LDU
+        depends on SEC_GTS4LWIFI_PROJECT
+                default n
+                bool "Samsung GTS4LWIFI EUR LDU"
+                help
+                  Support for Samsung GTS4LWIFI EUR LDU device.
+
+config DRV_SAMSUNG
+	bool "samsung device dedicated drivers option"
+	default y
+	help
+	  This is driver option for samsung sec_class
+	  Say y here to enable samsung classes for drivers
+	  Provide option of enabling sec class
+	  Supports sec drivers key, touch, sec_debug etc
+
+config RELOCATABLE_KERNEL 
+	bool "set kernel to relocatable in both virtual and physical address"
+	default n
+	depends on TIMA
+	help 	
+	  This configuare will allow you to config the kernel into position independent kernel, with '--PIE' insert into LD script.
+
+config LOD_SEC
+	bool "kernel security re-enforcement for Linux On Dex, including cap re-check and seccomp report"
+	default n
+
+config TIMA
+	bool "Enable TIMA(Trustzone based Integrity Measurement Archtecture feature"
+	default n
+
+config TIMA_RKP
+	bool "Samsung KNOX realtime kernel protection"
+	default n
+	select UH_RKP
+	help
+	  this enables realtime kernel protection
+
+config UH_RKP
+	bool "Enable RKP (Realtime Kernel Protection) UH feature"
+	help
+	  it protects a kernel text and etc.
+
+config RKP_KDP
+	bool "Protection for cred structure"
+	depends on TIMA_RKP
+	depends on !SEC_FACTORY
+	depends on SAMSUNG_PRODUCT_SHIP
+	default n
+	help
+	  Prevents unauthorized cred modification.
+
+config RKP_NS_PROT
+	bool "Protection for cred structure"
+	depends on RKP_KDP
+	depends on !SEC_FACTORY
+	depends on SAMSUNG_PRODUCT_SHIP
+	default n
+	help
+	  Prevents unauthorized cred modification.
+
+
+config RKP_DMAP_PROT
+        bool "Page Double Mapping protection"
+	depends on RKP_KDP
+	depends on !SEC_FACTORY
+	depends on SAMSUNG_PRODUCT_SHIP
+        default n
+        help
+          Prevents unauthorized mapping for page table.
+
+config RELOCATABLE_KERNEL 
+	bool "set kernel to relocatable in both virtual and physical address"
+	default n
+	help 	
+	  This configuare will allow you to config the kernel into position independent kernel, with '--PIE' insert into LD script.
+
+config USER_RESET_DEBUG
+	bool "reset reason debug feature in user version"
+	default n
+	help
+	  This option provides reset history log in user version.
+	  This option enable proc/reset_reason support
+
+config USER_RESET_DEBUG_TEST
+	bool "reset reason debug test feature in eng version"
+	depends on USER_RESET_DEBUG
+	default n
+	help
+	  This option enable for test in eng version(KP, DP, TP, WP)
+
+config SEC_BITSCATTER
+	bool "Enables bitScatter library"
+	default y
+	help
+	  This option enables sysfs interfaces for bitSscatter configuration.
+
 menu "Power management options"
 
 source "kernel/power/Kconfig"
@@ -1220,6 +1824,10 @@ config ARCH_SUSPEND_POSSIBLE
 
 endmenu
 
+config SAMSUNG_PRODUCT_SHIP
+	bool "set up for product shipping"
+	default n
+
 menu "CPU Power Management"
 
 source "drivers/cpuidle/Kconfig"
@@ -1227,6 +1835,25 @@ source "drivers/cpuidle/Kconfig"
 source "drivers/cpufreq/Kconfig"
 
 endmenu
+
+#
+# END RKP_CFP CONFIG OPTIONS
+#
+
+config DRV_SAMSUNG
+	bool "samsung device dedicated drivers option"
+	default y
+	help
+	  This is driver option for samsung sec_class
+	  Say y here to enable samsung classes for drivers
+	  Provide option of enabling sec class
+	  Supports sec drivers key, touch, sec_debug etc
+
+config SEC_PERIPHERAL_SECURE_CHK
+	bool "PERIPHERAL SECURE check"
+	default n
+	help
+	  To check the authentication of peripheral image.
 
 source "net/Kconfig"
 

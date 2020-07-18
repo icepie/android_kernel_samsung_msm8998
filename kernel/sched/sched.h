@@ -796,6 +796,7 @@ struct rq {
 	u64 avg_irqload;
 	u64 irqload_ts;
 	unsigned int static_cpu_pwr_cost;
+	int ignore_cstate_awareness;
 	struct task_struct *ed_task;
 	struct cpu_cycle cc;
 	u64 old_busy_time, old_busy_time_group;
@@ -1188,6 +1189,11 @@ extern void update_avg(u64 *avg, u64 sample);
 #define FULL_THROTTLE_BOOST 1
 #define CONSERVATIVE_BOOST 2
 #define RESTRAINED_BOOST 3
+#define FULL_THROTTLE_BOOST_DISABLE -1
+#define CONSERVATIVE_BOOST_DISABLE -2
+#define RESTRAINED_BOOST_DISABLE -3
+/* 3 types of boost + NO_BOOST */
+#define MAX_NUM_BOOST_TYPE RESTRAINED_BOOST+1
 
 static inline struct sched_cluster *cpu_cluster(int cpu)
 {

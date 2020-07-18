@@ -916,7 +916,7 @@ static int pp_gamut_set_config(char __iomem *base_addr,
 					gamut_data->c0_data[i][j];
 			writeq_relaxed(gamut_val,
 					base_addr + GAMUT_TABLE_UPPER_R);
-		}
+ 		}
 		writel_relaxed(gamut_data->c0_data[i][j],
 					base_addr + GAMUT_TABLE_UPPER_R);
 		if ((i >= MDP_GAMUT_SCALE_OFF_TABLE_NUM) ||

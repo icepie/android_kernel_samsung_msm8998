@@ -29,6 +29,22 @@
 #include "mdss.h"
 #include "mdss_panel.h"
 
+#ifdef CONFIG_SEC_DISPLAYPORT
+#include <linux/usb/manager/usb_typec_manager_notifier.h>
+/*#define SECDP_PHY_TEST*/				/* for RE TEST */
+/*#define SECDP_PHY_AUTO_TEST*/			/* for PHY AUTOMATION TEST */
+#define SECDP_LIMIT_REAUTH				/* limit max HDCP reauth */
+#define SECDP_MAX_REAUTH_COUNT	100
+/*#define SECDP_BLOCK_DFP_VGA*/			/* block VGA dongle support */
+
+#define SECDP_AUX_RETRY					/* aux retry */
+#define SECDP_AUX_RETRY_CNT 	10
+
+#define DPCD_BRANCH_HW_REVISION    0x509
+#define DPCD_BRANCH_SW_REVISION_MAJOR    0x50A
+#define DPCD_BRANCH_SW_REVISION_MINOR    0x50B
+#endif
+
 #define dp_read(offset) readl_relaxed((offset))
 #define dp_write(offset, data) writel_relaxed((data), (offset))
 
@@ -140,6 +156,57 @@ enum dp_pm_type {
 #define DP_VDM_STATUS		0x10
 #define DP_VDM_CONFIGURE	0x11
 
+#ifdef CONFIG_SEC_DISPLAYPORT
+#define SAMSUNG_VENDOR_ID		0x04E8
+#define DEXDOCK_PRODUCT_ID		0xA020		/* EE-MG950, DeX station */
+#define MPA2_PRODUCT_ID			0xA027		/* EE-P5000 */
+#define DEXPAD_PRODUCT_ID		0xA029		/* EE-M5100 */
+/* #define NOT_SUPPORT_DEX_RES_CHANGE */
+#ifdef CONFIG_SEC_GTS4LLTE_PROJECT
+#define CONFIG_SEC_CHECK_RATIO
+#define CONFIG_SEC_NEW_RESOLUTION	/* for resolutions added since P os */
+#define SECDP_WIDE_21_9_SUPPORT        /* support ultra-wide 21:9 resolution  (2560x1080p, 3440x1440p) */
+#endif
+/*#define SECDP_WIDE_32_9_SUPPORT */       /* support ultra-wide 32:9 resolution  (3840x1080p) */
+/*#define SECDP_WIDE_32_10_SUPPORT */      /* support ultra-wide 32:10 resolution (3840x1200p) */
+/*#define SECDP_HIGH_REFRESH_SUPPORT*/ /* support more than 60hz refresh rate, such as 100/120/144hz */
+
+/* monitor aspect ratio */
+enum mon_aspect_ratio_t {
+	MON_RATIO_NA = -1,
+	MON_RATIO_16_9,
+	MON_RATIO_16_10,
+	MON_RATIO_21_9,
+	MON_RATIO_32_9,
+	MON_RATIO_32_10,
+};
+
+/* dex supported resolutions */
+enum dex_support_res_t {
+	DEX_RES_NOT_SUPPORT,
+	DEX_RES_1920X1080, /* FHD */
+	DEX_RES_1920X1200, /* WUXGA */
+	DEX_RES_2560X1080, /* UW-UXGA */
+	DEX_RES_2560X1440, /* QHD */
+	DEX_RES_2560X1600, /* WQXGA */
+	DEX_RES_3440X1440, /* UW-QHD */
+	DEX_RES_3840X2160, /* UHD */
+};
+#define DEX_RES_DFT		DEX_RES_1920X1080   /* DeX default resolution */
+#define DEX_RES_MAX		DEX_RES_3440X1440   /* DeX max resolution */
+
+struct secdp_display_timing {
+	int index; /* Resolution priority */
+	uint32_t active_h;
+	uint32_t active_v;
+	uint32_t refresh_rate;
+	uint32_t interlaced;
+	enum dex_support_res_t dex_res; /* dex supported resolution */
+	enum mon_aspect_ratio_t	mon_ratio; /* monitor aspect ratio */
+	int supported; /* for unit test */
+	bool checked; /* it's true if the resolution is supported. and it's used to avoid sending duplicated resolution info to framework */
+};
+#else /* CONFIG_SEC_DISPLAYPORT */
 enum dp_port_cap {
 	PORT_NONE = 0,
 	PORT_UFP_D,
@@ -182,6 +249,7 @@ struct dp_alt_mode {
 	u32 usbpd_dp_config;
 	enum dp_alt_mode_state current_state;
 };
+#endif
 
 #define DPCD_ENHANCED_FRAME	BIT(0)
 #define DPCD_TPS3	BIT(1)
@@ -207,14 +275,18 @@ struct dp_alt_mode {
 #define EV_USBPD_EXIT_MODE		BIT(12)
 #define EV_USBPD_ATTENTION		BIT(13)
 
+#ifdef CONFIG_SEC_DISPLAYPORT
+#define EV_DP_OFF_HPD			BIT(14)
+#endif
+
 /* dp state ctrl */
-#define ST_TRAIN_PATTERN_1		BIT(0)
+#define ST_TRAIN_PATTERN_1		BIT(0)		/* D10.2 without scrambling */
 #define ST_TRAIN_PATTERN_2		BIT(1)
 #define ST_TRAIN_PATTERN_3		BIT(2)
-#define ST_TRAIN_PATTERN_4		BIT(3)
+#define ST_TRAIN_PATTERN_4		BIT(3)		/* HBR2 Compliance EYE pattern */
 #define ST_SYMBOL_ERR_RATE_MEASUREMENT	BIT(4)
 #define ST_PRBS7			BIT(5)
-#define ST_CUSTOM_80_BIT_PATTERN	BIT(6)
+#define ST_CUSTOM_80_BIT_PATTERN	BIT(6)	/* 80 bit custom pattern transmitted */
 #define ST_SEND_VIDEO			BIT(7)
 #define ST_PUSH_IDLE			BIT(8)
 
@@ -261,6 +333,16 @@ struct downstream_port_config {
 	bool msa_timing_par_ignored;
 	bool oui_support;
 };
+
+#ifdef SECDP_PHY_TEST
+struct secdp_phy_param_st {
+	char v_level;		/* amplitude 0,1,2,3 */
+	char p_level;		/* pre-emphasis 0,1,2,3 */
+	char link_rate;		/* 6,10,20 */
+	char lane_cnt;		/* 4, fixed */
+	int pattern;		/* 0,1,2,..,7 */
+};
+#endif
 
 #define DP_MAX_DS_PORT_COUNT 2
 
@@ -369,6 +451,10 @@ struct edp_edid {
 	char hsync_pol;		/* 0 = negative, 1 = positive */
 	char ext_block_cnt;
 	struct display_timing_desc timing[4];
+
+#ifdef CONFIG_SEC_DISPLAYPORT
+	u32 id_serial_number;
+#endif
 };
 
 struct dp_statistic {
@@ -554,11 +640,33 @@ struct mdss_dp_drv_pdata {
 	struct platform_device *pdev;
 	struct platform_device *ext_pdev;
 
+#ifndef CONFIG_SEC_DISPLAYPORT
 	struct usbpd *pd;
 	enum plug_orientation orientation;
 	struct dp_hdcp hdcp;
 	struct usbpd_svid_handler svid_handler;
 	struct dp_alt_mode alt_mode;
+#else
+	enum plug_orientation orientation;
+	struct notifier_block dp_typec_nb;
+	struct delayed_work dp_noti_register;
+	bool notifier_registered;
+	struct dp_hdcp hdcp;
+	int dex_reconnecting;
+	int aux_status;
+	int link_train_status;
+	enum dex_support_res_t dex_supported_res;
+#ifdef SECDP_LIMIT_REAUTH
+	int reauth_count;
+#endif
+#ifdef SECDP_AUX_RETRY
+	int aux_tuning_value[4];
+	int aux_tuning_index;
+#endif
+#endif
+#ifdef SECDP_PHY_TEST
+	struct secdp_phy_param_st *secdp_phy_param;
+#endif
 	bool dp_initialized;
 	struct msm_ext_disp_init_data ext_audio_data;
 
@@ -637,11 +745,36 @@ struct mdss_dp_drv_pdata {
 	struct completion idle_comp;
 	struct completion video_comp;
 	struct completion notification_comp;
+	struct completion irq_comp;
+#ifdef CONFIG_SEC_DISPLAYPORT
+	struct completion dp_off_comp;
+	struct mutex notifier_lock;
+#endif
 	struct mutex aux_mutex;
 	struct mutex train_mutex;
 	struct mutex attention_lock;
+#ifdef CONFIG_SEC_DISPLAYPORT
+	struct mutex pd_msg_mutex;
+#endif
 	struct mutex hdcp_mutex;
-	bool cable_connected;
+	bool cable_connected;			/* hpd, see "dp_get_cable_status()" */
+#ifdef CONFIG_SEC_DISPLAYPORT
+	bool cable_connected_phy;		/* real cable connect/disconnect */
+	int dex_now;			/* 1 if dex is running, 0 otherwise */
+	int dex_en;				/* 1 if dex starts, 0 otherwise */
+	int dex_set;			/* 1 if "hdmi mode" is dex, 0 otherwise */
+	/* 
+	 * 2 if resolution is changed during dex mode change.
+         * And once dex framework reads the dex_node_stauts using dex node,
+         * it's assigned to same value with dex_en.
+	 */
+	int dex_node_status;
+	char dex_fw_ver[10];	/* 0: h/w, 1: s/w major, 2: s/w minor */
+	int dp_pin_type;
+	bool sec_link_conf;
+	bool sec_hpd;
+	CC_NOTI_TYPEDEF sec_hpd_noti;
+#endif
 	u32 s3d_mode;
 	u32 aux_cmd_busy;
 	u32 aux_cmd_i2c;
@@ -673,6 +806,10 @@ struct mdss_dp_drv_pdata {
 
 	struct workqueue_struct *workq;
 	struct delayed_work hdcp_cb_work;
+#ifdef CONFIG_SEC_DISPLAYPORT
+	struct delayed_work dp_start_hdcp_work;
+	struct delayed_work dp_reconnection_work;
+#endif
 	spinlock_t lock;
 	struct switch_dev sdev;
 	struct kobject *kobj;
@@ -788,6 +925,7 @@ static inline char *mdss_dp_get_phy_test_pattern(u32 phy_test_pattern_sel)
 		return "unknown";
 	}
 }
+
 
 static inline bool mdss_dp_is_phy_test_pattern_supported(
 		u32 phy_test_pattern_sel)
@@ -1197,5 +1335,11 @@ int mdss_dp_aux_read_sink_frame_crc(struct mdss_dp_drv_pdata *dp);
 int mdss_dp_aux_config_sink_frame_crc(struct mdss_dp_drv_pdata *dp,
 	bool enable);
 int mdss_dp_aux_parse_vx_px(struct mdss_dp_drv_pdata *ep);
+#ifdef CONFIG_SEC_DISPLAYPORT
+int secdp_check_aux_status(struct mdss_dp_drv_pdata *dp);
+void secdp_init_aux_control(struct mdss_dp_drv_pdata *dp);
+bool secdp_check_dex_mode(void);
+enum dex_support_res_t secdp_get_dex_res(void);
+#endif
 
 #endif /* MDSS_DP_H */

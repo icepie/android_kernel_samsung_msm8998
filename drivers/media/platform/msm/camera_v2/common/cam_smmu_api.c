@@ -24,15 +24,14 @@
 #include <linux/dma-mapping.h>
 #include <linux/msm_dma_iommu_mapping.h>
 #include <linux/workqueue.h>
-#include <linux/sizes.h>
 #include <soc/qcom/scm.h>
 #include <soc/qcom/secure_buffer.h>
 #include <msm_camera_tz_util.h>
 #include "cam_smmu_api.h"
 
-#define SCRATCH_ALLOC_START SZ_128K
-#define SCRATCH_ALLOC_END   SZ_256M
-#define VA_SPACE_END	    SZ_2G
+#define SCRATCH_ALLOC_START	SZ_128K
+#define SCRATCH_ALLOC_END	SZ_256M
+#define VA_SPACE_END		SZ_2G
 #define IOMMU_INVALID_DIR -1
 #define BYTE_SIZE 8
 #define COOKIE_NUM_BYTE 2
@@ -49,6 +48,7 @@
 #define CAMERA_DEVICE_ID 0x16
 #define SECURE_SYSCALL_ID 0x18
 
+//#define CONFIG_CAM_SMMU_DBG
 #ifdef CONFIG_CAM_SMMU_DBG
 #define CDBG(fmt, args...) pr_err(fmt, ##args)
 #else
@@ -99,7 +99,6 @@ struct scratch_mapping {
 struct cam_context_bank_info {
 	struct device *dev;
 	struct dma_iommu_mapping *mapping;
-	enum iommu_attr attr;
 	dma_addr_t va_start;
 	size_t va_len;
 	const char *name;
@@ -110,8 +109,9 @@ struct cam_context_bank_info {
 	struct mutex lock;
 	int handle;
 	enum cam_smmu_ops_param state;
-	client_handler handler[CAM_SMMU_CB_MAX];
-	client_reset_handler hw_reset_handler[CAM_SMMU_CB_MAX];
+	void (*handler[CAM_SMMU_CB_MAX])(struct iommu_domain *,
+		struct device *, unsigned long,
+		int, void*);
 	void *token[CAM_SMMU_CB_MAX];
 	int cb_count;
 	int ref_cnt;
@@ -162,20 +162,20 @@ struct cam_sec_buff_info {
 static struct cam_iommu_cb_set iommu_cb_set;
 
 static enum dma_data_direction cam_smmu_translate_dir(
-	enum cam_smmu_map_dir dir);
+					enum cam_smmu_map_dir dir);
 
 static int cam_smmu_check_handle_unique(int hdl);
 
 static int cam_smmu_create_iommu_handle(int idx);
 
 static int cam_smmu_create_add_handle_in_table(char *name,
-	int *hdl);
+					int *hdl);
 
 static struct cam_dma_buff_info *cam_smmu_find_mapping_by_ion_index(int idx,
-	int ion_fd);
+					int ion_fd);
 
 static struct cam_sec_buff_info *cam_smmu_find_mapping_by_sec_buf_idx(int idx,
-	int ion_fd);
+					int ion_fd);
 
 static int cam_smmu_init_scratch_map(struct scratch_mapping *scratch_map,
 					dma_addr_t base, size_t size,
@@ -189,19 +189,19 @@ static int cam_smmu_free_scratch_va(struct scratch_mapping *mapping,
 					dma_addr_t addr, size_t size);
 
 static struct cam_dma_buff_info *cam_smmu_find_mapping_by_virt_address(int idx,
-		dma_addr_t virt_addr);
+					dma_addr_t virt_addr);
 
 static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
-	enum dma_data_direction dma_dir, dma_addr_t *paddr_ptr,
-	size_t *len_ptr);
+					enum dma_data_direction dma_dir, dma_addr_t *paddr_ptr,
+					size_t *len_ptr);
 
 static int cam_smmu_alloc_scratch_buffer_add_to_list(int idx,
-					      size_t virt_len,
-					      size_t phys_len,
-					      unsigned int iommu_dir,
-					      dma_addr_t *virt_addr);
+					size_t virt_len,
+					size_t phys_len,
+					unsigned int iommu_dir,
+					dma_addr_t *virt_addr);
 static int cam_smmu_unmap_buf_and_remove_from_list(
-	struct cam_dma_buff_info *mapping_info, int idx);
+					struct cam_dma_buff_info *mapping_info, int idx);
 
 static int cam_smmu_free_scratch_buffer_remove_from_list(
 					struct cam_dma_buff_info *mapping_info,
@@ -343,21 +343,15 @@ static void cam_smmu_check_vaddr_in_range(int idx, void *vaddr)
 				mapping->ion_fd);
 		}
 	}
-	if (!strcmp(iommu_cb_set.cb_info[idx].name, "vfe"))
-		pr_err_ratelimited("Cannot find vaddr:%pK in SMMU.\n"
-			" %s uses invalid virtual address\n",
-			vaddr, iommu_cb_set.cb_info[idx].name);
-	else
-		pr_err("Cannot find vaddr:%pK in SMMU.\n"
-			" %s uses invalid virtual address\n",
-			vaddr, iommu_cb_set.cb_info[idx].name);
+	pr_err("Cannot find vaddr:%pK in SMMU. %s uses invalid virtual address\n",
+		vaddr, iommu_cb_set.cb_info[idx].name);
 	return;
 }
 
 void cam_smmu_reg_client_page_fault_handler(int handle,
-		client_handler page_fault_handler,
-		client_reset_handler hw_reset_handler,
-		void *token)
+		void (*client_page_fault_handler)(struct iommu_domain *,
+		struct device *, unsigned long,
+		int, void*), void *token)
 {
 	int idx, i = 0;
 
@@ -381,7 +375,7 @@ void cam_smmu_reg_client_page_fault_handler(int handle,
 		return;
 	}
 
-	if (page_fault_handler) {
+	if (client_page_fault_handler) {
 		if (iommu_cb_set.cb_info[idx].cb_count == CAM_SMMU_CB_MAX) {
 			pr_err("%s Should not regiester more handlers\n",
 				iommu_cb_set.cb_info[idx].name);
@@ -393,9 +387,7 @@ void cam_smmu_reg_client_page_fault_handler(int handle,
 			if (iommu_cb_set.cb_info[idx].token[i] == NULL) {
 				iommu_cb_set.cb_info[idx].token[i] = token;
 				iommu_cb_set.cb_info[idx].handler[i] =
-					page_fault_handler;
-				iommu_cb_set.cb_info[idx].hw_reset_handler[i] =
-					hw_reset_handler;
+					client_page_fault_handler;
 				break;
 			}
 		}
@@ -423,7 +415,6 @@ static int cam_smmu_iommu_fault_handler(struct iommu_domain *domain,
 {
 	char *cb_name;
 	int idx;
-	int j;
 	struct cam_smmu_work_payload *payload;
 
 	if (!token) {
@@ -456,18 +447,6 @@ static int cam_smmu_iommu_fault_handler(struct iommu_domain *domain,
 	payload->flags = flags;
 	payload->token = token;
 	payload->idx = idx;
-
-	/* trigger hw reset handler */
-	mutex_lock(&iommu_cb_set.cb_info[idx].lock);
-	for (j = 0; j < CAM_SMMU_CB_MAX; j++) {
-		if ((iommu_cb_set.cb_info[idx].hw_reset_handler[j])) {
-			iommu_cb_set.cb_info[idx].hw_reset_handler[j](
-			payload->domain,
-			payload->dev,
-			iommu_cb_set.cb_info[idx].token[j]);
-		}
-	}
-	mutex_unlock(&iommu_cb_set.cb_info[idx].lock);
 
 	mutex_lock(&iommu_cb_set.payload_list_lock);
 	list_add_tail(&payload->list, &iommu_cb_set.payload_list);
@@ -561,7 +540,7 @@ static int cam_smmu_check_handle_unique(int hdl)
 }
 
 /**
- *  use low 2 bytes for handle cookie
+*	use low 2 bytes for handle cookie
  */
 static int cam_smmu_create_iommu_handle(int idx)
 {
@@ -616,7 +595,7 @@ static int cam_smmu_create_add_handle_in_table(char *name,
 			iommu_cb_set.cb_info[i].cb_count = 0;
 			iommu_cb_set.cb_info[i].ref_cnt++;
 			*hdl = handle;
-			CDBG("%s creates handle 0x%x\n", name, handle);
+			pr_err("%s creates handle 0x%x\n", name, handle);
 			mutex_unlock(&iommu_cb_set.cb_info[i].lock);
 			return 0;
 		}
@@ -692,9 +671,9 @@ static int cam_smmu_free_scratch_va(struct scratch_mapping *mapping,
 					dma_addr_t addr, size_t size)
 {
 	unsigned int start = (addr - mapping->base) >>
-			     (mapping->order + PAGE_SHIFT);
+		(mapping->order + PAGE_SHIFT);
 	unsigned int count = ((size >> PAGE_SHIFT) +
-			      (1 << mapping->order) - 1) >> mapping->order;
+		(1 << mapping->order) - 1) >> mapping->order;
 
 	if (!addr) {
 		pr_err("Error: Invalid address\n");
@@ -825,6 +804,7 @@ static int cam_smmu_attach(int idx)
 	return ret;
 }
 
+#if 1
 static int cam_smmu_send_syscall_cpp_intf(int vmid, int idx)
 {
 	int rc = 0;
@@ -840,6 +820,7 @@ static int cam_smmu_send_syscall_cpp_intf(int vmid, int idx)
 	desc.args[1] = SCM_BUFFER_PHYS(&sid_info);
 	desc.args[2] = sizeof(uint32_t);
 	desc.args[3] = vmid;
+
 	/*
 	 * Syscall to hypervisor to switch CPP SID's
 	 * between secure and non-secure contexts
@@ -852,6 +833,7 @@ static int cam_smmu_send_syscall_cpp_intf(int vmid, int idx)
 	}
 	return rc;
 }
+#endif
 
 static int cam_smmu_send_syscall_pix_intf(int vmid, int idx)
 {
@@ -872,6 +854,7 @@ static int cam_smmu_send_syscall_pix_intf(int vmid, int idx)
 	desc.args[1] = SCM_BUFFER_PHYS(sid_info);
 	desc.args[2] = sizeof(uint32_t) * 2;
 	desc.args[3] = vmid;
+
 	/*
 	 * Syscall to hypervisor to switch VFE SID's
 	 * between secure and non-secure contexts
@@ -1046,6 +1029,7 @@ static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
 	struct sg_table *table = NULL;
 
 	if (!paddr_ptr) {
+		pr_err("Error: Input pointer invalid\n");
 		rc = -EINVAL;
 		goto err_out;
 	}
@@ -1054,8 +1038,7 @@ static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
 	buf = dma_buf_get(ion_fd);
 	if (IS_ERR_OR_NULL(buf)) {
 		rc = PTR_ERR(buf);
-		pr_err("Error: dma get buf failed. fd = %d rc = %d\n",
-		      ion_fd, rc);
+		pr_err("Error: dma get buf failed. fd = %d\n", ion_fd);
 		goto err_out;
 	}
 
@@ -1120,9 +1103,7 @@ static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
 		rc = -ENOSPC;
 		goto err_mapping_info;
 	}
-	CDBG("name %s ion_fd = %d, dev = %pK, paddr= %pK, len = %u\n",
-			iommu_cb_set.cb_info[idx].name,
-			ion_fd,
+	CDBG("ion_fd = %d, dev = %pK, paddr= %pK, len = %u\n", ion_fd,
 			(void *)iommu_cb_set.cb_info[idx].dev,
 			(void *)*paddr_ptr, (unsigned int)*len_ptr);
 
@@ -1178,11 +1159,11 @@ static int cam_smmu_map_secure_buffer_and_add_to_list(int idx,
 	}
 
 	if (table->sgl) {
-		CDBG("DMA buf: %pK, device: %pK, attach: %pK, table: %pK\n",
+		CDBG("DMA buf: %p, device: %p, attach: %p, table: %p\n",
 				(void *)buf,
 				(void *)iommu_cb_set.cb_info[idx].dev,
 				(void *)attach, (void *)table);
-		CDBG("table sgl: %pK, rc: %d, dma_address: 0x%x\n",
+		CDBG("table sgl: %p, rc: %d, dma_address: 0x%x\n",
 				(void *)table->sgl, rc,
 				(unsigned int)table->sgl->dma_address);
 	} else {
@@ -1215,7 +1196,7 @@ static int cam_smmu_map_secure_buffer_and_add_to_list(int idx,
 		rc = -ENOSPC;
 		goto err_mapping_info;
 	}
-	CDBG("dev = %pK, paddr= %pK, len = %u\n",
+	CDBG("dev = %p, paddr= %p, len = %u\n",
 			(void *)iommu_cb_set.cb_info[idx].dev,
 			(void *)*paddr_ptr, (unsigned int)*len_ptr);
 
@@ -1288,12 +1269,11 @@ static enum cam_smmu_buf_state cam_smmu_check_fd_in_list(int idx,
 	return CAM_SMMU_BUFF_NOT_EXIST;
 }
 
-static enum cam_smmu_buf_state cam_smmu_check_secure_fd_in_list(int idx,
+static enum cam_smmu_buf_state cam_smmu_stage2_check_fd_in_list(int idx,
 					int ion_fd, dma_addr_t *paddr_ptr,
 					size_t *len_ptr)
 {
-	struct cam_sec_buff_info *mapping;
-
+	struct cam_sec_buff_info *mapping = NULL;
 	list_for_each_entry(mapping,
 			&iommu_cb_set.cb_info[idx].smmu_buf_list,
 			list) {
@@ -1330,48 +1310,6 @@ int cam_smmu_get_handle(char *identifier, int *handle_ptr)
 	return ret;
 }
 EXPORT_SYMBOL(cam_smmu_get_handle);
-
-
-int cam_smmu_set_attr(int handle, uint32_t flags, int32_t *data)
-{
-	int ret = 0, idx;
-	struct cam_context_bank_info *cb = NULL;
-	struct iommu_domain *domain = NULL;
-
-	CDBG("E: set_attr\n");
-	idx = GET_SMMU_TABLE_IDX(handle);
-	if (handle == HANDLE_INIT || idx < 0 || idx >= iommu_cb_set.cb_num) {
-		pr_err("Error: handle or index invalid. idx = %d hdl = %x\n",
-			idx, handle);
-		return -EINVAL;
-	}
-	mutex_lock(&iommu_cb_set.cb_info[idx].lock);
-	if (iommu_cb_set.cb_info[idx].handle != handle) {
-		pr_err("Error: hdl is not valid, table_hdl = %x, hdl = %x\n",
-			iommu_cb_set.cb_info[idx].handle, handle);
-		mutex_unlock(&iommu_cb_set.cb_info[idx].lock);
-		return -EINVAL;
-	}
-
-	if (iommu_cb_set.cb_info[idx].state == CAM_SMMU_DETACH) {
-		domain = iommu_cb_set.cb_info[idx].mapping->domain;
-		cb = &iommu_cb_set.cb_info[idx];
-		cb->attr |= flags;
-		/* set attributes */
-		ret = iommu_domain_set_attr(domain, cb->attr, (void *)data);
-		if (ret < 0) {
-			mutex_unlock(&iommu_cb_set.cb_info[idx].lock);
-			pr_err("Error: set attr\n");
-			return -ENODEV;
-		}
-	} else {
-		ret = -EINVAL;
-	}
-	mutex_unlock(&iommu_cb_set.cb_info[idx].lock);
-	return ret;
-}
-EXPORT_SYMBOL(cam_smmu_set_attr);
-
 
 int cam_smmu_ops(int handle, enum cam_smmu_ops_param ops)
 {
@@ -1430,10 +1368,10 @@ int cam_smmu_ops(int handle, enum cam_smmu_ops_param ops)
 EXPORT_SYMBOL(cam_smmu_ops);
 
 static int cam_smmu_alloc_scratch_buffer_add_to_list(int idx,
-					      size_t virt_len,
-					      size_t phys_len,
-					      unsigned int iommu_dir,
-					      dma_addr_t *virt_addr)
+					size_t virt_len,
+					size_t phys_len,
+					unsigned int iommu_dir,
+					dma_addr_t *virt_addr)
 {
 	unsigned long nents = virt_len / phys_len;
 	struct cam_dma_buff_info *mapping_info = NULL;
@@ -1632,7 +1570,7 @@ int cam_smmu_get_phy_addr_scratch(int handle,
 
 	CDBG("%s: smmu handle = %x, idx = %d, dir = %d\n",
 		__func__, handle, idx, dir);
-	CDBG("%s: virt_len = %zx, phys_len  = %zx\n",
+	CDBG("%s: virt_len = %zx, phys_len = %zx\n",
 		__func__, phys_len, virt_len);
 
 	if (iommu_cb_set.cb_info[idx].state != CAM_SMMU_ATTACH) {
@@ -1859,7 +1797,7 @@ int cam_smmu_alloc_get_stage2_scratch_mem(int handle,
 		return -EINVAL;
 	}
 	*sc_handle = ion_alloc(client, SZ_2M, SZ_2M,
-				ION_HEAP(ION_SECURE_DISPLAY_HEAP_ID),
+				ION_HEAP(/*ION_SECURE_DISPLAY_HEAP_ID*/ION_SECURE_CAMERA_SCRATCH_HEAP_ID),
 				ION_FLAG_SECURE | ION_FLAG_CP_CAMERA);
 	if (IS_ERR_OR_NULL((void *) (*sc_handle))) {
 		rc = -ENOMEM;
@@ -2072,8 +2010,7 @@ int cam_smmu_get_stage2_phy_addr(int handle,
 		goto get_addr_end;
 	}
 
-	buf_state = cam_smmu_check_secure_fd_in_list(idx, ion_fd, paddr_ptr,
-			len_ptr);
+	buf_state = cam_smmu_stage2_check_fd_in_list(idx, ion_fd, paddr_ptr, len_ptr);
 	if (buf_state == CAM_SMMU_BUFF_EXIST) {
 		CDBG("ion_fd:%d already in the list, give same addr back",
 				 ion_fd);
@@ -2294,7 +2231,7 @@ static int cam_smmu_setup_cb(struct cam_context_bank_info *cb,
 		}
 	} else {
 		cb->va_start = SZ_128K;
-		cb->va_len = VA_SPACE_END - SZ_128M;
+		cb->va_len = VA_SPACE_END - SZ_128K;
 	}
 
 	/* create a virtual mapping */
@@ -2533,4 +2470,3 @@ module_init(cam_smmu_init_module);
 module_exit(cam_smmu_exit_module);
 MODULE_DESCRIPTION("MSM Camera SMMU driver");
 MODULE_LICENSE("GPL v2");
-

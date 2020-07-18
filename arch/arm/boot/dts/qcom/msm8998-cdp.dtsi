@@ -533,10 +533,6 @@
 	};
 };
 
-&wil6210 {
-	status = "ok";
-};
-
 &snd_9335 {
 	qcom,mbhc-audio-jack-type = "6-pole-jack";
 };

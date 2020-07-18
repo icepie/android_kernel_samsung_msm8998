@@ -375,6 +375,14 @@ struct ufs_qcom_host {
 	struct work_struct ice_cfg_work;
 	struct request *req_pending;
 	struct ufs_vreg *vddp_ref_clk;
+	/* hw reset info. */
+	unsigned int hw_reset_count;
+	unsigned long last_hw_reset;
+	u32 hw_reset_saved_err;
+	u32 hw_reset_saved_uic_err;
+	unsigned long hw_reset_outstanding_tasks;
+	unsigned long hw_reset_outstanding_reqs;
+	struct ufs_stats hw_reset_ufs_stats;
 	bool work_pending;
 };
 

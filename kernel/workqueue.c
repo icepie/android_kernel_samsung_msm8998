@@ -52,6 +52,9 @@
 #include <linux/delay.h>
 
 #include "workqueue_internal.h"
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/qcom/sec_debug.h>
+#endif
 
 enum {
 	/*
@@ -2073,6 +2076,10 @@ __acquires(&pool->lock)
 	lock_map_acquire_read(&pwq->wq->lockdep_map);
 	lock_map_acquire(&lockdep_map);
 	trace_workqueue_execute_start(work);
+#ifdef CONFIG_SEC_DEBUG
+	secdbg_sched_msg("@%pS", worker->current_func);
+#endif
+
 	worker->current_func(work);
 	/*
 	 * While we must be careful to not use "work" after this, the trace

@@ -1062,7 +1062,7 @@ static void audit_log_execve_info(struct audit_context *context,
 						    len_max - len_buf);
 			if (len_tmp == -EFAULT) {
 				/* unable to copy from userspace */
-				send_sig(SIGKILL, current, 0);
+			send_sig(SIGKILL, current, 0);
 				goto out;
 			} else if (len_tmp == (len_max - len_buf)) {
 				/* buffer is not large enough */
@@ -1084,7 +1084,7 @@ static void audit_log_execve_info(struct audit_context *context,
 					len_full = (encode ?
 						    len_tmp * 2 : len_tmp);
 				p += len_tmp + 1;
-			}
+		}
 			len_buf += len_tmp;
 			buf_head[len_buf] = '\0';
 
@@ -1100,12 +1100,12 @@ static void audit_log_execve_info(struct audit_context *context,
 			 *       a new buffer */
 			if ((sizeof(abuf) + 8) > len_rem) {
 				len_rem = len_max;
-				audit_log_end(*ab);
+			audit_log_end(*ab);
 				*ab = audit_log_start(context,
 						      GFP_KERNEL, AUDIT_EXECVE);
-				if (!*ab)
+			if (!*ab)
 					goto out;
-			}
+		}
 
 			/* create the non-arg portion of the arg record */
 			len_tmp = 0;
@@ -1116,7 +1116,7 @@ static void audit_log_execve_info(struct audit_context *context,
 							sizeof(abuf) - len_tmp,
 							" a%d_len=%lu",
 							arg, len_full);
-				}
+		}
 				len_tmp += snprintf(&abuf[len_tmp],
 						    sizeof(abuf) - len_tmp,
 						    " a%d[%d]=", arg, iter++);
@@ -1145,10 +1145,10 @@ static void audit_log_execve_info(struct audit_context *context,
 				/* don't subtract the "2" because we still need
 				 * to add quotes to the remaining string */
 				len_abuf -= len_tmp;
-			}
+	}
 			len_buf -= len_tmp;
 			buf += len_tmp;
-		}
+}
 
 		/* ready to move to the next argument? */
 		if ((len_buf == 0) && !require_data) {
@@ -1164,7 +1164,7 @@ static void audit_log_execve_info(struct audit_context *context,
 
 out:
 	kfree(buf_head);
-}
+	}
 
 static void show_special(struct audit_context *context, int *call_panic)
 {
@@ -1329,6 +1329,9 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
 	/* tsk == current */
 	context->personality = tsk->personality;
 
+// [ SEC_SELINUX_PORTING_COMMON
+	if (context->major != __NR_setsockopt  && context->major != 294 ) {
+// ] SEC_SELINUX_PORTING_COMMON
 	ab = audit_log_start(context, GFP_KERNEL, AUDIT_SYSCALL);
 	if (!ab)
 		return;		/* audit_panic has been called */
@@ -1437,7 +1440,9 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
 	}
 
 	audit_log_proctitle(tsk, context);
-
+// [ SEC_SELINUX_PORTING_COMMON
+	} // End of context->major != __NR_setsockopt
+// ] SEC_SELINUX_PORTING_COMMON
 	/* Send end of event record to help user space know we are finished */
 	ab = audit_log_start(context, GFP_KERNEL, AUDIT_EOE);
 	if (ab)

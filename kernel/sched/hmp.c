@@ -22,6 +22,11 @@
 
 #include <trace/events/sched.h>
 
+#ifdef CONFIG_SEC_DEBUG_SUMMARY
+#include <linux/qcom/sec_debug.h>
+#include <linux/qcom/sec_debug_summary.h>
+#endif
+
 #define CSTATE_LATENCY_GRANULARITY_SHIFT (6)
 
 const char *task_event_names[] = {"PUT_PREV_TASK", "PICK_NEXT_TASK",
@@ -357,6 +362,18 @@ int num_clusters;
 
 unsigned int max_power_cost = 1;
 
+
+#ifdef CONFIG_SEC_DEBUG_SUMMARY
+void summary_set_lpm_info_cluster(struct sec_debug_summary_data_apss *apss)
+{
+	apss->aplpm.num_clusters = num_clusters;
+	pr_info("%s : 0x%llx\n", __func__, virt_to_phys((void *)sched_cluster));
+	pr_info("%s : offset 0x%lx\n", __func__, offsetof(struct sched_cluster, dstate));
+	apss->aplpm.p_cluster = virt_to_phys((void *)sched_cluster);
+	apss->aplpm.dstate_offset = offsetof(struct sched_cluster, dstate);
+}
+#endif
+
 struct sched_cluster init_cluster = {
 	.list			=	LIST_HEAD_INIT(init_cluster.list),
 	.id			=	0,
@@ -653,6 +670,19 @@ int sched_set_static_cpu_pwr_cost(int cpu, unsigned int cost)
 	return 0;
 }
 
+int sched_set_ignore_cstate_awareness(int cpu, int value)
+{
+	struct rq *rq = cpu_rq(cpu);
+
+	rq->ignore_cstate_awareness = value;
+	return 0;
+}
+
+int sched_get_ignore_cstate_awareness(int cpu)
+{
+	return cpu_rq(cpu)->ignore_cstate_awareness;
+}
+
 unsigned int sched_get_static_cpu_pwr_cost(int cpu)
 {
 	return cpu_rq(cpu)->static_cpu_pwr_cost;
@@ -721,6 +751,8 @@ unsigned int __read_mostly sysctl_sched_enable_thread_grouping;
 #define SCHED_NEW_TASK_WINDOWS 5
 
 #define SCHED_FREQ_ACCOUNT_WAIT_TIME 0
+
+unsigned int sysctl_sched_ilb_ctl = 0;
 
 /*
  * This governs what load needs to be used when reporting CPU busy time

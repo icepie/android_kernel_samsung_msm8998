@@ -620,8 +620,14 @@ static int dm_blk_ioctl(struct block_device *bdev, fmode_t mode,
 		if (r)
 			goto out;
 	}
-
-	r =  __blkdev_driver_ioctl(tgt_bdev, mode, cmd, arg);
+	if(!strcmp(tgt->type->name , "dirty") && 
+	          (tgt->type->ioctl         ) && 
+	          (cmd == 1                 )){
+		r = tgt->type->ioctl(tgt, cmd, arg);
+	}else{
+		r =  __blkdev_driver_ioctl(tgt_bdev, mode, cmd, arg);
+	}
+	
 out:
 	dm_put_live_table(md, srcu_idx);
 	return r;
@@ -2690,7 +2696,9 @@ static int dm_init_request_based_queue(struct mapped_device *md)
 	blk_queue_softirq_done(md->queue, dm_softirq_done);
 	blk_queue_prep_rq(md->queue, dm_prep_fn);
 
+#ifndef CONFIG_DM_NOT_USE_KDMWORKER
 	init_rq_based_worker_thread(md);
+#endif
 
 	elv_register_queue(md->queue);
 

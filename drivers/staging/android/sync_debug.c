@@ -156,8 +156,9 @@ static void sync_print_fence(struct seq_file *s, struct sync_fence *fence)
 		struct sync_pt *pt =
 			container_of(fence->cbs[i].sync_pt,
 				     struct sync_pt, base);
-
+		spin_lock_irqsave(pt->base.lock, flags);
 		sync_print_pt(s, pt, true);
+		spin_unlock_irqrestore(pt->base.lock, flags);
 	}
 
 	spin_lock_irqsave(&fence->wq.lock, flags);
@@ -251,4 +252,67 @@ void sync_dump(void)
 	}
 }
 
+void sync_target_dump_pt(struct seq_file *s, struct sync_pt *pt)
+{
+	struct sync_timeline *obj;
+	struct list_head *pos;
+
+	obj = sync_pt_parent(pt);
+
+	seq_printf(s, " timeout obj: %s %s",
+			obj->name, obj->ops->driver_name);
+
+	if (obj->ops->timeline_value_str) {
+		char value[64];
+
+		obj->ops->timeline_value_str(obj, value, sizeof(value));
+		seq_printf(s, ": %s", value);
+	}
+
+	seq_puts(s, "\n");
+
+	list_for_each(pos, &obj->child_list_head) {
+		struct sync_pt *_pt =
+			container_of(pos, struct sync_pt, child_list);
+		sync_print_pt(s, _pt, true);
+		if (_pt == pt)
+			seq_puts(s, "   ==> timeout pt\n");
+	}
+}
+void sync_target_dump(struct sync_fence *fence)
+{
+	struct seq_file s = {
+		.buf = sync_dump_buf,
+		.size = sizeof(sync_dump_buf) - 1,
+	};
+	struct sync_pt *pt;
+	unsigned long flags;
+	int i;
+
+	pr_err("timeout target fence: %s: %s (total pt num=%d)\n",
+			fence->name,
+			sync_status_str(atomic_read(&fence->status)),
+			fence->num_fences);
+
+	for (i = 0; i < fence->num_fences; ++i) {
+		pt = container_of(fence->cbs[i].sync_pt,
+				     struct sync_pt, base);
+		spin_lock_irqsave(pt->base.lock, flags);
+		sync_target_dump_pt(&s, pt);
+		spin_unlock_irqrestore(pt->base.lock, flags);
+	}
+
+	for (i = 0; i < s.count; i += DUMP_CHUNK) {
+		if ((s.count - i) > DUMP_CHUNK) {
+			char c = s.buf[i + DUMP_CHUNK];
+
+			s.buf[i + DUMP_CHUNK] = 0;
+			pr_cont("%s", s.buf + i);
+			s.buf[i + DUMP_CHUNK] = c;
+		} else {
+			s.buf[s.count] = 0;
+			pr_cont("%s", s.buf + i);
+		}
+	}
+}
 #endif

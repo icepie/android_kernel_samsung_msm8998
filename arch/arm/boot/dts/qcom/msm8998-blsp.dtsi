@@ -181,10 +181,9 @@
 			 <&clock_gcc clk_gcc_blsp1_qup5_i2c_apps_clk>;
 		qcom,i2c-dat = <&tlmm 87 0x00>;
 		qcom,i2c-clk = <&tlmm 88 0x00>;
-		pinctrl-names = "i2c_active", "i2c_sleep", "i2c_bitbang";
+		pinctrl-names = "i2c_active", "i2c_sleep";
 		pinctrl-0 = <&i2c_5_active>;
 		pinctrl-1 = <&i2c_5_sleep>;
-		pinctrl-2 = <&i2c_5_bitbang>;
 		status = "disabled";
 	};
 
@@ -207,10 +206,9 @@
 			 <&clock_gcc clk_gcc_blsp1_qup6_i2c_apps_clk>;
 		qcom,i2c-dat = <&tlmm 43 0x00>;
 		qcom,i2c-clk = <&tlmm 44 0x00>;
-		pinctrl-names = "i2c_active", "i2c_sleep", "i2c_bitbang";
+		pinctrl-names = "i2c_active", "i2c_sleep";
 		pinctrl-0 = <&i2c_6_active>;
 		pinctrl-1 = <&i2c_6_sleep>;
-		pinctrl-2 = <&i2c_6_bitbang>;
 		status = "disabled";
 	};
 
@@ -735,8 +733,8 @@
 		clocks = <&clock_gcc clk_gcc_blsp1_uart2_apps_clk>,
 		    <&clock_gcc clk_gcc_blsp1_ahb_clk>;
 		pinctrl-names = "sleep", "default";
-		pinctrl-0 = <&blsp1_uart2_sleep>;
-		pinctrl-1 = <&blsp1_uart2_active>;
+		pinctrl-0 = <&uart_wifidebug_sleep>;
+		pinctrl-1 = <&uart_wifidebug_default>;
 
 		qcom,msm-bus,name = "buart2";
 		qcom,msm-bus,num-cases = <2>;
@@ -752,19 +750,15 @@
 		reg = <0xC171000 0x200>,
 		    <0xC144000 0x25000>;
 		reg-names = "core_mem", "bam_mem";
-		interrupt-names = "core_irq", "bam_irq", "wakeup_irq";
+		interrupt-names = "core_irq", "bam_irq";
 		#address-cells = <0>;
 		interrupt-parent = <&blsp1_uart3_hs>;
-		interrupts = <0 1 2>;
+		interrupts = <0 1 >;
 		#interrupt-cells = <1>;
 		interrupt-map-mask = <0xffffffff>;
 		interrupt-map = <0 &intc 0 0 109 0
-			    1 &intc 0 0 238 0
-			    2 &tlmm 46 0>;
-
-		qcom,inject-rx-on-wakeup;
-		qcom,rx-char-to-inject = <0xFD>;
-
+			    1 &intc 0 0 238 0 >;
+			    
 		qcom,bam-tx-ep-pipe-index = <4>;
 		qcom,bam-rx-ep-pipe-index = <5>;
 		qcom,master-id = <86>;

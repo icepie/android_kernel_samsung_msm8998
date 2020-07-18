@@ -14,6 +14,7 @@
 #define MSM_SENSOR_INIT_H
 
 #include "msm_sensor.h"
+#include "msm_eeprom.h"
 
 struct msm_sensor_init_t {
 	struct mutex imutex;

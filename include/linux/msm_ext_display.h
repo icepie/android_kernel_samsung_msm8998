@@ -105,6 +105,10 @@ struct msm_ext_disp_intf_ops {
 	int (*notify)(struct platform_device *pdev,
 			enum msm_ext_disp_cable_state state);
 	int (*ack)(struct platform_device *pdev, u32 ack);
+#ifdef CONFIG_SEC_DISPLAYPORT
+	void (*set_audio_ch)(struct platform_device *pdev,
+			int ch);
+#endif
 };
 
 /**

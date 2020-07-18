@@ -658,7 +658,9 @@ static void process_ssid_range_report(uint8_t *buf, uint32_t len,
 	/* Don't account for pkt_id and length */
 	read_len += header_len - (2 * sizeof(uint32_t));
 
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Waiting for msg_mask_lock\n");
 	mutex_lock(&driver->msg_mask_lock);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Taken msg_mask_lock\n");
 	driver->max_ssid_count[peripheral] = header->count;
 	for (i = 0; i < header->count && read_len < len; i++) {
 		ssid_range = (struct diag_ssid_range_t *)ptr;
@@ -741,7 +743,9 @@ static void diag_build_time_mask_update(uint8_t *buf,
 		       __func__, range->ssid_first, range->ssid_last);
 		return;
 	}
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Waiting for msg_mask_lock\n");
 	mutex_lock(&driver->msg_mask_lock);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Taken msg_mask_lock\n");
 	build_mask = (struct diag_msg_mask_t *)(driver->build_time_mask->ptr);
 	num_items = range->ssid_last - range->ssid_first + 1;
 
@@ -792,6 +796,7 @@ static void diag_build_time_mask_update(uint8_t *buf,
 	driver->bt_msg_mask_tbl_count += 1;
 end:
 	mutex_unlock(&driver->msg_mask_lock);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Released msg_mask_lock\n");
 	return;
 }
 

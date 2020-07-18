@@ -209,6 +209,7 @@ enum clk_osm_trace_packet_id {
 #define TRACE_CTRL_ENABLE 1
 #define TRACE_CTRL_DISABLE 0
 #define TRACE_CTRL_ENABLE_WDOG_STATUS	BIT(30)
+#define TRACE_CTRL_ENABLE_WDOG_STATUS_MASK BIT(30)
 #define TRACE_CTRL_PACKET_TYPE_MASK BVAL(2, 1, 3)
 #define TRACE_CTRL_PACKET_TYPE_SHIFT 1
 #define TRACE_CTRL_PERIODIC_TRACE_EN_MASK BIT(3)
@@ -758,6 +759,53 @@ static int clk_osm_search_table(struct osm_entry *table, int entries, long rate)
 	return -EINVAL;
 }
 
+#ifdef CONFIG_SEC_DEBUG_APPS_CLK_LOGGING
+
+typedef struct {
+	uint64_t ktime;
+	uint64_t qtime;
+	uint64_t rate;
+} apps_clk_log_t;
+
+#define MAX_CLK_LOG_CNT (10)
+
+typedef struct {
+	uint32_t max_cnt;
+	uint32_t index;
+	apps_clk_log_t log[MAX_CLK_LOG_CNT];
+} cpuclk_log_t;
+
+cpuclk_log_t cpuclk_log[2] = {
+	[0] = {.max_cnt = MAX_CLK_LOG_CNT,},
+	[1] = {.max_cnt = MAX_CLK_LOG_CNT,},
+};
+
+static void clk_osm_add_log(struct clk_osm *cpuclk, unsigned long rate)
+{
+	cpuclk_log_t *clk = NULL;
+	apps_clk_log_t *log = NULL;
+	uint64_t idx = 0;
+
+	if (!WARN(cpuclk->cluster_num >= 2,
+		"%s : invalid cluster_num(%u), dbg_name(%s)\n",
+		__func__, cpuclk->cluster_num, cpuclk->c.dbg_name)) {
+		clk = &cpuclk_log[cpuclk->cluster_num];
+		idx = clk->index;
+		log = &clk->log[idx];
+		log->ktime = local_clock();
+		log->qtime = arch_counter_get_cntvct();
+		log->rate = rate;
+		clk->index = (clk->index + 1) % MAX_CLK_LOG_CNT;
+	}
+}
+
+void* clk_osm_get_log_addr(void)
+{
+	return (void *)&cpuclk_log;
+}
+EXPORT_SYMBOL(clk_osm_get_log_addr);
+#endif
+
 static int clk_osm_set_rate(struct clk *c, unsigned long rate)
 {
 	struct clk_osm *cpuclk = to_clk_osm(c);
@@ -800,7 +848,9 @@ static int clk_osm_set_rate(struct clk *c, unsigned long rate)
 
 	/* Make sure the write goes through before proceeding */
 	clk_osm_mb(cpuclk, OSM_BASE);
-
+#ifdef CONFIG_SEC_DEBUG_APPS_CLK_LOGGING
+	clk_osm_add_log(cpuclk, rate);
+#endif
 	return 0;
 }
 
@@ -3263,6 +3313,18 @@ static int cpu_clock_osm_driver_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
+	if (msm8998_v2) {
+		/* Enable OSM WDOG registers */
+		clk_osm_masked_write_reg(&pwrcl_clk,
+				TRACE_CTRL_ENABLE_WDOG_STATUS,
+				TRACE_CTRL,
+				TRACE_CTRL_ENABLE_WDOG_STATUS_MASK);
+		clk_osm_masked_write_reg(&perfcl_clk,
+				TRACE_CTRL_ENABLE_WDOG_STATUS,
+				TRACE_CTRL,
+				TRACE_CTRL_ENABLE_WDOG_STATUS_MASK);
+	}
+
 	if (pwrcl_clk.vbases[EFUSE_BASE]) {
 		/* Multiple speed-bins are supported */
 		pte_efuse = readl_relaxed(pwrcl_clk.vbases[EFUSE_BASE]);
@@ -3407,11 +3469,12 @@ static int cpu_clock_osm_driver_probe(struct platform_device *pdev)
 	spin_lock_init(&perfcl_clk.lock);
 
 	pwrcl_clk.panic_notifier.notifier_call = clk_osm_panic_callback;
-	atomic_notifier_chain_register(&panic_notifier_list,
-				       &pwrcl_clk.panic_notifier);
+/*CONFIG_SEC_DEBUG : temp for processing panic*/	
+//	atomic_notifier_chain_register(&panic_notifier_list,
+//				       &pwrcl_clk.panic_notifier);
 	perfcl_clk.panic_notifier.notifier_call = clk_osm_panic_callback;
-	atomic_notifier_chain_register(&panic_notifier_list,
-				       &perfcl_clk.panic_notifier);
+//	atomic_notifier_chain_register(&panic_notifier_list,
+//				       &perfcl_clk.panic_notifier);
 
 	rc = of_msm_clock_register(pdev->dev.of_node, cpu_clocks_osm,
 				   ARRAY_SIZE(cpu_clocks_osm));

@@ -3701,7 +3701,7 @@ void ipa3_inc_client_enable_clks(struct ipa_active_client_logging_info *id)
 	ipa3_ctx->ipa3_active_clients.cnt++;
 	if (ipa3_ctx->ipa3_active_clients.cnt == 1)
 		ipa3_enable_clks();
-	IPADBG_LOW("active clients = %d\n", ipa3_ctx->ipa3_active_clients.cnt);
+	IPADBG("active clients = %d\n", ipa3_ctx->ipa3_active_clients.cnt);
 	ipa3_active_clients_unlock();
 }
 
@@ -3728,7 +3728,7 @@ int ipa3_inc_client_enable_clks_no_block(struct ipa_active_client_logging_info
 	}
 	ipa3_active_clients_log_inc(id, true);
 	ipa3_ctx->ipa3_active_clients.cnt++;
-	IPADBG_LOW("active clients = %d\n", ipa3_ctx->ipa3_active_clients.cnt);
+	IPADBG("active clients = %d\n", ipa3_ctx->ipa3_active_clients.cnt);
 bail:
 	ipa3_active_clients_trylock_unlock(&flags);
 
@@ -3753,7 +3753,7 @@ void ipa3_dec_client_disable_clks(struct ipa_active_client_logging_info *id)
 	ipa3_active_clients_lock();
 	ipa3_active_clients_log_dec(id, false);
 	ipa3_ctx->ipa3_active_clients.cnt--;
-	IPADBG_LOW("active clients = %d\n", ipa3_ctx->ipa3_active_clients.cnt);
+	IPADBG("active clients = %d\n", ipa3_ctx->ipa3_active_clients.cnt);
 	if (ipa3_ctx->ipa3_active_clients.cnt == 0) {
 		if (ipa3_ctx->tag_process_before_gating) {
 			ipa3_ctx->tag_process_before_gating = false;
@@ -3928,8 +3928,8 @@ void ipa3_suspend_handler(enum ipa_irq_type interrupt,
 					) {
 					IPA_ACTIVE_CLIENTS_INC_EP(
 						ipa3_ctx->ep[i].client);
-					IPADBG_LOW("Pipes un-suspended.\n");
-					IPADBG_LOW("Enter poll mode.\n");
+					IPADBG("Pipes un-suspended.\n");
+					IPADBG("Enter poll mode.\n");
 					atomic_set(
 					&ipa3_ctx->transport_pm.dec_clients,
 					1);
@@ -4266,6 +4266,7 @@ static int ipa3_post_init(const struct ipa3_plat_drv_res *resource_p,
 	/* Prevent consequent calls from trying to load the FW again. */
 	if (ipa3_ctx->ipa_initialization_complete)
 		return 0;
+
 	/* move proxy vote for modem on ipa3_post_init */
 	IPA_ACTIVE_CLIENTS_INC_SPECIAL("PROXY_CLK_VOTE");
 

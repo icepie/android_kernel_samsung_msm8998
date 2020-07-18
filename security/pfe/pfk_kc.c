@@ -604,7 +604,7 @@ void pfk_kc_load_key_end(const unsigned char *key, size_t key_size,
 		const unsigned char *salt, size_t salt_size)
 {
 	struct kc_entry *entry = NULL;
-	struct task_struct *tmp_pending = NULL;
+	struct task_struct* tmp_pending = NULL;
 	int ref_cnt = 0;
 
 	if (!kc_is_ready())

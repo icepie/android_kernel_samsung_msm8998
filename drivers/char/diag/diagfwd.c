@@ -479,7 +479,9 @@ void diag_update_pkt_buffer(unsigned char *buf, uint32_t len, int type)
 		return;
 	}
 
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Waiting for diagchar_mutex\n");
 	mutex_lock(&driver->diagchar_mutex);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Taken diagchar_mutex\n");
 	if (CHK_OVERFLOW(ptr, ptr, ptr + max_len, len)) {
 		memcpy(ptr, temp , len);
 		*length = len;
@@ -489,13 +491,16 @@ void diag_update_pkt_buffer(unsigned char *buf, uint32_t len, int type)
 			 __func__, len, type);
 	}
 	mutex_unlock(&driver->diagchar_mutex);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Released diagchar_mutex\n");
 }
 
 void diag_update_userspace_clients(unsigned int type)
 {
 	int i;
 
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Waiting for diagchar_mutex\n");
 	mutex_lock(&driver->diagchar_mutex);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Taken diagchar_mutex\n");
 	for (i = 0; i < driver->num_clients; i++)
 		if (driver->client_map[i].pid != 0 &&
 			!(driver->data_ready[i] & type)) {
@@ -504,14 +509,17 @@ void diag_update_userspace_clients(unsigned int type)
 		}
 	wake_up_interruptible(&driver->wait_q);
 	mutex_unlock(&driver->diagchar_mutex);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Released diagchar_mutex\n");
 }
 
 void diag_update_md_clients(unsigned int type)
 {
 	int i, j;
 
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Waiting for diagchar_mutex\n");
 	mutex_lock(&driver->diagchar_mutex);
 	mutex_lock(&driver->md_session_lock);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Taken diagchar_mutex\n");
 	for (i = 0; i < NUM_MD_SESSIONS; i++) {
 		if (driver->md_session_map[i] != NULL)
 			for (j = 0; j < driver->num_clients; j++) {
@@ -530,12 +538,15 @@ void diag_update_md_clients(unsigned int type)
 	mutex_unlock(&driver->md_session_lock);
 	wake_up_interruptible(&driver->wait_q);
 	mutex_unlock(&driver->diagchar_mutex);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Released diagchar_mutex\n");
 }
 void diag_update_sleeping_process(int process_id, int data_type)
 {
 	int i;
 
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Waiting for diagchar_mutex\n");
 	mutex_lock(&driver->diagchar_mutex);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Taken diagchar_mutex\n");
 	for (i = 0; i < driver->num_clients; i++)
 		if (driver->client_map[i].pid == process_id) {
 			if (!(driver->data_ready[i] & data_type)) {
@@ -546,6 +557,7 @@ void diag_update_sleeping_process(int process_id, int data_type)
 		}
 	wake_up_interruptible(&driver->wait_q);
 	mutex_unlock(&driver->diagchar_mutex);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,"Released diagchar_mutex\n");
 }
 
 static int diag_send_data(struct diag_cmd_reg_t *entry, unsigned char *buf,

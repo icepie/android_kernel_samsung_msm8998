@@ -104,6 +104,11 @@ int blkcipher_walk_done(struct blkcipher_desc *desc,
 	unsigned int n; /* bytes processed */
 	bool more;
 
+#ifdef CONFIG_CRYPTO_FIPS
+	if (unlikely(in_fips_err())) 
+		return (-EACCES);
+#endif
+
 	if (unlikely(err < 0))
 		goto finish;
 
@@ -322,6 +327,11 @@ EXPORT_SYMBOL_GPL(blkcipher_walk_phys);
 static int blkcipher_walk_first(struct blkcipher_desc *desc,
 				struct blkcipher_walk *walk)
 {
+#ifdef CONFIG_CRYPTO_FIPS
+	if (unlikely(in_fips_err())) 
+		return (-EACCES);
+#endif
+
 	if (WARN_ON_ONCE(in_irq()))
 		return -EDEADLK;
 
@@ -446,6 +456,10 @@ static int async_encrypt(struct ablkcipher_request *req)
 		.flags = req->base.flags,
 	};
 
+#ifdef CONFIG_CRYPTO_FIPS
+	if (unlikely(in_fips_err())) 
+		return (-EACCES);
+#endif
 
 	return alg->encrypt(&desc, req->dst, req->src, req->nbytes);
 }
@@ -459,6 +473,11 @@ static int async_decrypt(struct ablkcipher_request *req)
 		.info = req->info,
 		.flags = req->base.flags,
 	};
+
+#ifdef CONFIG_CRYPTO_FIPS
+	if (unlikely(in_fips_err())) 
+		return (-EACCES);
+#endif
 
 	return alg->decrypt(&desc, req->dst, req->src, req->nbytes);
 }
@@ -621,6 +640,11 @@ struct crypto_instance *skcipher_geniv_alloc(struct crypto_template *tmpl,
 	struct crypto_alg *alg;
 	int err;
 
+#ifdef CONFIG_CRYPTO_FIPS
+	if (unlikely(in_fips_err())) 
+		return ERR_PTR(-EACCES);
+#endif
+
 	algt = crypto_get_attr_type(tb);
 	if (IS_ERR(algt))
 		return ERR_CAST(algt);
@@ -742,6 +766,11 @@ int skcipher_geniv_init(struct crypto_tfm *tfm)
 {
 	struct crypto_instance *inst = (void *)tfm->__crt_alg;
 	struct crypto_ablkcipher *cipher;
+
+#ifdef CONFIG_CRYPTO_FIPS
+	if (unlikely(in_fips_err())) 
+		return (-EACCES);
+#endif
 
 	cipher = crypto_spawn_skcipher(crypto_instance_ctx(inst));
 	if (IS_ERR(cipher))

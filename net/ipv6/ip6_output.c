@@ -1347,7 +1347,15 @@ emsgsize:
 	 */
 	if (transhdrlen && sk->sk_protocol == IPPROTO_UDP &&
 	    headersize == sizeof(struct ipv6hdr) &&
+	/* IPA HW support udp checksum offloading. So network stack try to offload UDP packet checksum to IPA HW
+	 * but it fail because of fragmentation and mtu size. In this case, we have to consider next
+	 * ESP protocol header and should add 'dst_exthdrlen' value to compute UDP checksum in network stack normally
+	 * If next destination is xfrm, dst_exthdrlen was 8
+	 */
+#if 0
 	    length < mtu - headersize &&
+#endif
+	    length < mtu - headersize - dst_exthdrlen &&
 	    !(flags & MSG_MORE) &&
 	    rt->dst.dev->features & NETIF_F_V6_CSUM)
 		csummode = CHECKSUM_PARTIAL;

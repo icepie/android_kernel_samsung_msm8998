@@ -143,6 +143,7 @@ struct sdhci_msm_pltfm_data {
 	struct sdhci_msm_pin_data *pin_data;
 	struct sdhci_pinctrl_data *pctrl_data;
 	int status_gpio; /* card detection GPIO that is configured as IRQ */
+	int tflash_en_gpio; /* card enable GPIO */
 	struct sdhci_msm_bus_voting_data *voting_data;
 	u32 *sup_clk_table;
 	unsigned char sup_clk_cnt;
@@ -220,6 +221,9 @@ struct sdhci_msm_host {
 	int pm_qos_prev_cpu;
 	struct device_attribute pm_qos_group_enable_attr;
 	struct device_attribute pm_qos_group_status_attr;
+#ifdef CONFIG_SEC_FACTORY
+	struct device_attribute vector_screen_attr;
+#endif
 	bool pm_qos_group_enable;
 	struct sdhci_msm_pm_qos_irq pm_qos_irq;
 	bool tuning_in_progress;
@@ -227,6 +231,7 @@ struct sdhci_msm_host {
 	const struct sdhci_msm_offset *offset;
 	bool core_3_0v_support;
 	bool pltfm_init_done;
+	u8 phase_on_tuning;
 };
 
 extern char *saved_command_line;

@@ -89,8 +89,63 @@ struct msm_sensor_ctrl_t {
 	uint32_t set_mclk_23880000;
 	uint8_t is_csid_tg_mode;
 	uint32_t is_secure;
-	uint8_t bypass_video_node_creation;
 };
+
+#if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
+#define TRUE	1
+#define FALSE	0
+
+#define HW_PARAMS_MI_INVALID	0
+#define HW_PARAMS_MI_VALID	1
+#define HW_PARAMS_MIR_ERR_0	2
+#define HW_PARAMS_MIR_ERR_1	3
+
+#define CAM_HW_PARM_CLK_CNT 2
+#define CAM_HW_PARM_CC_CLK_CNT 4
+
+#define CAM_HW_ERR_CNT_FILE_PATH "/data/camera/camera_hw_err_cnt.dat"
+
+typedef enum
+{
+	HW_PARAMS_CREATED = 0,
+	HW_PARAMS_NOT_CREATED,
+} hw_params_check_type;
+
+struct cam_hw_param {
+	u32 i2c_sensor_err_cnt;
+	u32 i2c_comp_err_cnt;
+	u32 i2c_ois_err_cnt;
+	u32 i2c_af_err_cnt;
+	u32 mipi_sensor_err_cnt;
+	u32 mipi_comp_err_cnt;
+	u16 i2c_chk;
+	u16 mipi_chk;
+	u16 comp_chk;
+	u16 need_update_to_file;
+} __attribute__((__packed__));
+
+struct cam_hw_param_collector {
+	struct cam_hw_param rear_hwparam;
+	struct cam_hw_param front_hwparam;
+	struct cam_hw_param iris_hwparam;
+	struct cam_hw_param rear2_hwparam;
+} __attribute__((__packed__));
+
+void msm_is_sec_init_all(void);
+void msm_is_sec_dbg_check(void);
+void msm_is_sec_init_err_cnt_file(struct cam_hw_param *hw_param);
+void msm_is_sec_copy_err_cnt_from_file(void);
+void msm_is_sec_copy_err_cnt_to_file(void);
+
+int msm_is_sec_file_exist(char *filename, hw_params_check_type chktype);
+int msm_is_sec_get_secure_mode(uint32_t **sec_is_secure);
+int msm_is_sec_get_sensor_position(uint32_t **sensor_position);
+int msm_is_sec_get_sensor_comp_mode(uint32_t **sensor_comp_mode);
+int msm_is_sec_get_rear_hw_param(struct cam_hw_param **hw_param);
+int msm_is_sec_get_front_hw_param(struct cam_hw_param **hw_param);
+int msm_is_sec_get_iris_hw_param(struct cam_hw_param **hw_param);
+int msm_is_sec_get_rear2_hw_param(struct cam_hw_param **hw_param);
+#endif
 
 int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp);
 
@@ -98,9 +153,11 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl);
 
 int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl);
 
-int msm_sensor_check_id(struct msm_sensor_ctrl_t *s_ctrl);
-
 int msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl);
+
+#if 1 //defined(CONFIG_SAMSUNG_SECURE_CAMERA)
+int msm_sensor_check_resolution(struct msm_sensor_ctrl_t *s_ctrl);
+#endif
 
 int msm_sensor_update_cfg(struct msm_sensor_ctrl_t *s_ctrl);
 
@@ -123,5 +180,9 @@ int32_t msm_sensor_init_gpio_pin_tbl(struct device_node *of_node,
 long msm_sensor_subdev_fops_ioctl(struct file *file,
 	unsigned int cmd,
 	unsigned long arg);
+#endif
+#if defined(CONFIG_CAMERA_IRIS)
+extern void ir_led_on(int i);
+extern void ir_led_off(void);
 #endif
 #endif

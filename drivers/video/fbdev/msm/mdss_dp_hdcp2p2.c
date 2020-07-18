@@ -708,7 +708,7 @@ static int dp_hdcp2p2_cp_irq(void *input)
 		goto error;
 	}
 
-	pr_debug("sink_rx_status=0x%x\n", ctrl->sink_rx_status);
+	pr_info("sink_rx_status=0x%x\n", ctrl->sink_rx_status);
 
 	if (!ctrl->sink_rx_status) {
 		pr_debug("not a hdcp 2.2 irq\n");
@@ -892,6 +892,7 @@ error:
 
 static bool dp_hdcp2p2_supported(struct dp_hdcp2p2_ctrl *ctrl)
 {
+#if 1/*ndef CONFIG_SEC_DISPLAYPORT*/
 	struct edp_cmd cmd = {0};
 	const u32 offset = 0x6921d;
 	u8 buf[3];
@@ -914,6 +915,50 @@ static bool dp_hdcp2p2_supported(struct dp_hdcp2p2_ctrl *ctrl)
 
 error:
 	return false;
+#else
+
+#define HDCP2P2_RXCAPS_LEN		3
+
+	struct edp_cmd cmd = {0};
+	const u32 offset = 0x6921d;
+	u8 buf[HDCP2P2_RXCAPS_LEN];
+	u32 rxcaps = 0;
+	u32 hdcp_capable = 0, i;
+	bool ret = false;
+
+	cmd.read = 1;
+	cmd.addr = offset;
+	cmd.len = ARRAY_SIZE(buf);
+	cmd.out_buf = buf;
+
+	if (dp_aux_read(ctrl->init_data.cb_data, &cmd)) {
+		pr_err("rxcaps read failed\n");
+		goto exit;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(buf); i++) {
+		pr_debug("buf[%d]: 0x%02x\n", i, buf[i]);
+		rxcaps |= (u32)buf[i] << ((HDCP2P2_RXCAPS_LEN - (i+1))*8);
+	}
+	pr_info("rxcaps: 0x%06x\n", rxcaps);
+
+	if ((rxcaps >> 16/*VERSION*/) != 0x2) {
+		pr_info("hdcp_version is not 0x2\n");
+		goto exit;
+	}
+
+	hdcp_capable = rxcaps & BIT(1);
+	if (!hdcp_capable) {
+		pr_info("hdcp_capable is not set\n");
+		goto exit;
+	}
+
+	ret = true;
+
+exit:
+	pr_debug("ret(%d)\n", ret);
+	return ret;
+#endif
 }
 
 struct hdcp_ops *dp_hdcp2p2_start(void *input)

@@ -72,6 +72,9 @@ snd-soc-max98095-objs := max98095.o
 snd-soc-max98357a-objs := max98357a.o
 snd-soc-max98925-objs := max98925.o
 snd-soc-max9850-objs := max9850.o
+snd-soc-max98506-objs := max98506.o
+snd-soc-maxim-dsm-objs := maxim_dsm.o
+snd-soc-maxim-dsm-cal-objs := maxim_dsm_cal.o maxim_dsm_power.o
 snd-soc-mc13783-objs := mc13783.o
 snd-soc-ml26124-objs := ml26124.o
 snd-soc-hdmi-codec-objs := hdmi.o
@@ -145,7 +148,11 @@ ifeq ($(CONFIG_COMMON_CLK_QCOM), y)
 endif
 snd-soc-wcd-cpe-objs := wcd_cpe_services.o wcd_cpe_core.o
 snd-soc-wsa881x-objs := wsa881x.o wsa881x-tables.o wsa881x-regmap.o wsa881x-temp-sensor.o
-snd-soc-wcd-mbhc-objs := wcd-mbhc-v2.o
+ifeq ($(CONFIG_SND_SOC_WCD_MBHC_CCIC_ADAPTOR_JACK_DET), y) 
+	snd-soc-wcd-mbhc-objs := wcd-mbhc-v2-usbc.o
+else 
+	snd-soc-wcd-mbhc-objs := wcd-mbhc-v2.o
+endif 
 snd-soc-wsa881x-analog-objs := wsa881x-analog.o wsa881x-tables-analog.o
 snd-soc-wsa881x-analog-objs += wsa881x-regmap-analog.o wsa881x-irq.o
 snd-soc-wcd-dsp-utils-objs := wcd-dsp-utils.o
@@ -291,6 +298,9 @@ obj-$(CONFIG_SND_SOC_MAX98095)	+= snd-soc-max98095.o
 obj-$(CONFIG_SND_SOC_MAX98357A)	+= snd-soc-max98357a.o
 obj-$(CONFIG_SND_SOC_MAX98925)	+= snd-soc-max98925.o
 obj-$(CONFIG_SND_SOC_MAX9850)	+= snd-soc-max9850.o
+obj-$(CONFIG_SND_SOC_MAX98506)	+= snd-soc-max98506.o
+obj-$(CONFIG_SND_SOC_MAXIM_DSM)	+= snd-soc-maxim-dsm.o
+obj-$(CONFIG_SND_SOC_MAXIM_DSM_CAL)	+= snd-soc-maxim-dsm-cal.o
 obj-$(CONFIG_SND_SOC_MC13783)	+= snd-soc-mc13783.o
 obj-$(CONFIG_SND_SOC_ML26124)	+= snd-soc-ml26124.o
 obj-$(CONFIG_SND_SOC_HDMI_CODEC) += snd-soc-hdmi-codec.o
@@ -422,8 +432,12 @@ obj-$(CONFIG_SND_SOC_WM_ADSP)	+= snd-soc-wm-adsp.o
 obj-$(CONFIG_SND_SOC_WM_HUBS)	+= snd-soc-wm-hubs.o
 obj-$(CONFIG_SND_SOC_MSM_STUB)  += snd-soc-msm-stub.o
 
+# DBMDx
+obj-$(CONFIG_SND_SOC_DBMDX)	+= dbmdx/
+
 # Amp
 obj-$(CONFIG_SND_SOC_MAX9877)	+= snd-soc-max9877.o
 obj-$(CONFIG_SND_SOC_TPA6130A2)	+= snd-soc-tpa6130a2.o
+obj-$(CONFIG_SND_SOC_TFA9896)	+= tfa9896/
 obj-y += sdm660_cdc/
 obj-y += msm_sdw/

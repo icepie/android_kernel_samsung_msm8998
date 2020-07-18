@@ -262,7 +262,7 @@ static int msm_jpeg_init_dev(struct platform_device *pdev)
 		goto fail_4;
 	}
 
-	platform_set_drvdata(pdev, msm_jpeg_device_p);
+	platform_set_drvdata(pdev, &msm_jpeg_device_p);
 
 	JPEG_DBG("%s %s%d: success\n", __func__, MSM_JPEG_NAME, pdev->id);
 

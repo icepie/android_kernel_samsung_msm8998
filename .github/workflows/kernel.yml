@@ -2,9 +2,9 @@ name: Linux kernel Build
 
 on:
   push:
-    branches: [ pp ]
+    branches: [ dev ]
   pull_request:
-    branches: [ pp ]
+    branches: [ dev ]
 
 jobs:
   build:

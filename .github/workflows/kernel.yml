@@ -19,5 +19,5 @@ jobs:
       run: ./build_kernel_64.sh
     - uses: actions/upload-artifact@v1
       with:
-        name: Image-gz-dtb
+        name: Image-gz-dtb.zip
         path: arch/arm64/boot/

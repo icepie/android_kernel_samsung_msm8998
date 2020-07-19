@@ -1,0 +1,24 @@
+
+name: Linux kernel Builder
+
+on:
+  push:
+    branches: [ pie ]
+  pull_request:
+    branches: [ pie ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: aarch64 toolchain
+      run: sudo apt-get install ccache && mkdir -p ../PLATFORM/prebuilts/gcc/linux-x86/aarch64 && git clone  https://github.com/djb77/aarch64-linux-android-4.9 ../PLATFORM/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
+    - name: make kernel
+      run: ./build_kernel_64.sh
+    - uses: actions/upload-artifact@v1
+      with:
+        name: Image-gz-dtb
+        path: out/arch/arm64/boot/

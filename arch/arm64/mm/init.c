@@ -143,8 +143,7 @@ int pfn_valid(unsigned long pfn)
 
 	if ((addr >> PAGE_SHIFT) != pfn)
 		return 0;
-	return (pfn & PFN_MASK) == pfn && membloc
-		k_is_map_memory(addrT);
+	return (pfn & PFN_MASK) == pfn && memblock_is_map_memory(addr);
 
 }
 EXPORT_SYMBOL(pfn_valid);

@@ -303,7 +303,7 @@
 					dev = "/dev/block/bootdevice/by-name/system";
 					type = "ext4";
 					mnt_flags = "ro,errors=panic";
-					fsmgr_flags = "wait,verify";
+					fsmgr_flags = "wait";
 					status = "ok";
 				};
 			};
@@ -3345,4 +3345,3 @@
 #include "msm8998-audio.dtsi"
 #include "msm-smb138x.dtsi"
 #include "msm8998-sde.dtsi"
-

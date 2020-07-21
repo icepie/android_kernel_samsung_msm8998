@@ -36,7 +36,11 @@ dtb-y = msm8998-sec-dreamq-chn-r03.dtb \
 endif
 
 ifeq ($(filter y,$(CONFIG_MACH_DREAM2QLTE_CHNZC) $(CONFIG_MACH_DREAM2QLTE_CHN_LDU)),y)
-dtb-y = msm8998-sec-dream2q-chn-r12.dtb 
+dtb-y = msm8998-sec-dream2q-chn-r03.dtb \
+					msm8998-sec-dream2q-chn-r06.dtb \
+					msm8998-sec-dream2q-chn-r07.dtb \
+					msm8998-sec-dream2q-chn-r09.dtb \
+					msm8998-sec-dream2q-chn-r12.dtb
 endif
 
 ifeq ($(filter y,$(CONFIG_MACH_DREAMQLTE_CHNHK)),y)

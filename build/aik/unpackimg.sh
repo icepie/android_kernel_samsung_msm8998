@@ -359,6 +359,9 @@ else
   cd ..;
 fi;
 
+# Fix permissions
+chmod -R 777 ramdisk split_img 
+
 echo " ";
 echo "Done!";
 exit 0;

@@ -94,3 +94,7 @@ all.config
 
 # fetched Android config fragments
 android/configs/android-*.cfg
+
+# aik for build boot.img
+*-zImage
+*-ramdisk.cpio*

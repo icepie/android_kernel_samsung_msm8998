@@ -1,0 +1,8 @@
+#.softap.info
+DualBandConcurrency=yes
+DualInterface=yes
+5G=yes
+maxClient=10
+PowerSave=yes
+HalFn_setCountryCodeHal=yes
+HalFn_getValidChannels=yes

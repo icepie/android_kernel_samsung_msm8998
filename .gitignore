@@ -98,3 +98,4 @@ android/configs/android-*.cfg
 # aik for build boot.img
 *-zImage
 *-ramdisk.cpio*
+*boot.img

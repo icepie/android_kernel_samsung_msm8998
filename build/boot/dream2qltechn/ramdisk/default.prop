@@ -4,9 +4,9 @@
 ro.actionable_compatible_property.enabled=false
 persist.security.ams.enforcing=1
 ro.oem_unlock_supported=1
-ro.secure=1
+ro.secure=0
 security.perf_harden=1
-ro.adb.secure=1
+ro.adb.secure=0
 ro.allow.mock.location=0
 ro.debuggable=0
 ro.telephony.default_network=9,1

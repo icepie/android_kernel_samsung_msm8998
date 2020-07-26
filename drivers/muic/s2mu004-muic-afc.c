@@ -332,6 +332,8 @@ struct afc_init_data_s {
 };
 struct afc_init_data_s afc_init_data;
 
+static void s2mu004_vdnmon_irq_mask(struct s2mu004_muic_data *muic_data, int enable);
+
 bool muic_check_is_hv_dev(struct s2mu004_muic_data *muic_data)
 {
 	bool ret = false;
@@ -456,6 +458,8 @@ void s2mu004_hv_muic_reset_hvcontrol_reg(struct s2mu004_muic_data *muic_data)
 	s2mu004_hv_muic_write_reg(i2c, 0x4a, 0x00);
 	s2mu004_hv_muic_write_reg(i2c, 0x5f, 0x01);
 
+	s2mu004_vdnmon_irq_mask(muic_data, 0);
+
 	muic_data->is_afc_muic_prepare = false;
 	s2mu004_muic_set_afc_ready(muic_data, false);
 
@@ -491,6 +495,17 @@ static int s2mu004_hv_muic_state_maintain(struct s2mu004_muic_data *muic_data)
 	return ret;
 }
 
+static void s2mu004_vdnmon_irq_mask(struct s2mu004_muic_data *muic_data, int enable)
+{
+	pr_info("%s: irq enable: %d\n", __func__, enable);
+	if (enable)
+		s2mu004_muic_hv_update_reg(muic_data->i2c, S2MU004_REG_AFC_INT_MASK,
+			0x00, 0x02, 0);
+	else
+		s2mu004_muic_hv_update_reg(muic_data->i2c, S2MU004_REG_AFC_INT_MASK,
+			0x02, 0x02, 0);
+}
+
 static void s2mu004_mpnack_irq_mask(struct s2mu004_muic_data *muic_data, int enable)
 {
 	pr_info("%s: irq enable: %d\n", __func__, enable);
@@ -522,6 +537,7 @@ void s2mu004_hv_muic_set_afc_after_prepare(struct s2mu004_muic_data *muic_data)
 
 		muic_data->retry_cnt = 0;
 		s2mu004_mpnack_irq_mask(muic_data, 0);
+		s2mu004_vdnmon_irq_mask(muic_data, 0);
 		s2mu004_hv_muic_write_reg(muic_data->i2c, 0x5f, 0x05);
 		s2mu004_hv_muic_write_reg(muic_data->i2c, 0x4A, 0x0e);
 		schedule_delayed_work(&muic_data->afc_send_mpnack, msecs_to_jiffies(2000));
@@ -868,6 +884,7 @@ static bool muic_check_status_vbadc
 
 	if (afc_data->status_vbadc == VBADC_AFC_9V) {
 		switch (vbadc) {
+		case VBADC_7_7V_8_3V:
 		case VBADC_8_7V_9_3V:
 		case VBADC_9_7V_10_3V:
 			ret = true;
@@ -879,7 +896,6 @@ static bool muic_check_status_vbadc
 
 	if (afc_data->status_vbadc == VBADC_AFC_ERR_V_NOT_0) {
 		switch (vbadc) {
-		case VBADC_7_7V_8_3V:
 		case VBADC_10_7V_11_3V:
 		case VBADC_11_7V_12_3V:
 		case VBADC_12_7V_13_3V:
@@ -898,7 +914,6 @@ static bool muic_check_status_vbadc
 
 	if (afc_data->status_vbadc == VBADC_AFC_ERR_V) {
 		switch (vbadc) {
-		case VBADC_7_7V_8_3V:
 		case VBADC_10_7V_11_3V:
 		case VBADC_11_7V_12_3V:
 		case VBADC_12_7V_13_3V:
@@ -1273,6 +1288,7 @@ void s2mu004_muic_prepare_afc_charger(struct s2mu004_muic_data *muic_data)
 	s2mu004_write_reg(i2c, 0x49, 0xa1);
 	s2mu004_write_reg(i2c, 0x4a, 0x06);
 	s2mu004_muic_set_afc_ready(muic_data, true);
+	s2mu004_vdnmon_irq_mask(muic_data, 1);
 }
 
 /* TA setting in s2mu004-muic.c */
@@ -1530,6 +1546,8 @@ void s2mu004_hv_muic_initialize(struct s2mu004_muic_data *muic_data)
 	s2mu004_hv_muic_write_reg(muic_data->i2c, 0x49, 0x00);
 	s2mu004_hv_muic_write_reg(muic_data->i2c, 0x4a, 0x00);
 	s2mu004_hv_muic_write_reg(muic_data->i2c, 0x5f, 0x01);
+
+	s2mu004_vdnmon_irq_mask(muic_data, 0);
 
 	afc_init_data.muic_data = muic_data;
 	INIT_WORK(&afc_init_data.muic_afc_init_work, s2mu004_hv_muic_detect_after_charger_init);

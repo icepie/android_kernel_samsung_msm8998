@@ -173,7 +173,7 @@
 #define DBMDX_USLEEP_SPI_D2_AFTER_RESET		5000
 #define DBMDX_USLEEP_SPI_D2_AFTER_SBL		10000
 #define DBMDX_USLEEP_SPI_D2_AFTER_BOOT		10000
-#define DBMDX_USLEEP_SPI_D4_AFTER_BOOT		10000
+#define DBMDX_USLEEP_SPI_D4_AFTER_BOOT		15000
 #define DBMDX_USLEEP_SPI_D4_AFTER_RESET		15000
 #define DBMDX_USLEEP_SPI_D4_POST_PLL		2000
 
@@ -232,6 +232,8 @@
 #define DBMDX_LOAD_MODEL_FROM_MEMORY		0x0004
 
 #define DBMDX_NO_EXT_DETECTION_MODE_PARAMS	0x0000
+
+#define DBMDX_WAKELOCK_IRQ_TIMEOUT_MS		5000
 
 struct chip_interface;
 
@@ -296,6 +298,7 @@ struct va_flags {
 	int	okg_amodel_len;
 	bool	okg_a_model_enabled;
 	enum	dbmdx_okg_recognition_mode okg_recognition_mode;
+	u8	okg_amodel_checksum[4];
 #endif
 #ifdef DBMDX_VA_NS_SUPPORT
 	const char	*va_last_loaded_asrp_params_file_name;
@@ -338,6 +341,7 @@ struct amodel_info {
 	ssize_t	amodel_chunks_size[DBMDX_AMODEL_MAX_CHUNKS];
 	int	num_of_amodel_chunks;
 	bool	amodel_loaded;
+	u8	amodel_checksum[4];
 };
 
 enum dbmd2_xtal_id {
@@ -414,6 +418,10 @@ struct dbmdx_private {
 	struct dbmdx_platform_data		*pdata;
 	/* lock for private data */
 	struct mutex			p_lock;
+#ifdef CONFIG_PM_WAKELOCKS
+	struct wakeup_source		ps_nosuspend_wl;
+#endif
+
 	enum dbmdx_firmware_active	active_fw;
 	enum dbmdx_firmware_active	active_fw_va_chip;
 	enum dbmdx_power_modes		power_mode;

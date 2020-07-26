@@ -113,6 +113,12 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 #ifndef CONFIG_MMU
 		"MmapCopy:       %8lu kB\n"
 #endif
+#ifdef CONFIG_RBIN
+		"RbinTotal:      %8lu kB\n"
+		"RbinAlloced:    %8u kB\n"
+		"RbinPool:       %8u kB\n"
+		"RbinFree:       %8lu kB\n"
+#endif
 		"SwapTotal:      %8lu kB\n"
 		"SwapFree:       %8lu kB\n"
 		"Dirty:          %8lu kB\n"
@@ -169,6 +175,13 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 #endif
 #ifndef CONFIG_MMU
 		K((unsigned long) atomic_long_read(&mmap_pages_allocated)),
+#endif
+#ifdef CONFIG_RBIN
+		K(totalrbin_pages),
+		K(atomic_read(&rbin_allocated_pages)
+		   + atomic_read(&rbin_pool_pages)),
+		K(atomic_read(&rbin_pool_pages)),
+		K(global_page_state(NR_FREE_RBIN_PAGES)),
 #endif
 		K(i.totalswap),
 		K(i.freeswap),

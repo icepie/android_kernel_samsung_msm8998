@@ -311,7 +311,7 @@ static ssize_t fts_secure_touch_enable_store(struct device *dev,
 		disable_irq(info->client->irq);
 
 		/* Release All Finger */
-		fts_release_all_finger(info);
+		fts_unlocked_release_all_finger(info);
 
 		if (pm_runtime_get_sync(info->client->adapter->dev.parent) < 0) {
 			input_err(true, &info->client->dev, "%s: pm_runtime_get failed\n", __func__);
@@ -1544,7 +1544,7 @@ static unsigned char fts_event_handler_type_b(struct fts_ts_info *info,
 
 			if (info->fts_power_state != FTS_POWER_STATE_ACTIVE) {
 				input_err(true, &info->client->dev, "%s: skip id %d in low power mode\n", __func__, EventID);
-				fts_release_all_finger(info);
+				fts_unlocked_release_all_finger(info);
 				continue;
 			}
 		} else {
@@ -1764,7 +1764,7 @@ static unsigned char fts_event_handler_type_b(struct fts_ts_info *info,
 		case EVENTID_MOTION_POINTER:
 			if (info->touch_count == 0) {
 				input_err(true, &info->client->dev, "%s: count 0\n", __func__);
-				fts_release_all_finger(info);
+				fts_unlocked_release_all_finger(info);
 				break;
 			}
 
@@ -1856,7 +1856,7 @@ static unsigned char fts_event_handler_type_b(struct fts_ts_info *info,
 		case EVENTID_LEAVE_POINTER:
 			if (info->touch_count <= 0) {
 				input_err(true, &info->client->dev, "%s: count 0\n", __func__);
-				fts_release_all_finger(info);
+				fts_unlocked_release_all_finger(info);
 				break;
 			}
 
@@ -2319,7 +2319,9 @@ static irqreturn_t fts_interrupt_handler(int irq, void *handle)
 		memset(info->data, 0x0, FTS_EVENT_SIZE * evtcount);
 		fts_read_reg(info, &regAdd[3], 1, (unsigned char *)info->data,
 				  FTS_EVENT_SIZE * evtcount);
+		mutex_lock(&info->eventlock);
 		fts_event_handler_type_b(info, info->data, evtcount);
+		mutex_unlock(&info->eventlock);
 	}
 
 	return IRQ_HANDLED;
@@ -2920,6 +2922,7 @@ static int fts_probe(struct i2c_client *client, const struct i2c_device_id *idp)
 
 	mutex_init(&info->device_mutex);
 	mutex_init(&info->i2c_mutex);
+	mutex_init(&info->eventlock);
 
 	retval = fts_init(info);
 	if (retval) {
@@ -3389,7 +3392,7 @@ void fts_reinit(struct fts_ts_info *info)
 	fts_interrupt_set(info, INT_ENABLE);
 }
 
-void fts_release_all_finger(struct fts_ts_info *info)
+void fts_unlocked_release_all_finger(struct fts_ts_info *info)
 {
 	int i;
 
@@ -3420,6 +3423,7 @@ void fts_release_all_finger(struct fts_ts_info *info)
 	}
 
 	info->touch_count = 0;
+	input_mt_slot(info->input_dev, 0);
 
 	input_report_key(info->input_dev, BTN_TOUCH, 0);
 	input_report_key(info->input_dev, BTN_TOOL_FINGER, 0);
@@ -3441,11 +3445,67 @@ void fts_release_all_finger(struct fts_ts_info *info)
 	info->check_multi = 0;
 }
 
+void fts_locked_release_all_finger(struct fts_ts_info *info)
+{
+	int i;
+
+	mutex_lock(&info->eventlock);
+
+	for (i = 0; i < FINGER_MAX; i++) {
+		input_mt_slot(info->input_dev, i);
+
+		if (info->board->support_mt_pressure)
+			input_report_abs(info->input_dev, ABS_MT_PRESSURE, 0);
+
+		input_mt_report_slot_state(info->input_dev, MT_TOOL_FINGER, 0);
+
+		if ((info->finger[i].state == EVENTID_ENTER_POINTER) ||
+			(info->finger[i].state == EVENTID_MOTION_POINTER)) {
+			input_info(true, &info->client->dev,
+				"[RA] tID:%d mc:%d tc:%d Ver[%02X%04X|%01X]\n",
+				i, info->finger[i].mcount, info->touch_count,
+				info->panel_revision, info->fw_main_version_of_ic,
+				info->flip_enable);
+
+			do_gettimeofday(&info->time_released[i]);
+			
+			if (info->time_longest < (info->time_released[i].tv_sec - info->time_pressed[i].tv_sec))
+				info->time_longest = (info->time_released[i].tv_sec - info->time_pressed[i].tv_sec);
+		}
+
+		info->finger[i].state = EVENTID_LEAVE_POINTER;
+		info->finger[i].mcount = 0;
+	}
+
+	info->touch_count = 0;
+	input_mt_slot(info->input_dev, 0);
+
+	input_report_key(info->input_dev, BTN_TOUCH, 0);
+	input_report_key(info->input_dev, BTN_TOOL_FINGER, 0);
+
+#ifdef CONFIG_GLOVE_TOUCH
+	input_report_switch(info->input_dev, SW_GLOVE, false);
+	info->touch_mode = FTS_TM_NORMAL;
+#endif
+	input_report_key(info->input_dev, KEY_HOMEPAGE, 0);
+
+	if (info->board->support_sidegesture) {
+		input_report_key(info->input_dev, KEY_SIDE_GESTURE, 0);
+		input_report_key(info->input_dev, KEY_SIDE_GESTURE_RIGHT, 0);
+		input_report_key(info->input_dev, KEY_SIDE_GESTURE_LEFT, 0);
+	}
+
+	input_sync(info->input_dev);
+
+	info->check_multi = 0;
+	mutex_unlock(&info->eventlock);
+}
+
 #if 0/*def CONFIG_TRUSTONIC_TRUSTED_UI*/
 void trustedui_mode_on(void)
 {
 	input_info(true, &tui_tsp_info->client->dev, "%s, release all finger..", __func__);
-	fts_release_all_finger(tui_tsp_info);
+	fts_unlocked_release_all_finger(tui_tsp_info);
 }
 #endif
 
@@ -3664,7 +3724,7 @@ static int fts_stop_device(struct fts_ts_info *info, bool lpmode)
 		if (device_may_wakeup(&info->client->dev))
 			enable_irq_wake(info->irq);
 
-		fts_release_all_finger(info);
+		fts_locked_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 		fts_release_all_key(info);
 #endif
@@ -3692,7 +3752,7 @@ static int fts_stop_device(struct fts_ts_info *info, bool lpmode)
 		disable_irq(info->irq);
 
 		fts_command(info, FLUSHBUFFER);
-		fts_release_all_finger(info);
+		fts_locked_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 		fts_release_all_key(info);
 #endif
@@ -3727,7 +3787,7 @@ static int fts_start_device(struct fts_ts_info *info)
 		goto out;
 	}
 
-	fts_release_all_finger(info);
+	fts_locked_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	fts_release_all_key(info);
 #endif

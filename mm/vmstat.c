@@ -764,6 +764,7 @@ const char * const vmstat_text[] = {
 	"workingset_nodereclaim",
 	"nr_anon_transparent_hugepages",
 	"nr_free_cma",
+	"nr_free_rbin",
 	"nr_swapcache",
 	"nr_indirectly_reclaimable",
 

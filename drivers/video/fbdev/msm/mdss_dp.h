@@ -162,7 +162,7 @@ enum dp_pm_type {
 #define MPA2_PRODUCT_ID			0xA027		/* EE-P5000 */
 #define DEXPAD_PRODUCT_ID		0xA029		/* EE-M5100 */
 /* #define NOT_SUPPORT_DEX_RES_CHANGE */
-#ifdef CONFIG_SEC_GTS4LLTE_PROJECT
+#if defined(CONFIG_SEC_GTS4LLTE_PROJECT) || defined(CONFIG_SEC_GTS4LWIFI_PROJECT)
 #define CONFIG_SEC_CHECK_RATIO
 #define CONFIG_SEC_NEW_RESOLUTION	/* for resolutions added since P os */
 #define SECDP_WIDE_21_9_SUPPORT        /* support ultra-wide 21:9 resolution  (2560x1080p, 3440x1440p) */
@@ -192,7 +192,11 @@ enum dex_support_res_t {
 	DEX_RES_3440X1440, /* UW-QHD */
 	DEX_RES_3840X2160, /* UHD */
 };
+#if defined(CONFIG_SEC_GTS4LLTE_PROJECT) || defined(CONFIG_SEC_GTS4LWIFI_PROJECT)
+#define DEX_RES_DFT		DEX_RES_3440X1440   /* DeX default resolution */
+#else
 #define DEX_RES_DFT		DEX_RES_1920X1080   /* DeX default resolution */
+#endif
 #define DEX_RES_MAX		DEX_RES_3440X1440   /* DeX max resolution */
 
 struct secdp_display_timing {

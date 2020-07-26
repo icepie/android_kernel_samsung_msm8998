@@ -498,6 +498,28 @@ static bool printk_process;
 #endif
 #endif
 
+#ifndef SZ_128K
+#define SZ_128K                               0x20000
+#endif
+char init_log_buffer[SZ_128K];
+size_t init_log_size = (size_t)SZ_128K;
+static unsigned long buf_idx = 0;
+
+static void sec_debug_hook_init_log(const char *str, u16 size)
+{
+	int len;
+
+	if (buf_idx + size > init_log_size) {
+		len = init_log_size - buf_idx;
+		memcpy(init_log_buffer + buf_idx, str, len);
+		memcpy(init_log_buffer, str + len, size - len);
+		buf_idx = size - len;
+	} else {
+		memcpy(init_log_buffer + buf_idx, str, size);
+		buf_idx = (buf_idx + size) % init_log_size;
+	}
+}
+
 /* insert record into the buffer, discard old ones, update heads */
 static int log_store(int facility, int level,
 		     enum log_flags flags, u64 ts_nsec,
@@ -533,6 +555,9 @@ static int log_store(int facility, int level,
 	/* fill message */
 	msg = (struct printk_log *)(log_buf + log_next_idx);
 	memcpy(log_text(msg), text, text_len);
+	// init task 128K buffer log 
+	if (task_pid_nr(current) == 1)
+		sec_debug_hook_init_log(text, text_len);
 	msg->text_len = text_len;
 	if (trunc_msg_len) {
 		memcpy(log_text(msg) + text_len, trunc_msg, trunc_msg_len);

@@ -138,6 +138,7 @@ const struct static_rule defex_static_rules[] = {
 	{feature_safeplace_path,"/sbin/mcDriverDaemon_static"},
 	{feature_safeplace_path,"/sbin/qseecomfsd"},
 	{feature_safeplace_path,"/sbin/tzdaemon_recovery"},
+	{feature_safeplace_path,"/vendor/bin/hvdcp_opti"},
 	{feature_safeplace_path,"/tmp/update_binary"},
 	{feature_safeplace_path,"/system/bin/install-recovery.sh"},
 	/* Rules will be added here */

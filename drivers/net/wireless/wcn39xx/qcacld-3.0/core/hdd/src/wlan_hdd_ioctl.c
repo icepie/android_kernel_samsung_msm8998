@@ -3141,7 +3141,7 @@ static int drv_cmd_country(hdd_adapter_t *adapter,
 	int ret = 0;
 	QDF_STATUS status;
 	char *country_code;
-//	int32_t cc_from_db;
+	int32_t cc_from_db;
 
 	country_code = strnchr(command, strlen(command), ' ');
 	/* no argument after the command*/
@@ -3162,17 +3162,24 @@ static int drv_cmd_country(hdd_adapter_t *adapter,
 	/* no or less than 2  arguments followed by spaces*/
 	if (*country_code == '\0' || *(country_code + 1) == '\0')
 		return -EINVAL;
-/* temporary disable for using Samsung db.txt
+
 	if (!((country_code[0] == 'X' && country_code[1] == 'X') ||
 	    (country_code[0] == '0' && country_code[1] == '0'))) {
 		cc_from_db = cds_get_country_from_alpha2(country_code);
 		if (cc_from_db == CTRY_DEFAULT) {
 			hdd_err("Invalid country code: %c%c",
 				country_code[0], country_code[1]);
-			return -EINVAL;
+			#ifdef CONFIG_SEC
+			country_code[0] = '0';
+			country_code[1] = '0';
+			hdd_err("change it to country code: %c%c",
+			country_code[0], country_code[1]);
+			#else /* CONFIG_SEC */ 
+				return -EINVAL;
+			#endif
 		}
 	}
-*/
+
 	qdf_event_reset(&adapter->change_country_code);
 
 	status = sme_change_country_code(hdd_ctx->hHal,
@@ -7500,16 +7507,10 @@ static int drv_cmd_grip_power_set_tx_power_calling(hdd_adapter_t *adapter,
 
 	/* convert the value from ascii to integer */
 	set_value = command[WLAN_HDD_UI_SET_GRIP_TX_PWR_VALUE_OFFSET] - '0';
-	if (set_value == 0)
+	if (!set_value)
 		hdd_set_sar_power_limit(hdd_ctx, SAR_POWER_LIMIT_FOR_GRIP_SENSOR, 1);
-	else if (set_value == 1)
+	else
 		hdd_set_sar_power_limit(hdd_ctx, SAR_POWER_LIMIT_FOR_GRIP_SENSOR, 0);
-	/* test code >> */
-	else if (set_value == 2)
-		hdd_set_sar_power_limit(hdd_ctx, SAR_POWER_LIMIT_FOR_DBS, 1);
-	else if (set_value == 3)
-		hdd_set_sar_power_limit(hdd_ctx, SAR_POWER_LIMIT_FOR_DBS, 0);
-	/* << test code */
 
 	return status;
 }

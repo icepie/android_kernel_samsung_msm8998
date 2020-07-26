@@ -248,7 +248,8 @@ static int __init rmem_cma_setup(struct reserved_mem *rmem)
 	struct cma *cma;
 	int err;
 
-	if (!of_get_flat_dt_prop(node, "reusable", NULL) ||
+	if ((!of_get_flat_dt_prop(node, "reusable", NULL)
+	    && !of_get_flat_dt_prop(node, "recycleable", NULL)) ||
 	    of_get_flat_dt_prop(node, "no-map", NULL))
 		return -EINVAL;
 
@@ -262,6 +263,16 @@ static int __init rmem_cma_setup(struct reserved_mem *rmem)
 		pr_err("Reserved memory: unable to setup CMA region\n");
 		return err;
 	}
+	if (of_get_flat_dt_prop(node, "recycleable", NULL)) {
+		cma_set_rbin(cma);
+		totalrbin_pages += rmem->size >> PAGE_SHIFT;
+		/*
+		 * # of cma pages was increased by this RBIN memory in
+		 * cma_init_reserved_mem_with_name(). Need to deduct.
+		 */
+		totalcma_pages -= rmem->size >> PAGE_SHIFT;
+	}
+
 	/* Architecture specific contiguous memory fixup. */
 	dma_contiguous_early_fixup(rmem->base, rmem->size);
 

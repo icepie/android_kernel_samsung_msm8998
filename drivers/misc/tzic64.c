@@ -23,7 +23,7 @@
 #include <linux/sched.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/android_pmem.h>
+//#include <linux/android_pmem.h>
 #include <linux/io.h>
 #include <soc/qcom/scm.h> // multiple oemflag
 //#include <mach/scm.h>   // one oemflag => old version
@@ -57,12 +57,11 @@ typedef enum {
     OEMFLAG_NUM_OF_FLAG,
 } Sec_OemFlagID_t;
 
-typedef struct
-{
+typedef struct {
     uint32_t  name;
     uint32_t  func_cmd;
     uint32_t  value;
-}t_flag;
+} t_flag;
 
 #ifndef CONFIG_TZDEV
 typedef enum {
@@ -101,7 +100,7 @@ static uint8_t get_tamper_fuse_cmd(void);
 static int set_tamper_fuse_cmd_new(uint32_t flag);
 static uint8_t get_tamper_fuse_cmd_new(uint32_t flag);
 
-static int set_tamper_fuse_cmd()
+static int set_tamper_fuse_cmd(void)
 {
 	struct scm_desc desc = {0};
 	uint32_t fuse_id;
@@ -137,7 +136,7 @@ static int set_tamper_fuse_cmd_new(uint32_t flag)
 }
 
 
-static uint8_t get_tamper_fuse_cmd()
+static uint8_t get_tamper_fuse_cmd(void)
 {
 	int ret;
 	uint32_t fuse_id;
@@ -160,7 +159,7 @@ static uint8_t get_tamper_fuse_cmd()
 	}
 
 	if (ret) {
-		printk("scm_call/2 returned %d", ret);
+		LOG(KERN_INFO "scm_call/2 returned %d", ret);
 		resp_buf = 0xff;
 	}
 
@@ -191,7 +190,7 @@ static uint8_t get_tamper_fuse_cmd_new(uint32_t flag)
 	}
 
 	if (ret) {
-		printk("scm_call/2 returned %d", ret);
+		LOG(KERN_INFO "scm_call/2 returned %d", ret);
 		resp_buf = 0xff;
 	}
 
@@ -199,7 +198,7 @@ static uint8_t get_tamper_fuse_cmd_new(uint32_t flag)
 	return resp_buf;
 }
 
-static long tzic_ioctl(struct file *file, unsigned cmd,
+static long tzic_ioctl(struct file *file, unsigned int cmd,
 		unsigned long arg)
 {
 	int ret = 0;
@@ -211,119 +210,154 @@ static long tzic_ioctl(struct file *file, unsigned cmd,
 	//struct irs_ctx __user *ioargp = (struct irs_ctx __user *) arg;
 	//struct irs_ctx ctx = {0};
 
-	if ( _IOC_TYPE(cmd) != IOC_MAGIC  && _IOC_TYPE(cmd) != TZIC_IOC_MAGIC ) {
+	if (_IOC_TYPE(cmd) != IOC_MAGIC  && _IOC_TYPE(cmd) != TZIC_IOC_MAGIC) {
 		LOG(KERN_INFO "[oemflag]INVALID CMD = %d\n", cmd);
 		return -ENOTTY;
 	}
 #endif /* CONFIG_TZDEV */
 
-	switch(cmd){
+	switch (cmd) {
 #ifdef CONFIG_TZDEV
-		case IOCTL_IRS_CMD:
-			LOG(KERN_INFO "[oemflag]tzirs cmd\n");
-			/* get flag id */
-			ret=copy_from_user( &param, (void *)arg, sizeof(param) );
-			if (ret != 0) {
-				LOG(KERN_INFO "[oemflag]copy_from_user failed, ret = 0x%08x\n", ret);
-				return ret;
-			}
+	case IOCTL_IRS_CMD:
+		LOG(KERN_INFO "[oemflag]tzirs cmd\n");
+		/* get flag id */
+		ret = copy_from_user(&param, (void *)arg, sizeof(param));
+		if (ret != 0) {
+			LOG(KERN_INFO "[oemflag]copy_from_user failed, ret = 0x%08x\n", ret);
+			return ret;
+		}
 
-			p1 = param.name;
-			p2 = param.value;
-			p3 = param.func_cmd;
+		p1 = param.name;
+		p2 = param.value;
+		p3 = param.func_cmd;
 
-			LOG(KERN_INFO "[oemflag]before: id = 0x%lx, value = 0x%lx, cmd = 0x%lx\n", (unsigned long)p1, (unsigned long)p2, (unsigned long)p3);
+		LOG(KERN_INFO "[oemflag]before: id = 0x%lx, value = 0x%lx, cmd = 0x%lx\n", (unsigned long)p1, (unsigned long)p2, (unsigned long)p3);
 
-			ret = tzirs_smc(&p1, &p2, &p3);
+		ret = tzirs_smc(&p1, &p2, &p3);
 
-			LOG(KERN_INFO "[oemflag]after: id = 0x%lx, value = 0x%lx, cmd = 0x%lx\n", (unsigned long)p1, (unsigned long)p2, (unsigned long)p3);
+		LOG(KERN_INFO "[oemflag]after: id = 0x%lx, value = 0x%lx, cmd = 0x%lx\n", (unsigned long)p1, (unsigned long)p2, (unsigned long)p3);
 
-			if (ret) {
-				LOG(KERN_INFO "[oemflag]Unable to send IRS_CMD : id = 0x%lx, ret = %d\n", (unsigned long)p1, ret);
-				return -EFAULT;
-			}
+		if (ret) {
+			LOG(KERN_INFO "[oemflag]Unable to send IRS_CMD : id = 0x%lx, ret = %d\n", (unsigned long)p1, ret);
+			return -EFAULT;
+		}
 
-			param.name = p1;
-			param.value = p2;
-			param.func_cmd = p3;
+		param.name = p1;
+		param.value = p2;
+		param.func_cmd = p3;
 
-			ret = copy_to_user((void *)arg, &param, sizeof(param));
-		break;
+		ret = copy_to_user((void *)arg, &param, sizeof(param));
+	break;
 #endif /* CONFIG_TZDEV */
 
-		case TZIC_IOCTL_GET_FUSE_REQ:
-			LOG(KERN_INFO "[oemflag]get_fuse\n");
-			ret = get_tamper_fuse_cmd();
-			LOG(KERN_INFO "[oemflag]tamper_fuse value = %x\n", ret);
+	case TZIC_IOCTL_GET_FUSE_REQ:
+		LOG(KERN_INFO "[oemflag]get_fuse\n");
+		ret = get_tamper_fuse_cmd();
+		LOG(KERN_INFO "[oemflag]tamper_fuse value = %x\n", ret);
 		break;
 
-		case TZIC_IOCTL_SET_FUSE_REQ:
-			LOG(KERN_INFO "[oemflag]set_fuse\n");
-			ret = get_tamper_fuse_cmd();
+	case TZIC_IOCTL_SET_FUSE_REQ:
+		LOG(KERN_INFO "[oemflag]set_fuse\n");
+		ret = get_tamper_fuse_cmd();
+		LOG(KERN_INFO "[oemflag]tamper_fuse before = %x\n", ret);
+		LOG(KERN_INFO "[oemflag]ioctl set_fuse\n");
+		mutex_lock(&tzic_mutex);
+		ret = set_tamper_fuse_cmd();
+		mutex_unlock(&tzic_mutex);
+		if (ret)
+			LOG(KERN_INFO "[oemflag]failed tzic_set_fuse_cmd: %d\n", ret);
+		LOG(KERN_INFO "[oemflag]tamper_fuse after = %x\n", get_tamper_fuse_cmd());
+		break;
+
+	case TZIC_IOCTL_SET_FUSE_REQ_DEFAULT://SET ALL OEM FLAG EXCEPT 0
+		LOG(KERN_INFO "[oemflag]set_fuse_default\n");
+		ret = copy_from_user(&param, (void *)arg, sizeof(param));
+		if (ret) {
+			LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
+			return ret;
+		}
+		for (i = OEMFLAG_MIN_FLAG+1; i < OEMFLAG_NUM_OF_FLAG; i++) {
+			param.name = i;
+			LOG(KERN_INFO "[oemflag]set_fuse_name : %u\n", param.name);
+			ret = get_tamper_fuse_cmd_new(param.name);
 			LOG(KERN_INFO "[oemflag]tamper_fuse before = %x\n", ret);
 			LOG(KERN_INFO "[oemflag]ioctl set_fuse\n");
 			mutex_lock(&tzic_mutex);
-			ret = set_tamper_fuse_cmd();
+			ret = set_tamper_fuse_cmd_new(param.name);
 			mutex_unlock(&tzic_mutex);
 			if (ret)
 				LOG(KERN_INFO "[oemflag]failed tzic_set_fuse_cmd: %d\n", ret);
-			ret = get_tamper_fuse_cmd();
-			LOG(KERN_INFO "[oemflag]tamper_fuse after = %x\n", ret);
+			LOG(KERN_INFO "[oemflag]tamper_fuse after = %x\n", get_tamper_fuse_cmd_new(param.name));
+		}
 		break;
 
-		case TZIC_IOCTL_SET_FUSE_REQ_DEFAULT://SET ALL OEM FLAG EXCEPT 0
-			LOG(KERN_INFO "[oemflag]set_fuse_default\n");
-			ret=copy_from_user( &param, (void *)arg, sizeof(param) );
-			if(ret) {
-				LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
-				 return ret;
-			}
-			for (i=OEMFLAG_MIN_FLAG+1;i<OEMFLAG_NUM_OF_FLAG;i++){
-				param.name=i;
-				LOG(KERN_INFO "[oemflag]set_fuse_name : %u\n", param.name);
-				ret = get_tamper_fuse_cmd_new(param.name);
-				LOG(KERN_INFO "[oemflag]tamper_fuse before = %x\n", ret);
-				LOG(KERN_INFO "[oemflag]ioctl set_fuse\n");
+	case TZIC_IOCTL_GET_FUSE_REQ_NEW:
+		LOG(KERN_INFO "[oemflag]get_fuse\n");
+		ret = copy_from_user(&param, (void *)arg, sizeof(param));
+		if (ret) {
+			LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
+			return ret;
+		}
+		if ((param.name > OEMFLAG_MIN_FLAG) && (param.name < OEMFLAG_NUM_OF_FLAG)) {
+			LOG(KERN_INFO "[oemflag]get_fuse_name : %u\n", param.name);
+			ret = get_tamper_fuse_cmd_new(param.name);
+			LOG(KERN_INFO "[oemflag]tamper_fuse value = %x\n", ret);
+		} else {
+			LOG(KERN_INFO "[oemflag]command error\n");
+			return -EINVAL;
+		}
+		break;
+
+	case TZIC_IOCTL_SET_FUSE_REQ_NEW:
+		LOG(KERN_INFO "[oemflag]set_fuse\n");
+		ret = copy_from_user(&param, (void *)arg, sizeof(param));
+		if (ret) {
+			LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
+			return ret;
+		}
+		if ((param.name > OEMFLAG_MIN_FLAG) && (param.name < OEMFLAG_NUM_OF_FLAG)) {
+			LOG(KERN_INFO "[oemflag]set_fuse_name : %u\n", param.name);
+			ret = get_tamper_fuse_cmd_new(param.name);
+			LOG(KERN_INFO "[oemflag]tamper_fuse before = %x\n", ret);
+			LOG(KERN_INFO "[oemflag]ioctl set_fuse\n");
+#ifdef CONFIG_SAMSUNG_PRODUCT_SHIP
+			//Qualcomm DRM oemflag only support HLOS_IMG_TAMPER_FUSE
+			if (param.name == OEMFLAG_TZ_DRM) {
 				mutex_lock(&tzic_mutex);
-				ret = set_tamper_fuse_cmd_new(param.name);
+				ret = set_tamper_fuse_cmd();
 				mutex_unlock(&tzic_mutex);
 				if (ret)
 					LOG(KERN_INFO "[oemflag]failed tzic_set_fuse_cmd: %d\n", ret);
-				ret = get_tamper_fuse_cmd_new(param.name);
-				LOG(KERN_INFO "[oemflag]tamper_fuse after = %x\n", ret);
 			}
+#endif
+			mutex_lock(&tzic_mutex);
+			ret = set_tamper_fuse_cmd_new(param.name);
+			mutex_unlock(&tzic_mutex);
+			if (ret)
+				LOG(KERN_INFO "[oemflag]failed tzic_set_fuse_cmd: %d\n", ret);
+			LOG(KERN_INFO "[oemflag]tamper_fuse after = %x\n", get_tamper_fuse_cmd_new(param.name));
+		} else {
+			LOG(KERN_INFO "[oemflag]command error\n");
+			return -EINVAL;
+		}
 		break;
 
-		case TZIC_IOCTL_GET_FUSE_REQ_NEW:
-			LOG(KERN_INFO "[oemflag]get_fuse\n");
-			ret=copy_from_user( &param, (void *)arg, sizeof(param) );
-			if(ret) {
-				LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
-				 return ret;
-			}
-			if ((OEMFLAG_MIN_FLAG < param.name) && (param.name < OEMFLAG_NUM_OF_FLAG)){
-				LOG(KERN_INFO "[oemflag]get_fuse_name : %u\n", param.name);
-				ret = get_tamper_fuse_cmd_new(param.name);
-				LOG(KERN_INFO "[oemflag]tamper_fuse value = %x\n", ret);
-			} else {
-				LOG(KERN_INFO "[oemflag]command error\n");
-				return -EINVAL;
-			}
-		break;
+	default:
+		LOG(KERN_INFO "[oemflag]default\n");
+		ret = copy_from_user(&param, (void *)arg, sizeof(param));
 
-		case TZIC_IOCTL_SET_FUSE_REQ_NEW:
+		if (param.func_cmd == IRS_SET_FLAG_VALUE_CMD) {
 			LOG(KERN_INFO "[oemflag]set_fuse\n");
-			ret=copy_from_user( &param, (void *)arg, sizeof(param) );
-			if(ret) {
+			if (ret) {
 				LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
-				 return ret;
+				return ret;
 			}
-			if ((OEMFLAG_MIN_FLAG < param.name) && (param.name < OEMFLAG_NUM_OF_FLAG)){
+			if ((param.name > OEMFLAG_MIN_FLAG) && (param.name < OEMFLAG_NUM_OF_FLAG)) {
 				LOG(KERN_INFO "[oemflag]set_fuse_name : %u\n", param.name);
 				ret = get_tamper_fuse_cmd_new(param.name);
 				LOG(KERN_INFO "[oemflag]tamper_fuse before = %x\n", ret);
 				LOG(KERN_INFO "[oemflag]ioctl set_fuse\n");
-#ifdef SAMSUNG_PRODUCT_SHIP
+#ifdef CONFIG_SAMSUNG_PRODUCT_SHIP
 				//Qualcomm DRM oemflag only support HLOS_IMG_TAMPER_FUSE
 				if (param.name == OEMFLAG_TZ_DRM) {
 					mutex_lock(&tzic_mutex);
@@ -338,69 +372,31 @@ static long tzic_ioctl(struct file *file, unsigned cmd,
 				mutex_unlock(&tzic_mutex);
 				if (ret)
 					LOG(KERN_INFO "[oemflag]failed tzic_set_fuse_cmd: %d\n", ret);
+				LOG(KERN_INFO "[oemflag]tamper_fuse after = %x\n", get_tamper_fuse_cmd_new(param.name));
+			} else {
+				LOG(KERN_INFO "[oemflag]command error\n");
+				return -EINVAL;
+			}
+		} else if (param.func_cmd == IRS_GET_FLAG_VAL_CMD) {
+			LOG(KERN_INFO "[oemflag]get_fuse\n");
+			if (ret) {
+				LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
+				return ret;
+			}
+			if ((param.name > OEMFLAG_MIN_FLAG) && (param.name < OEMFLAG_NUM_OF_FLAG)) {
+				LOG(KERN_INFO "[oemflag]get_fuse_name : %u\n", param.name);
 				ret = get_tamper_fuse_cmd_new(param.name);
-				LOG(KERN_INFO "[oemflag]tamper_fuse after = %x\n", ret);
+				LOG(KERN_INFO "[oemflag]tamper_fuse value = %x\n", ret);
 			} else {
 				LOG(KERN_INFO "[oemflag]command error\n");
 				return -EINVAL;
 			}
-		break;
-
-		default:
-			LOG(KERN_INFO "[oemflag]default\n");
-			ret=copy_from_user( &param, (void *)arg, sizeof(param) );
-
-			if (param.func_cmd == IRS_SET_FLAG_VALUE_CMD) {
-				LOG(KERN_INFO "[oemflag]set_fuse\n");
-				if(ret) {
-					LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
-					 return ret;
-				}
-				if ((OEMFLAG_MIN_FLAG < param.name) && (param.name < OEMFLAG_NUM_OF_FLAG)){
-					LOG(KERN_INFO "[oemflag]set_fuse_name : %u\n", param.name);
-					ret = get_tamper_fuse_cmd_new(param.name);
-					LOG(KERN_INFO "[oemflag]tamper_fuse before = %x\n", ret);
-					LOG(KERN_INFO "[oemflag]ioctl set_fuse\n");
-#ifdef SAMSUNG_PRODUCT_SHIP
-					//Qualcomm DRM oemflag only support HLOS_IMG_TAMPER_FUSE
-					if (param.name == OEMFLAG_TZ_DRM) {
-						mutex_lock(&tzic_mutex);
-						ret = set_tamper_fuse_cmd();
-						mutex_unlock(&tzic_mutex);
-						if (ret)
-							LOG(KERN_INFO "[oemflag]failed tzic_set_fuse_cmd: %d\n", ret);
-					}
-#endif
-					mutex_lock(&tzic_mutex);
-					ret = set_tamper_fuse_cmd_new(param.name);
-					mutex_unlock(&tzic_mutex);
-					if (ret)
-						LOG(KERN_INFO "[oemflag]failed tzic_set_fuse_cmd: %d\n", ret);
-					ret = get_tamper_fuse_cmd_new(param.name);
-					LOG(KERN_INFO "[oemflag]tamper_fuse after = %x\n", ret);
-				} else {
-					LOG(KERN_INFO "[oemflag]command error\n");
-					return -EINVAL;
-				}
-			} else if (param.func_cmd == IRS_GET_FLAG_VAL_CMD) {
-				LOG(KERN_INFO "[oemflag]get_fuse\n");
-				if(ret) {
-					LOG(KERN_INFO "[oemflag]ERROR copy from user\n");
-					 return ret;
-				}
-				if ((OEMFLAG_MIN_FLAG < param.name) && (param.name < OEMFLAG_NUM_OF_FLAG)){
-					LOG(KERN_INFO "[oemflag]get_fuse_name : %u\n", param.name);
-					ret = get_tamper_fuse_cmd_new(param.name);
-					LOG(KERN_INFO "[oemflag]tamper_fuse value = %x\n", ret);
-				} else {
-					LOG(KERN_INFO "[oemflag]command error\n");
-					return -EINVAL;
-				}
-			} else {
-				LOG(KERN_INFO "[oemflag]command error\n");
-				return -EINVAL;
-			}
+		} else {
+			LOG(KERN_INFO "[oemflag]command error\n");
+			return -EINVAL;
+		}
 	}
+
 	return ret;
 }
 

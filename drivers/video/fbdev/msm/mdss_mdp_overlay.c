@@ -3347,7 +3347,7 @@ int mdss_mdp_overlay_vsync_ctrl(struct msm_fb_data_type *mfd, int en)
 			mfd->index);
 		goto end;
 	}
-
+ 
 	mdp5_data->vsync_en = en;
 
 	if (!ctl->panel_data->panel_info.cont_splash_enabled

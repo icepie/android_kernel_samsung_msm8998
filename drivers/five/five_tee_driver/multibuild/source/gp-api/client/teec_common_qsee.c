@@ -55,7 +55,7 @@
  *    QSEECOM_ALIGN_SIZE is 0x40. That's why we add QSEECOM_ALIGN_SIZE
  *    in RBUF_LEN.
  */
-#define SBUF_LEN (sizeof(ProtocolCmd) + TEEC_CONFIG_SHAREDMEM_MAX_SIZE)
+#define SBUF_LEN (sizeof(ProtocolCmd) + MAX_SHAREDMEM_SIZE)
 #define RBUF_LEN (QSEECOM_ALIGN(SBUF_LEN) - SBUF_LEN + QSEECOM_ALIGN_SIZE)
 
 typedef struct QseeSessionStruct {

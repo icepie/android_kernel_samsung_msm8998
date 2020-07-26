@@ -629,6 +629,8 @@ struct fts_ts_info {
 #endif
 	struct mutex i2c_mutex;
 	struct mutex device_mutex;
+	struct mutex eventlock;
+
 	bool touch_stopped;
 	bool reinit_done;
 	unsigned int pressure_max;
@@ -726,7 +728,8 @@ int fts_get_calibration_information(struct fts_ts_info *info);
 int fts_get_tsp_test_result(struct fts_ts_info *info);
 int fts_read_pressure_data(struct fts_ts_info *info);
 void fts_interrupt_set(struct fts_ts_info *info, int enable);
-void fts_release_all_finger(struct fts_ts_info *info);
+void fts_locked_release_all_finger(struct fts_ts_info *info);
+void fts_unlocked_release_all_finger(struct fts_ts_info *info);
 void fts_delay(unsigned int ms);
 int fts_read_analog_chip_id(struct fts_ts_info *info, unsigned char id);
 

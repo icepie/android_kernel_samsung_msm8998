@@ -1552,3 +1552,26 @@ enum pld_cc_src pld_get_cc_source(struct device *dev)
 	return PLD_SOURCE_CORE;
 }
 #endif
+/**
+ * pld_block_shutdown() - Block/Unblock modem shutdown
+ * @dev: device
+ * @status: status true or false
+ *
+ * This API will be called to Block/Unblock modem shutdown.
+ * True - Block shutdown
+ * False - Unblock shutdown
+ *
+ * Return: None
+ */
+void pld_block_shutdown(struct device *dev, bool status)
+{
+	enum pld_bus_type type = pld_get_bus_type(dev);
+
+	switch (type) {
+	case PLD_BUS_TYPE_SNOC:
+		pld_snoc_block_shutdown(status);
+		break;
+	default:
+		break;
+	}
+}

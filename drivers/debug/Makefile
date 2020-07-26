@@ -10,3 +10,4 @@ obj-$(CONFIG_SEC_NAD)		+= sec_nad.o
 
 obj-$(CONFIG_SEC_DEBUG_GAF_V3)		+= sec_gaf_v3.o
 obj-$(CONFIG_SEC_DEBUG_GAF_V4)		+= sec_gaf_v4.o
+obj-$(CONFIG_SEC_DEBUG_GAF_V5)		+= sec_gaf_v5.o

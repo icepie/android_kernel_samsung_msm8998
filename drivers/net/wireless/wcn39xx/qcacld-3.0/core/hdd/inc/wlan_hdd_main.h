@@ -2260,6 +2260,12 @@ struct hdd_context_s {
 
 };
 
+/*
+ * Function declarations and documentation
+ */
+#ifdef SEC_CONFIG_PSM_SYSFS
+int wlan_hdd_sec_get_psm(void);
+#endif /* SEC_CONFIG_PSM_SYSFS */
 int hdd_validate_channel_and_bandwidth(hdd_adapter_t *adapter,
 				uint32_t chan_number,
 				enum phy_ch_width chan_bw);

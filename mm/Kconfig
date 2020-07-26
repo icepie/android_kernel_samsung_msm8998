@@ -812,6 +812,17 @@ config PROCESS_RECLAIM
 
 	 Any other vaule is ignored.
 
+config RBIN
+	bool "RBIN memory support"
+	default n
+	depends on CMA
+	help
+	  This provides RBIN functionality in memory management.
+	  RBIN memory is similar with CMA. Only the movable allocations with
+	  __GFP_RBIN can be allocated in the RBIN memory. (In this way,
+	  we can differentiate the pages going to CMA and RBIN.) Currently,
+	  there is only one user of RBIN memory, ION RBIN heap.
+
 config MMAP_READAROUND_LIMIT
 	int "Limit mmap readaround upperbound"
 	default 0

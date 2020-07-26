@@ -28,6 +28,7 @@
 #include <linux/ptrace.h>
 #include <linux/task_integrity.h>
 #include <linux/reboot.h>
+#include <linux/debugfs.h>
 
 #include "five.h"
 #include "five_audit.h"
@@ -46,6 +47,84 @@ static inline struct processing_event_list *five_event_create(
 		struct file *file, int function, gfp_t flags);
 static inline void five_event_destroy(
 		const struct processing_event_list *file);
+
+#ifdef CONFIG_FIVE_DEBUG
+static int five_enabled = 1;
+
+static ssize_t five_enabled_write(struct file *file, const char __user *buf,
+				size_t count, loff_t *pos)
+{
+	char command;
+
+	if (get_user(command, buf))
+		return -EFAULT;
+
+	switch (command) {
+	case '0':
+		five_enabled = 0;
+		break;
+	case '1':
+		five_enabled = 1;
+		break;
+	default:
+		pr_err("FIVE: %s: unknown cmd: %hhx\n", __func__, command);
+		return -EINVAL;
+	}
+
+	pr_info("FIVE debug: FIVE %s\n", five_enabled ? "enabled" : "disabled");
+	return count;
+}
+
+static ssize_t five_enabled_read(struct file *file, char __user *user_buf,
+				size_t count, loff_t *pos)
+{
+	char buf[2];
+
+	buf[0] = five_enabled ? '1' : '0';
+	buf[1] = '\n';
+
+	return simple_read_from_buffer(user_buf, count, pos, buf, sizeof(buf));
+}
+
+static const struct file_operations five_enabled_fops = {
+	.owner = THIS_MODULE,
+	.read  = five_enabled_read,
+	.write = five_enabled_write
+};
+
+static int __init init_fs(void)
+{
+	struct dentry *debug_file = NULL;
+	umode_t umode = (S_IRUGO | S_IWUGO);
+
+	debug_file = debugfs_create_file(
+		"five_enabled", umode, NULL, NULL, &five_enabled_fops);
+	if (IS_ERR_OR_NULL(debug_file))
+		goto error;
+
+	return 0;
+error:
+	if (debug_file)
+		return -PTR_ERR(debug_file);
+
+	return -EEXIST;
+}
+
+static inline int is_five_enabled(void)
+{
+	return five_enabled;
+}
+#else
+static int __init init_fs(void)
+{
+	return 0;
+}
+
+static inline int is_five_enabled(void)
+{
+	return 1;
+}
+#endif
 
 static void work_handler(struct work_struct *in_data)
 {
@@ -183,7 +262,7 @@ static int push_file_event_bunch(struct task_struct *task, struct file *file,
 	struct worker_context *context;
 	struct processing_event_list *five_file;
 
-	if (five_check_params(task, file))
+	if (unlikely(!is_five_enabled()) || five_check_params(task, file))
 		return 0;
 
 	context = kmalloc(sizeof(struct worker_context), GFP_KERNEL);
@@ -231,6 +310,9 @@ static int push_reset_event(struct task_struct *task)
 	struct list_head dead_list;
 	struct task_integrity *current_tint;
 	struct processing_event_list *five_reset;
+
+	if (unlikely(!is_five_enabled()))
+		return 0;
 
 	INIT_LIST_HEAD(&dead_list);
 	current_tint = task->integrity;
@@ -566,7 +648,8 @@ static int __init init_five(void)
 {
 	int error;
 
-	g_five_workqueue = create_freezable_workqueue("five_wq");
+	g_five_workqueue = alloc_workqueue("%s", WQ_FREEZABLE | WQ_MEM_RECLAIM,
+						0, "five_wq");
 	if (!g_five_workqueue)
 		return -ENOMEM;
 
@@ -580,6 +663,10 @@ static int __init init_five(void)
 		return error;
 
 	error = register_reboot_notifier(&five_reboot_nb);
+	if (error)
+		return error;
+
+	error = init_fs();
 
 	return error;
 }

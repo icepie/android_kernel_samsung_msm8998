@@ -74,3 +74,5 @@ obj-$(CONFIG_SEC_BSP) += sec_misc.o sec_param.o
 obj-$(CONFIG_DM_VERITY)		+= dmverity_query.o
 
 obj-$(CONFIG_RKP_CFP_TEST)	+= cfp_test.o
+
+obj-$(CONFIG_DEV_RIL_BRIDGE)	+= dev_ril_bridge/

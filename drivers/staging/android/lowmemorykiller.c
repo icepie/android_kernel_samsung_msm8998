@@ -36,7 +36,6 @@
 #include <linux/moduleparam.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/cma.h>
 #include <linux/oom.h>
 #include <linux/sched.h>
 #include <linux/swap.h>
@@ -244,14 +243,6 @@ static DEFINE_MUTEX(scan_mutex);
 
 static void show_memory(void)
 {
-	unsigned long nr_rbin_free, nr_rbin_pool, nr_rbin_alloc, nr_rbin_file;
-
-	nr_rbin_free = global_page_state(NR_FREE_RBIN_PAGES);
-	nr_rbin_pool = atomic_read(&rbin_pool_pages);
-	nr_rbin_alloc = atomic_read(&rbin_allocated_pages);
-	nr_rbin_file = totalrbin_pages - nr_rbin_free - nr_rbin_pool
-					- nr_rbin_alloc;
-
 #define K(x) ((x) << (PAGE_SHIFT - 10))
 	printk("Mem-Info:"
 		" totalram_pages:%lukB"
@@ -272,10 +263,6 @@ static void show_memory(void)
 		" kernel_stack:%lukB"
 		" pagetables:%lukB"
 		" free_cma:%lukB"
-		" rbin_free:%lukB"
-		" rbin_pool:%lukB"
-		" rbin_alloc:%lukB"
-		" rbin_file:%lukB"
 		"\n",
 		K(totalram_pages),
 		K(global_page_state(NR_FREE_PAGES)),
@@ -294,11 +281,7 @@ static void show_memory(void)
 		K(global_page_state(NR_SLAB_UNRECLAIMABLE)),
 		global_page_state(NR_KERNEL_STACK) * THREAD_SIZE / 1024,
 		K(global_page_state(NR_PAGETABLE)),
-		K(global_page_state(NR_FREE_CMA_PAGES)),
-		K(nr_rbin_free),
-		K(nr_rbin_pool),
-		K(nr_rbin_alloc),
-		K(nr_rbin_file)
+		K(global_page_state(NR_FREE_CMA_PAGES))
 		);
 #undef K
 }
@@ -387,12 +370,15 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 	int other_file;
 	static DEFINE_RATELIMIT_STATE(lmk_rs, DEFAULT_RATELIMIT_INTERVAL/5, 1);
 	unsigned long nr_cma_free;
-	unsigned long nr_rbin_free, nr_rbin_pool, nr_rbin_alloc, nr_rbin_file;
 
 	if (!mutex_trylock(&scan_mutex))
 		return 0;
 
 	other_free = global_page_state(NR_FREE_PAGES);
+	nr_cma_free = global_page_state(NR_FREE_CMA_PAGES);
+	if (!current_is_kswapd() || sc->priority <= 6)
+		other_free -= nr_cma_free;
+
 	if (global_page_state(NR_SHMEM) + total_swapcache_pages() <
 		global_page_state(NR_FILE_PAGES) + zcache_pages())
 		other_file = global_page_state(NR_FILE_PAGES) + zcache_pages() -
@@ -401,19 +387,6 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 						total_swapcache_pages();
 	else
 		other_file = 0;
-
-	nr_cma_free = global_page_state(NR_FREE_CMA_PAGES);
-	if (!current_is_kswapd() || sc->priority <= 6)
-		other_free -= nr_cma_free;
-	if ((sc->gfp_mask & __GFP_RBIN) != __GFP_RBIN) {
-		nr_rbin_free = global_page_state(NR_FREE_RBIN_PAGES);
-		nr_rbin_pool = atomic_read(&rbin_pool_pages);
-		nr_rbin_alloc = atomic_read(&rbin_allocated_pages);
-		nr_rbin_file = totalrbin_pages - nr_rbin_free - nr_rbin_pool
-						- nr_rbin_alloc;
-		other_free -= nr_rbin_free;
-		other_file -= nr_rbin_file;
-	}
 
 	if (lowmem_adj_size < array_size)
 		array_size = lowmem_adj_size;

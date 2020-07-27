@@ -1152,8 +1152,18 @@ static void stm32_keyboard_connect_work(struct work_struct *work)
 	}
 
 	if (data->input_dev) {
-		if (ret >= 0)
+		if (ret >= 0) {
+#ifndef CONFIG_SEC_FACTORY
+			if (!data->connect_state) {
+				input_report_key(data->input_dev, KEY_SLEEP, 1);
+				input_sync(data->input_dev);
+				input_report_key(data->input_dev, KEY_SLEEP, 0);
+				input_sync(data->input_dev);
+				input_info(true, &data->client->dev, "%s: make sleep\n", __func__);
+			}
+#endif
 			data->current_connect_state = data->connect_state;
+		}
 
 		if (!data->current_connect_state) {
 			usleep_range(1000, 1000);

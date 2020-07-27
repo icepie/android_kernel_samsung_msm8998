@@ -200,6 +200,11 @@ void hdd_send_oem_data_rsp_msg(struct oem_data_rsp *oem_rsp);
 void hdd_update_channel_bw_info(hdd_context_t *hdd_ctx,
 				uint16_t chan,
 				void *hdd_chan_info);
+
+#if defined (SEC_READ_MACADDR) || defined (SEC_CONFIG_PSM) || defined (SEC_CONFIG_POWER_BACKOFF)
+#define MAX_RETRY	5
+#endif
+
 #else
 static inline int oem_activate_service(struct hdd_context_s *hdd_ctx)
 {

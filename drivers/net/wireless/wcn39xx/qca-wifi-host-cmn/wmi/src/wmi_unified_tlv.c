@@ -10889,10 +10889,8 @@ QDF_STATUS send_log_supported_evt_cmd_tlv(wmi_unified_t wmi_handle,
 			__func__, num_of_diag_events_logs);
 
 	/* Free any previous allocation */
-	if (wmi_handle->events_logs_list) {
+	if (wmi_handle->events_logs_list)
 		qdf_mem_free(wmi_handle->events_logs_list);
-		wmi_handle->events_logs_list = NULL;
-	}
 
 	if (num_of_diag_events_logs >
 		(WMI_SVC_MSG_MAX_SIZE / sizeof(uint32_t))) {
@@ -12282,7 +12280,7 @@ QDF_STATUS send_roam_scan_offload_chan_list_cmd_tlv(wmi_unified_t wmi_handle,
 	for (i = 0; ((i < chan_list_fp->num_chan) &&
 		     (i < WMI_ROAM_MAX_CHANNELS)); i++) {
 		roam_chan_list_array[i] = chan_list[i];
-		WMI_LOGD("%d,", roam_chan_list_array[i]);
+		WMI_LOGI("%d,", roam_chan_list_array[i]);
 	}
 
 	status = wmi_unified_cmd_send(wmi_handle, buf,
@@ -12489,12 +12487,12 @@ QDF_STATUS send_per_roam_config_cmd_tlv(wmi_unified_t wmi_handle,
 				      len, WMI_ROAM_PER_CONFIG_CMDID);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		WMI_LOGE("WMI_ROAM_PER_CONFIG_CMDID failed, Error %d",
-			 status);
+			status);
 		goto error;
 	}
 
-	WMI_LOGD(FL("per roam enable=%d, vdev=%d"),
-		 req_buf->per_config.enable, req_buf->vdev_id);
+	WMI_LOGI(FL("per roam enable=%d, vdev=%d"),
+		req_buf->per_config.enable, req_buf->vdev_id);
 	return QDF_STATUS_SUCCESS;
 error:
 	wmi_buf_free(buf);
@@ -12554,9 +12552,9 @@ QDF_STATUS send_roam_scan_offload_rssi_change_cmd_tlv(wmi_unified_t wmi_handle,
 		goto error;
 	}
 
-	WMI_LOGD(FL("roam_scan_rssi_change_thresh=%d, bcn_rssi_weight=%d"),
-		 rssi_change_thresh, bcn_rssi_weight);
-	WMI_LOGD(FL("hirssi_delay_btw_scans=%d"), hirssi_delay_btw_scans);
+	WMI_LOGI(FL("roam_scan_rssi_change_thresh=%d, bcn_rssi_weight=%d"),
+		rssi_change_thresh, bcn_rssi_weight);
+	WMI_LOGI(FL("hirssi_delay_btw_scans=%d"), hirssi_delay_btw_scans);
 	return QDF_STATUS_SUCCESS;
 error:
 	wmi_buf_free(buf);

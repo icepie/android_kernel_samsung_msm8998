@@ -545,20 +545,6 @@ static int process_discover_svids(void * data)
 							  msecs_to_jiffies(USB_PHY_SUSPEND_WAIT_MS));
 				dev_info(&i2c->dev, "%s suspend_wait timeleft = %d \n", __func__, timeleft);
 			}
-		} else if (usbpd_data->is_client == CLIENT_ON) {
-			dev_info(&i2c->dev, "%s abnormal client mod \n", __func__);
-			dev_info(&i2c->dev, "%s reinit suspend wait start\n", __func__);			
-			reinit_completion(&usbpd_data->suspend_wait);
-			ccic_event_work(usbpd_data,
-					CCIC_NOTIFY_DEV_USB, CCIC_NOTIFY_ID_USB, 0/*attach*/, USB_STATUS_NOTIFY_DETACH/*drp*/, 0);
-			usbpd_data->is_client = CLIENT_OFF;
-
-			if(!dwc3_msm_is_suspended())
-			{
-				timeleft = wait_for_completion_interruptible_timeout(&usbpd_data->suspend_wait,
-							  msecs_to_jiffies(USB_PHY_SUSPEND_WAIT_MS));
-				dev_info(&i2c->dev, "%s suspend_wait timeleft = %d \n", __func__, timeleft);
-			}
 		}
 		
 		if (usbpd_data->is_host == HOST_OFF) {

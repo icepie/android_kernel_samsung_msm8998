@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017,2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -603,27 +603,13 @@ static void add_profiling_buffer(struct kgsl_device *device,
 		return;
 	}
 
-	if (!id) {
-		cmdobj->profiling_buffer_gpuaddr = gpuaddr;
-	} else {
-		u64 off = offset + sizeof(struct kgsl_drawobj_profiling_buffer);
+	cmdobj->profiling_buf_entry = entry;
 
-		/*
-		 * Make sure there is enough room in the object to store the
-		 * entire profiling buffer object
-		 */
-		if (off < offset || off >= entry->memdesc.size) {
-			dev_err(device->dev,
-				"ignore invalid profile offset ctxt %d id %d offset %lld gpuaddr %llx size %lld\n",
-			drawobj->context->id, id, offset, gpuaddr, size);
-			kgsl_mem_entry_put(entry);
-			return;
-		}
-
+	if (id != 0)
 		cmdobj->profiling_buffer_gpuaddr =
 			entry->memdesc.gpuaddr + offset;
-	}
-	cmdobj->profiling_buf_entry = entry;
+	else
+		cmdobj->profiling_buffer_gpuaddr = gpuaddr;
 }
 
 /**

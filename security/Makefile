@@ -44,10 +44,6 @@ obj-$(CONFIG_MST_LDO)	  += mstdrv/
 obj-$(CONFIG_SDP) += sdp/
 obj-$(CONFIG_SDP) += sdp/built-in.o
 
-# PROCA module
-subdir-$(CONFIG_PROCA)			+= proca
-obj-$(CONFIG_PROCA)			+= proca/
-
 #TZ ICCC
 obj-$(CONFIG_TZ_ICCC)     += tz_iccc/
 

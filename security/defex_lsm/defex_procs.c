@@ -229,7 +229,6 @@ static int at_same_group_gid(unsigned int gid1, unsigned int gid2)
 }
 
 /* Cred. violation feature decision function */
-#define AID_MEDIA_RW	1023
 #ifndef CONFIG_SECURITY_DSMS
 static int task_defex_check_creds(struct task_struct *p)
 #else
@@ -276,8 +275,7 @@ static int task_defex_check_creds(struct task_struct *p, int syscall)
 		goto exit;
 	} else {
 		check_deeper = 0;
-		/* temporary allow fsuid changes to "media_rw" */
-		if ((cur_uid != uid) || (cur_euid != uid) || !((cur_fsuid == fsuid) || (cur_fsuid == uid) || (cur_fsuid%100000 == AID_MEDIA_RW)) || (cur_egid != egid)) {
+		if ((cur_uid != uid) || (cur_euid != uid) || !((cur_fsuid == fsuid) || (cur_fsuid == uid)) || (cur_egid != egid)) {
 			check_deeper = 1;
 			set_task_creds(p->pid, cur_euid, cur_fsuid, cur_egid);
 		}

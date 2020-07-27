@@ -36,10 +36,4 @@ struct device_init_time_entry {
 
 #define DEVICE_INIT_TIME_100MS 100000
 
-#define MAX_LENGTH_OF_SYSTEMSERVER_LOG 90
-struct systemserver_init_time_entry {
-	struct list_head next;
-	char buf[MAX_LENGTH_OF_SYSTEMSERVER_LOG];
-};
-
 #endif

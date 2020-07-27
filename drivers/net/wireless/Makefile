@@ -75,7 +75,7 @@ obj-$(CONFIG_RSI_91X)	+= rsi/
 
 
 # obj-$(CONFIG_WCNSS_CORE)	+= wcnss/
-obj-$(CONFIG_CNSS_GENL) += cnss_genl/
+# obj-$(CONFIG_CNSS_GENL) += cnss_genl/
 
 obj-$(CONFIG_QCA_CLD_WLAN)	+= wcn39xx/qcacld-3.0/
 obj-$(CONFIG_CNSS_UTILS)	+= cnss_utils/

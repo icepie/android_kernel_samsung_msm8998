@@ -2512,45 +2512,7 @@ static void hdmi_edid_get_display_mode(struct hdmi_edid_ctrl *edid_ctrl)
 				 __func__, offset, std_blk);
 			hdmi_edid_add_sink_video_format(edid_ctrl,
 				HDMI_VFRMT_1024x768p60_4_3);
-#ifndef CONFIG_SEC_DISPLAYPORT
 			break;
-#else
-		}
-		if ((edid_blk0[0x26 + offset] == 0x81) &&
-			(edid_blk0[0x26 + offset + 1] == 0x00)) {
-			pr_debug("%s:off=[%x] stdblk=[%x]\n",
-				 __func__, offset, std_blk);
-			hdmi_edid_add_sink_video_format(edid_ctrl,
-				HDMI_VFRMT_1280x800p60_16_10);
-		}
-		if ((edid_blk0[0x26 + offset] == 0x81) &&
-			(edid_blk0[0x26 + offset + 1] == 0xc0)) {+
-			pr_debug("%s:off=[%x] stdblk=[%x]\n",
-				 __func__, offset, std_blk);
-			hdmi_edid_add_sink_video_format(edid_ctrl,
-				HDMI_VFRMT_1280x720p60_16_9);
-		}
-		if ((edid_blk0[0x26 + offset] == 0xb3) &&
-			(edid_blk0[0x26 + offset + 1] == 0x00)) {
-			pr_debug("%s:off=[%x] stdblk=[%x]\n",
-				 __func__, offset, std_blk);
-			hdmi_edid_add_sink_video_format(edid_ctrl,
-				HDMI_VFRMT_1680x1050p60_16_10);
-		}
-		if ((edid_blk0[0x26 + offset] == 0x95) &&
-			(edid_blk0[0x26 + offset + 1] == 0x00)) {
-			pr_debug("%s:off=[%x] stdblk=[%x]\n",
-				 __func__, offset, std_blk);
-			hdmi_edid_add_sink_video_format(edid_ctrl,
-				HDMI_VFRMT_1440x900p60_16_10);
-		}
-		if ((edid_blk0[0x26 + offset] == 0xd1) &&
-			(edid_blk0[0x26 + offset + 1] == 0xc0)) {
-			pr_debug("%s: off=[%x] stdblk=[%x]\n",
-				 __func__, offset, std_blk);
-			hdmi_edid_add_sink_video_format(edid_ctrl,
-				HDMI_VFRMT_1920x1080p60_16_9);
-#endif
 		} else {
 			offset += 2;
 		}

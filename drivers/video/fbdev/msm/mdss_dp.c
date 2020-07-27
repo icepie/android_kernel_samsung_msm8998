@@ -155,15 +155,11 @@ static struct switch_dev switch_secdp_msg = {
 
 void secdp_send_poor_connection_event(void)
 {
-	struct mdss_dp_drv_pdata *dp_drv = g_dp_drv;
-
 	pr_info("poor connection!");
 #ifdef CONFIG_SWITCH
 	switch_set_state(&switch_secdp_msg, 1);
 	switch_set_state(&switch_secdp_msg, 0);
 #endif
-
-	dp_drv->dex_node_status = dp_drv->dex_en = dp_drv->dex_now = 0;
 }
 #endif
 

@@ -10,7 +10,6 @@ endif
 choice
 	prompt "Version of GAF structure"
 	depends on SEC_DEBUG
-	default SEC_DEBUG_GAF_V5 if PROCA
 	default SEC_DEBUG_GAF_V4 if FIVE
 	default SEC_DEBUG_GAF_V3
 
@@ -23,10 +22,4 @@ choice
 		bool "Use GAF structure version 4"
 		help
 		  Default option for FIVE-enabled kernel
-
-	config SEC_DEBUG_GAF_V5
-		bool "Use GAF structure version 5"
-		help
-		  Default option for kernel with PROCA LSM module.
 endchoice
-

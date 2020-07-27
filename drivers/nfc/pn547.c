@@ -121,7 +121,7 @@ static irqreturn_t pn547_dev_irq_handler(int irq, void *dev_id)
 	struct pn547_dev *pn547_dev = dev_id;
 
 	if (!gpio_get_value(pn547_dev->irq_gpio)) {
-#if 1 /* NFC_DEBUG */
+#if NFC_DEBUG
 		NFC_LOG_ERR("irq_gpio = %d\n",
 			gpio_get_value(pn547_dev->irq_gpio));
 #endif

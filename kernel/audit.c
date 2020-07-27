@@ -516,20 +516,18 @@ static void flush_hold_queue(void)
 {
 	struct sk_buff *skb;
 
-// [ SEC_SELINUX_PORTING_COMMON
 	if (!audit_default || !audit_pid || !audit_sock)
 		return;
-// ] SEC_SELINUX_PORTING_COMMON
+
 	skb = skb_dequeue(&audit_skb_hold_queue);
 	if (likely(!skb))
 		return;
 
-// [ SEC_SELINUX_PORTING_COMMON
 	while (skb && audit_pid && audit_sock) {
 		kauditd_send_skb(skb);
 		skb = skb_dequeue(&audit_skb_hold_queue);
 	}
-// ] SEC_SELINUX_PORTING_COMMON
+
 	/*
 	 * if auditd just disappeared but we
 	 * dequeued an skb we need to drop ref
@@ -551,10 +549,8 @@ static int kauditd_thread(void *dummy)
 		if (skb) {
 			if (skb_queue_len(&audit_skb_queue) <= audit_backlog_limit)
 				wake_up(&audit_backlog_wait);
-// [ SEC_SELINUX_PORTING_COMMON
 			if (audit_pid && audit_sock)
 				kauditd_send_skb(skb);
-// ] SEC_SELINUX_PORTING_COMMON
 			else
 				audit_printk_skb(skb);
 			continue;

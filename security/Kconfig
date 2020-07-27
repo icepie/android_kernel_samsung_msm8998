@@ -194,7 +194,6 @@ source security/tz_iccc/Kconfig
 source security/knox_test/Kconfig
 source security/defex_lsm/Kconfig
 source security/dsms/Kconfig
-source security/proca/Kconfig
 
 choice
 	prompt "Default security module"

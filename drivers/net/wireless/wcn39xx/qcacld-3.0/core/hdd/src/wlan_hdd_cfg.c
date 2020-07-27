@@ -40,7 +40,6 @@
 
 #ifdef SEC_CONFIG_POWER_BACKOFF
 bool wlan_hdd_sec_get_grip_power(unsigned int *grip_power_2g, unsigned int *grip_power_5g);
-#define MAX_RETRY 5
 #endif
 
 static void
@@ -6001,7 +6000,7 @@ static int parse_hex_digit(char c)
 
 	return 0;
 }
-
+#ifndef SEC_READ_MACADDR
 /**
  * update_mac_from_string() - convert string to 6 bytes mac address
  * @pHddCtx: the pointer to hdd context
@@ -6038,6 +6037,34 @@ static void update_mac_from_string(hdd_context_t *pHddCtx,
 		}
 	}
 }
+#endif /*!SEC_READ_MACADDR*/
+#ifdef SEC_CONFIG_PSM
+#define SEC_PSM_FILEPATH		"/data/vendor/conn/.psm.info"
+
+static unsigned int wlan_hdd_sec_get_psm(unsigned int original_value)
+{
+	struct file *fp		= NULL;
+	char *filepath		= SEC_PSM_FILEPATH;
+	int i;
+	int value = 0;
+
+	for (i = 0; i < MAX_RETRY; ++i) {
+		fp = filp_open(filepath, O_RDONLY, 0);
+		if (!IS_ERR(fp)) {
+			//kernel_read(fp, fp->f_pos, &value, 1);
+			kernel_read(fp, 0, (char*)&value, 1);
+			printk("[WIFI] PSM: [%u]\n", value);
+			if (value == '0')
+				original_value = value - '0';
+			break;
+		}
+	}
+	if (fp && !IS_ERR(fp))
+		filp_close(fp, NULL);
+
+	return original_value;
+}
+#endif /* SEC_CONFIG_PSM */
 
 #ifdef SEC_CONFIG_POWER_BACKOFF
 #define SEC_GRIPPOWER_FILEPATH	"/vendor/firmware/wlan/qca_cld/grippower.info"
@@ -6093,9 +6120,6 @@ static QDF_STATUS hdd_apply_cfg_ini(hdd_context_t *pHddCtx,
 	uint32_t cbOutString;
 	int i;
 	int rv;
-#ifdef SEC_CONFIG_PSM_SYSFS
-	int is_rfmode_off = wlan_hdd_sec_get_psm();
-#endif /* SEC_CONFIG_PSM_SYSFS */
 
 	BUILD_BUG_ON(MAX_CFG_INI_ITEMS < cRegTableEntries);
 
@@ -6172,11 +6196,10 @@ static QDF_STATUS hdd_apply_cfg_ini(hdd_context_t *pHddCtx,
 					value = pRegEntry->VarDefault;
 				}
 			}
-#ifdef SEC_CONFIG_PSM_SYSFS
+#ifdef SEC_CONFIG_PSM
 			if (!strcmp(pRegEntry->RegName, CFG_ENABLE_IMPS_NAME) || !strcmp(pRegEntry->RegName, CFG_ENABLE_PS_NAME)) {
 				printk("[WIFI] %s: original_value  = %u", pRegEntry->RegName, value);
-				if(!is_rfmode_off)
-					value = 0;
+				value = wlan_hdd_sec_get_psm(value);
 				printk("[WIFI] %s: sec_control_psm = %u", pRegEntry->RegName, value);
 			}
 			// newly added for LFR enabling,disabling.
@@ -6184,11 +6207,10 @@ static QDF_STATUS hdd_apply_cfg_ini(hdd_context_t *pHddCtx,
 				!strcmp(pRegEntry->RegName, CFG_FAST_TRANSITION_ENABLED_NAME) ||
 				!strcmp(pRegEntry->RegName, CFG_FW_RSSI_MONITORING_NAME)) {
 				printk("[WIFI] %s: original_value  = %u", pRegEntry->RegName, value);
-				if(!is_rfmode_off)
-					value = 0;
+				value = wlan_hdd_sec_get_psm(value);
 				printk("[WIFI] %s: sec_control_psm = %u", pRegEntry->RegName, value);
 			}
-#endif /* SEC_CONFIG_PSM_SYSFS */
+#endif /* SEC_CONFIG_PSM */
 
 			/* Move the variable into the output field. */
 			memcpy(pField, &value, pRegEntry->VarSize);
@@ -7821,6 +7843,70 @@ void hdd_cfg_print(hdd_context_t *pHddCtx)
 	hdd_cfg_print_btc_params(pHddCtx);
 }
 
+#ifdef SEC_READ_MACADDR
+#define SEC_MAC_FILEPATH	"/efs/wifi/.mac.info"
+#define INTF_MACADDR_MASK_SEC       0x7
+struct qdf_mac_addr sec_mac_addrs[QDF_MAX_CONCURRENCY_PERSONA];
+static int wlan_hdd_read_mac_addr(unsigned char *mac)
+{
+	struct file *fp      = NULL;
+	char macbuffer[18]   = {0};
+	char randommac[3]    = {0};
+	char buf[18]         = {0};
+	char *filepath       = SEC_MAC_FILEPATH;
+	int ret = 0;
+	int i;
+	int create_random_mac = 0;
+
+	for (i = 0; i < MAX_RETRY; ++i) {
+		fp = filp_open(filepath, O_RDONLY, 0);
+		if (IS_ERR(fp)) {
+			create_random_mac = 1;
+			printk("[WIFI] Will create random MAC: [%d]\n", create_random_mac);
+			/* Generating the Random Bytes for 3 last octects of the MAC address */
+			get_random_bytes(randommac, 3);
+
+			sprintf(macbuffer, "%02X:%02X:%02X:%02X:%02X:%02X\n",
+						0x00, 0x12, 0x34, randommac[0], randommac[1], randommac[2]);
+			printk("[WIFI] The randomly generated MAC ID: %s", macbuffer);
+			break;
+		}
+
+		if (fp) {
+			/* Reading the MAC Address from .mac.info file (the existed file)*/
+			ret = kernel_read(fp, 0, buf, 17);
+			buf[17] = '\0';   // to prevent abnormal string display when mac address is displayed on the screen.
+			filp_close(fp, NULL);
+			//printk("[WIFI] Read MAC: [%s]\n", buf);
+		}
+
+		if (ret != 17 || strncmp(buf, "00:00:00:00:00:00", 17) == 0) {
+			continue;// Retry!
+		}
+
+		break;	// Read MAC is success
+	}
+
+	if (ret) {
+		sscanf(buf, "%02X:%02X:%02X:%02X:%02X:%02X",
+			   (unsigned int *)&(mac[0]), (unsigned int *)&(mac[1]),
+			   (unsigned int *)&(mac[2]), (unsigned int *)&(mac[3]),
+			   (unsigned int *)&(mac[4]), (unsigned int *)&(mac[5]));
+		return 0;	// success
+	} else if (create_random_mac == 1) {
+		printk("[WIFI] Use random MAC\n");
+		sscanf(macbuffer, "%02X:%02X:%02X:%02X:%02X:%02X",
+			   (unsigned int *)&(mac[0]), (unsigned int *)&(mac[1]),
+			   (unsigned int *)&(mac[2]), (unsigned int *)&(mac[3]),
+			   (unsigned int *)&(mac[4]), (unsigned int *)&(mac[5]));
+		return 0;	// success	
+	}
+
+	hdd_alert("[WIFI] Reading MAC from the '%s' is failed.\n", filepath);
+	return -1;	// failed
+}
+#endif /* SEC_READ_MACADDR */
+
 /**
  * hdd_update_mac_config() - update MAC address from cfg file
  * @pHddCtx: the pointer to hdd context
@@ -7833,6 +7919,52 @@ void hdd_cfg_print(hdd_context_t *pHddCtx)
 QDF_STATUS hdd_update_mac_config(hdd_context_t *pHddCtx)
 {
 	int status , i = 0;
+#ifdef SEC_READ_MACADDR
+	uint8_t macaddr_b3, tmp_br3;
+	tSirMacAddr customMacAddr;
+	QDF_STATUS qdf_status = QDF_STATUS_SUCCESS; 
+ 
+	status = wlan_hdd_read_mac_addr(sec_mac_addrs[0].bytes); 
+	if (status) 
+		return QDF_STATUS_E_FAILURE; 
+
+	for (i = 0; i < pHddCtx->num_derived_addr; i++) {
+		if (!qdf_atomic_test_and_set_bit(
+					i, &pHddCtx->derived_intf_addr_mask))
+			break;
+	}
+	if (i == 0) {
+		qdf_mem_copy((uint8_t *) &pHddCtx->derived_mac_addr[i].bytes[0],
+					     (uint8_t *) &sec_mac_addrs[0].bytes[0],
+					     QDF_MAC_ADDR_SIZE);
+	 	pHddCtx->num_derived_addr++;
+		hdd_info("pHddCtx->derived_mac_addr[0]: "
+			 MAC_ADDRESS_STR,
+			 MAC_ADDR_ARRAY(pHddCtx->derived_mac_addr[i].bytes));
+		for (i = pHddCtx->num_derived_addr; i < QDF_MAX_CONCURRENCY_PERSONA; i++) {
+			qdf_mem_copy(pHddCtx->derived_mac_addr[i].bytes,
+				     pHddCtx->derived_mac_addr[0].bytes,
+				     QDF_MAC_ADDR_SIZE);
+			macaddr_b3 = pHddCtx->derived_mac_addr[i].bytes[3];
+			tmp_br3 = ((macaddr_b3 >> 4 & INTF_MACADDR_MASK_SEC) + (int8_t) i) &
+				  INTF_MACADDR_MASK_SEC;
+			macaddr_b3 += tmp_br3;
+
+			/* XOR-ing bit-24 of the mac address. This will give enough
+			 * mac address range before collision
+			 */
+			macaddr_b3 ^= (1 << 7);
+
+			/* Set locally administered bit */
+			pHddCtx->derived_mac_addr[i].bytes[0] |= 0x02;
+			pHddCtx->derived_mac_addr[i].bytes[3] = macaddr_b3;
+			hdd_info("pHddCtx->derived_mac_addr[%d]: "
+				MAC_ADDRESS_STR, i,
+				MAC_ADDR_ARRAY(pHddCtx->derived_mac_addr[i].bytes));
+			pHddCtx->num_derived_addr++;
+		}
+	}
+#else
 	const struct firmware *fw = NULL;
 	char *line, *buffer = NULL;
 	char *temp = NULL;
@@ -7929,15 +8061,20 @@ QDF_STATUS hdd_update_mac_config(hdd_context_t *pHddCtx)
 			     &pHddCtx->provisioned_mac_addr[0].bytes[0],
 			     sizeof(tSirMacAddr));
 	else
+#endif /* SEC_READ_MACADDR */
 		qdf_mem_copy(&customMacAddr,
 			     &pHddCtx->derived_mac_addr[0].bytes[0],
 			     sizeof(tSirMacAddr));
 	sme_set_custom_mac_addr(customMacAddr);
 
+#ifdef SEC_READ_MACADDR
+    return qdf_status;
+#else
 config_exit:
 	qdf_mem_free(temp);
 	release_firmware(fw);
 	return qdf_status;
+#endif /* SEC_READ_MACADDR */
 }
 
 /**

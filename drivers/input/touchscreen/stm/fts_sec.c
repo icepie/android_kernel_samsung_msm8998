@@ -946,16 +946,6 @@ static void fw_update(void *device_data)
 		return;
 	}
 
-#if defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
-	if (sec->cmd_param[0] == 1) {
-		snprintf(buff, sizeof(buff), "%s", "OK");
-		sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
-		sec->cmd_state = SEC_CMD_STATUS_OK;
-		input_info(true, &info->client->dev, "%s: user_ship, skip\n", __func__);
-		return;
-	}
-#endif
-
 	retval = fts_fw_update_on_hidden_menu(info, sec->cmd_param[0]);
 
 	if (retval < 0) {
@@ -983,7 +973,7 @@ static int fts_get_channel_info(struct fts_ts_info *info)   // Need to change fu
 	fts_interrupt_set(info, INT_DISABLE);
 	fts_command(info, FLUSHBUFFER);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -1252,7 +1242,7 @@ int fts_panel_ito_test(struct fts_ts_info *info)
 	fts_interrupt_set(info, INT_DISABLE);
 	fts_command(info, FLUSHBUFFER);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -2112,7 +2102,7 @@ static void fts_read_ix_data(struct fts_ts_info *info, bool allnode)
 	fts_command(info, FLUSHBUFFER);                 // Clear FIFO
 	fts_delay(50);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -2344,7 +2334,7 @@ static void fts_read_self_raw_frame(struct fts_ts_info *info, unsigned short oAd
 	}
 #endif
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -2604,7 +2594,7 @@ static void run_cx_data_read(void *device_data)
 	fts_command(info, FLUSHBUFFER);
 	fts_delay(50);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -2724,7 +2714,7 @@ static void get_cx_all_data(void *device_data)
 	fts_command(info, FLUSHBUFFER);
 	fts_delay(50);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -2841,7 +2831,7 @@ static void fts_read_wtr_cx_data(struct fts_ts_info *info, bool allnode)
 	fts_command(info, FLUSHBUFFER);
 	fts_delay(50);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -3381,7 +3371,7 @@ static void run_pressure_ix_data_read_all(void *device_data)
 	fts_command(info, FLUSHBUFFER);
 	fts_delay(50);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -3507,7 +3497,7 @@ static void set_pressure_strength(void *device_data)
 	fts_command(info, FLUSHBUFFER);
 	fts_interrupt_set(info, INT_DISABLE);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -3609,7 +3599,7 @@ static void set_pressure_rawdata(void *device_data)
 	fts_command(info, FLUSHBUFFER);
 	fts_interrupt_set(info, INT_DISABLE);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -3697,7 +3687,7 @@ static void set_pressure_data_index(void *device_data)
 	fts_command(info, FLUSHBUFFER);
 	fts_interrupt_set(info, INT_DISABLE);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -3967,7 +3957,7 @@ static void set_pressure_strength_clear(void *device_data)
 	fts_command(info, FLUSHBUFFER);
 	fts_interrupt_set(info, INT_DISABLE);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -4667,7 +4657,7 @@ int set_nvm_data(struct fts_ts_info *info, unsigned char type, unsigned char *bu
 	fts_command(info, FLUSHBUFFER);
 	fts_interrupt_set(info, INT_DISABLE);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -4719,7 +4709,7 @@ int get_nvm_data(struct fts_ts_info *info, int type, unsigned char *nvdata)
 	fts_interrupt_set(info, INT_DISABLE);
 	fts_command(info, FLUSHBUFFER);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);
@@ -5981,7 +5971,7 @@ static void run_force_calibration(void *device_data)
 	fts_command(info, FLUSHBUFFER);
 	fts_delay(10);
 
-	fts_unlocked_release_all_finger(info);
+	fts_release_all_finger(info);
 #ifdef FTS_SUPPORT_TOUCH_KEY
 	if (info->board->support_mskey)
 		fts_release_all_key(info);

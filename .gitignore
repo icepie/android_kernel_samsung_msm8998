@@ -25,6 +25,8 @@
 modules.builtin
 Module.symvers
 *.dwo
+bin
+out
 
 #
 # Top-level generic files
@@ -93,3 +95,6 @@ all.config
 
 # fetched Android config fragments
 android/configs/android-*.cfg
+
+# build log
+build.log

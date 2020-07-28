@@ -1,0 +1,25 @@
+name: Samsung SDM8898 Kernel Builder
+
+on:
+  push:
+    branches: [ pp ]
+  pull_request:
+    branches: [ pp ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: aarch64 toolchain
+      run: mkdir -p ../PLATFORM/prebuilts/gcc/linux-x86/aarch64 && git clone  https://github.com/djb77/aarch64-linux-android-4.9 ../PLATFORM/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
+    - name: make kernel for dream2qltechn
+      run: ./build_kernel_64.sh dream2qlte_chn_open -c
+    - name: make kernel for dreamqltechn
+      run: ./build_kernel_64.sh dreamqlte_chn_open
+    - name: make kernel for greatqltechn
+      run: ./build_kernel_64.sh greatqlte_chn_open
+    - name: make kernel for gts4lltexx
+      run: ./build_kernel_64.sh gts4llte_eur_open
+    - name: make kernel for gts4lwifixx
+      run: ./build_kernel_64.sh gts4lwifi_eur_open

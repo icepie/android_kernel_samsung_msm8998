@@ -50,6 +50,7 @@ out
 !.gitignore
 !.mailmap
 !.placeholder
+!.github
 
 #
 # Generated include files

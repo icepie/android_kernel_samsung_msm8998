@@ -15,15 +15,8 @@ jobs:
       run: mkdir -p ../PLATFORM/prebuilts/gcc/linux-x86/aarch64 && git clone  https://github.com/djb77/aarch64-linux-android-4.9 ../PLATFORM/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
     - name: make kernel for dream2qltechn
       run: ./build_kernel_64.sh dream2qlte_chn_open -c
-    - name: make kernel for dreamqltechn
-      run: ./build_kernel_64.sh dreamqlte_chn_open
-    - name: make kernel for greatqltechn
-      run: ./build_kernel_64.sh greatqlte_chn_open
-    - name: make kernel for gts4lltexx
-      run: ./build_kernel_64.sh gts4llte_eur_open
-    - name: make kernel for gts4lwifixx
-      run: ./build_kernel_64.sh gts4lwifi_eur_open
+
     - uses: actions/upload-artifact@v1
       with:
-        name: upload zip for dream2qltechn
+        name: dream2qltechn
         path: build/bin/dream2qltechn

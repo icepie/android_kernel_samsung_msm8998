@@ -387,6 +387,9 @@ if [ "$origsize" -a -f split_img/*-origsize ]; then
   truncate -s $filesize image-new.img;
 fi;
 
+# Fix permissions
+chmod -R 777 image-new.img ramdisk-new.cpio.gz
+
 echo "Done!";
 exit 0;
 

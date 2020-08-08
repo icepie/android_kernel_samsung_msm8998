@@ -99,3 +99,8 @@ android/configs/android-*.cfg
 
 # build log
 build.log
+
+# aik for build boot.img
+*-zImage
+*-ramdisk.cpio*
+*boot.img

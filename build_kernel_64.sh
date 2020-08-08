@@ -68,6 +68,9 @@ else
     KERNEL_DEFCONFIG=${BUILD_COMMAND}_rev${BUILD_OPTION_HW_REVISION}_defconfig
 fi
 
+KERNEL_ZIMG=$BUILD_KERNEL_OUT_DIR/arch/arm64/boot/Image.gz-dtb
+DTC=$BUILD_KERNEL_OUT_DIR/scripts/dtc/dtc
+
 FUNC_CLEAN_DTB()
 {
 	if ! [ -d $BUILD_KERNEL_OUT_DIR/arch/arm64/boot/dts/samsung ] ; then
@@ -122,11 +125,65 @@ FUNC_BUILD_KERNEL()
 	echo ""
 }
 
+MKBOOT_BUILD=$BUILD_WHERE/build
+MKBOOT_BUILD_BOOT=$MKBOOT_BUILD/boot/$PRODUCT_NAME
+AIK_DIR=$MKBOOT_BUILD/aik
+AIK_KERNEL_ZIMG=$AIK_DIR/split_img/boot.img-zImage
+AIK_BOOT_IMG=$AIK_DIR/image-new.img
+BOOT_BUILD_BIN=$MKBOOT_BUILD/bin
+BOOT_BUILD_BIN_OUT=$BOOT_BUILD_BIN/$PRODUCT_NAME
+BOOT_BUILD_ZIP=$MKBOOT_BUILD/zip
+BOOT_BUILD_BOOIMG=$BOOT_BUILD_BIN_OUT/boot.img
+
+FUNC_MKBOOTIMG()
+{
+	if [ ! -f "$KERNEL_ZIMG" ]; then
+		echo "file: $KERNEL_ZIMG not found"
+		exit 1;
+	fi
+
+	#clean aik dir
+	bash $AIK_DIR/cleanup.sh
+
+	echo ""
+	echo "=============================================="
+	echo "START : FUNC_MKBOOIMG"
+	echo "=============================================="
+
+	cp -r $MKBOOT_BUILD_BOOT/* $AIK_DIR
+	mv $KERNEL_ZIMG $AIK_KERNEL_ZIMG
+
+	if [ `whoami` = "root" ];then
+    	bash $AIK_DIR/repackimg.sh
+	else
+		sudo bash $AIK_DIR/repackimg.sh
+	fi
+
+	if [ ! -d "$BOOT_BUILD_BIN_OUT" ]; then
+		mkdir -p $BOOT_BUILD_BIN_OUT
+	else
+		rm -rf $BOOT_BUILD_BIN_OUT/*
+	fi
+
+	cp -r BOOT_BUILD_ZIP/* $BOOT_BUILD_BIN_OUT/
+	mv $AIK_BOOT_IMG $BOOT_BUILD_BOOIMG
+
+	zip -r "$BOOT_BUILD_BIN/"$PRODUCT_NAME".zip" $BOOT_BUILD_BIN_OUT/*
+
+	bash $AIK_DIR/cleanup.sh
+
+	echo ""
+	echo "================================="
+	echo "END   : FUNC_MKBOOIMG"
+	echo "================================="
+	echo ""
+}
+
 SECFUNC_PRINT_HELP()
 {
 	echo -e '\E[33m'
 	echo "Help"
-	echo "$0 \$1 \$2 \$3"
+	echo "$0 \$1 \$2"
 	echo "  \$1 : "
 	echo "      dreamqlte_chn_open"
 	echo "      dream2qlte_chn_open"
@@ -145,7 +202,7 @@ rm -rf ./build.log
 
 	FUNC_BUILD_KERNEL
 
-	#FUNC_MKBOOTIMG
+	FUNC_MKBOOTIMG
 
 	END_TIME=`date +%s`
 

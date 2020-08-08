@@ -23,3 +23,7 @@ jobs:
       run: ./build_kernel_64.sh gts4llte_eur_open
     - name: make kernel for gts4lwifixx
       run: ./build_kernel_64.sh gts4lwifi_eur_open
+    - uses: actions/upload-artifact@v1
+      with:
+        name: upload zip for dream2qltechn
+        path: build/bin/dream2qltechn
